@@ -24,7 +24,7 @@ prisma/
 ## Prerequisites
 
 - Node.js 22 LTS (`nvm install 22 && nvm use 22`)
-- Docker (for local Postgres — see `docker-compose.yml`)
+- A Supabase project (free tier) — get DATABASE_URL and DIRECT_URL from Settings → Database → Connect
 - For mobile: Android Studio (+ JDK 17) and, for iOS builds, Xcode on a Mac
 - Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`) — see `CLAUDE.md` for how this repo is set up to work with it
 
@@ -32,7 +32,6 @@ prisma/
 
 ```bash
 cp .env.example .env          # fill in real values before running anything
-docker compose up -d          # starts local Postgres
 npm install                   # installs all workspaces
 npx prisma migrate dev        # applies the schema to your local DB
 ```
