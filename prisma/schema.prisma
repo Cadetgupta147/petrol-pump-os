@@ -1,0 +1,307 @@
+// Initial schema derived from docs/master-plan.md Section 13.
+// This is a starting point, not final — expand/adjust as each feature (Section 3-12) is built.
+// Rule (see CLAUDE.md): never hand-edit a deployed schema — always `prisma migrate dev`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum Role {
+  OWNER
+  ACCOUNTANT
+  MANAGER
+  DSM
+  READ_ONLY
+}
+
+enum PaymentType {
+  CASH
+  CARD
+  UPI
+  CREDIT
+}
+
+enum PaymentDirection {
+  IN
+  OUT
+}
+
+enum EntryChannel {
+  WEB
+  DSM_APP
+}
+
+enum EarningBasis {
+  RUPEE
+  LITRE
+}
+
+enum RedemptionType {
+  CASH
+  GIFT
+  BOTH
+}
+
+// ---------- Staff / Users / Roles ----------
+
+model Staff {
+  id             String          @id @default(cuid())
+  name           String
+  phone          String          @unique
+  role           Role
+  pinHash        String? // for DSM app PIN login
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  billsEntered       Bill[]              @relation("BillEnteredBy")
+  meterReadings      MeterReading[]
+  attendanceLogs     AttendanceLog[]
+  cashCustodyLogs    CashCustodyLog[]
+}
+
+model AttendanceLog {
+  id        String   @id @default(cuid())
+  staff     Staff    @relation(fields: [staffId], references: [id])
+  staffId   String
+  clockIn   DateTime
+  clockOut  DateTime?
+}
+
+// ---------- Customers / Bills ----------
+
+model Customer {
+  id              String   @id @default(cuid())
+  name            String
+  phone           String   @unique // KYC-lite identity — Section 6.1
+  vehicleNumber   String?
+  qrMemberId      String   @unique @default(cuid())
+  loyaltyRateOverride Float? // per-customer override of default earning rate
+  createdAt       DateTime @default(now())
+
+  bills                 Bill[]
+  loyaltyTransactions   LoyaltyTransaction[]
+  redemptionTransactions RedemptionTransaction[]
+  payments              Payment[]
+}
+
+model Bill {
+  id                 String        @id @default(cuid())
+  customer           Customer?     @relation(fields: [customerId], references: [id])
+  customerId         String?
+  vehicleNumber      String?
+  customerName       String?
+  amount             Float
+  litres             Float
+  productType        String
+  rateApplied        Float
+  // payment_type is no longer a single field — see Section 5A. A bill's payment
+  // breakdown is derived from its BillPaymentLine rows (supports split payments).
+  enteredBy          Staff         @relation("BillEnteredBy", fields: [enteredById], references: [id])
+  enteredById         String
+  entryChannel        EntryChannel
+  timestamp           DateTime      @default(now())
+  loyaltyPointsEarned Float         @default(0)
+  loyaltyBasisUsed    EarningBasis?
+
+  loyaltyTransactions LoyaltyTransaction[]
+  paymentLines        BillPaymentLine[]
+}
+
+// Section 5A — a bill can be settled across multiple payment methods
+// (e.g. half cash + half UPI, or "overpay by UPI, take cash change").
+// Validation rule (enforce server-side, not just in the UI):
+//   sum(amount where direction = IN) - sum(amount where direction = OUT) = bill.amount
+model BillPaymentLine {
+  id          String            @id @default(cuid())
+  bill        Bill              @relation(fields: [billId], references: [id])
+  billId      String
+  paymentType PaymentType
+  amount      Float
+  direction   PaymentDirection // IN = money received, OUT = change given back
+  createdAt   DateTime          @default(now())
+}
+
+// ---------- Meter Readings / Tanks ----------
+
+model MeterReading {
+  id         String   @id @default(cuid())
+  nozzleId   String
+  staff      Staff    @relation(fields: [staffId], references: [id])
+  staffId    String
+  openingReading Float
+  closingReading Float?
+  shiftStart DateTime @default(now())
+  shiftEnd   DateTime?
+}
+
+model Tank {
+  id            String   @id @default(cuid())
+  productType   String
+  capacityLitres Float
+  currentStockLitres Float
+  lastDipReading Float?
+  lastDipAt      DateTime?
+
+  densityLogs DensityLog[]
+}
+
+model DensityLog {
+  id        String   @id @default(cuid())
+  tank      Tank     @relation(fields: [tankId], references: [id])
+  tankId    String
+  reading   Float
+  recordedAt DateTime @default(now())
+}
+
+// ---------- Walk-in Sales Aggregation (Section 8A) ----------
+// Most walk-in customers never get an itemized Bill — only credit/loyalty
+// customers or anyone who explicitly wants a receipt do. Everyone else is
+// captured in aggregate here, reconciled against the shift's meter reading.
+
+model ShiftSalesSummary {
+  id                    String   @id @default(cuid())
+  shiftId               String // ties back to the DSM's shift / MeterReading
+  dsmId                 String
+  nozzleId              String
+  walkInLitres          Float
+  walkInCashCollected    Float   @default(0)
+  walkInUpiCollected     Float   @default(0)
+  walkInCardCollected    Float   @default(0)
+  expectedValue          Float // walk-in litres × rate in effect (Rate Master)
+  variance                Float // expectedValue - (cash + upi + card actually collected)
+  createdAt              DateTime @default(now())
+}
+
+// Section 8A.3 — PhonePe/Paytm Business merchant webhook events, used to
+// auto-populate ShiftSalesSummary.walkInUpiCollected without manual DSM entry.
+// Handler MUST be idempotent (dedupe on providerEventId) and verify the
+// webhook signature before trusting the payload — see CLAUDE.md.
+model UpiWebhookEvent {
+  id               String   @id @default(cuid())
+  provider         String // "phonepe" | "paytm"
+  providerEventId  String   @unique // for idempotency — reject duplicates
+  amount           Float
+  receivedAt       DateTime
+  matchedShiftId   String?
+  matchedNozzleId  String?
+  rawPayload       Json
+  processedAt      DateTime @default(now())
+}
+
+// ---------- Purchases / Lubricants / Rate Master ----------
+
+model PurchaseEntry {
+  id           String   @id @default(cuid())
+  supplierName String
+  productType  String
+  quantityLitres Float
+  amount       Float
+  invoiceImageUrl String? // OCR source image, Section 9
+  ocrExtracted Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+model LubricantItem {
+  id        String @id @default(cuid())
+  name      String
+  stockQty  Int
+  reorderAt Int
+}
+
+model RateHistory {
+  id          String   @id @default(cuid())
+  productType String
+  rate        Float
+  effectiveFrom DateTime
+}
+
+// ---------- Loyalty Program ----------
+
+model LoyaltyConfig {
+  id                     String         @id @default(cuid())
+  earningBasis           EarningBasis
+  defaultRate            Float
+  redemptionTypeAllowed  RedemptionType
+  // Section 6.4 — whether the customer picks cash/gift each redemption, or the
+  // dealer has fixed a default. Only meaningful when redemptionTypeAllowed = BOTH.
+  customerCanChooseRedemption Boolean       @default(false)
+  defaultRedemptionMode       RedemptionType?
+  cashRedemptionRatio    Float // points -> currency conversion
+  minRedeemablePoints    Int
+}
+
+model LoyaltyTransaction {
+  id         String   @id @default(cuid())
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+  bill       Bill?    @relation(fields: [billId], references: [id])
+  billId     String?
+  pointsDelta Float   // positive = earned, negative = redeemed
+  reason     String
+  createdAt  DateTime @default(now())
+}
+
+model GiftCatalogItem {
+  id             String  @id @default(cuid())
+  giftName       String
+  imageUrl       String?
+  pointsRequired Int
+  stockQuantity  Int?
+  activeFlag     Boolean @default(true)
+
+  redemptions RedemptionTransaction[]
+}
+
+model RedemptionTransaction {
+  id          String           @id @default(cuid())
+  customer    Customer         @relation(fields: [customerId], references: [id])
+  customerId  String
+  giftItem    GiftCatalogItem? @relation(fields: [giftItemId], references: [id])
+  giftItemId  String?
+  redemptionType RedemptionType
+  pointsSpent Int
+  cashValue   Float?
+  createdAt   DateTime         @default(now())
+}
+
+// ---------- Cash Custody ----------
+
+model CashCustodyLog {
+  id           String    @id @default(cuid())
+  staff        Staff     @relation(fields: [staffId], references: [id])
+  staffId      String
+  amountHeld   Float
+  handedOverAt DateTime?
+  reconciled   Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+}
+
+// ---------- Payments (bills + credit dues) ----------
+
+model Payment {
+  id         String      @id @default(cuid())
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  customerId String
+  amount     Float
+  method     PaymentType
+  reference  String? // gateway transaction id, once a payment gateway is chosen (see CLAUDE.md)
+  createdAt  DateTime    @default(now())
+}
+
+// ---------- Tally Export ----------
+
+model TallyExportLog {
+  id         String   @id @default(cuid())
+  exportedAt DateTime @default(now())
+  format     String // "xml" | "api"
+  recordCount Int
+  status     String // "success" | "failed"
+}

@@ -1,0 +1,53 @@
+<svg viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1000" height="620" fill="#F7F5F0"/>
+  <text x="500" y="40" text-anchor="middle" font-size="24" font-weight="700" fill="#14213D">System Architecture — One Backend, Three Front-Ends</text>
+
+  <!-- Backend box -->
+  <rect x="300" y="70" width="400" height="90" rx="10" fill="#14213D"/>
+  <text x="500" y="105" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF">CENTRAL BACKEND API + DATABASE</text>
+  <text x="500" y="128" text-anchor="middle" font-size="12" fill="#C9D1E0">PostgreSQL · Billing · Inventory · Loyalty · Ledger · Auth (role-based)</text>
+  <text x="500" y="146" text-anchor="middle" font-size="12" fill="#C9D1E0">Single source of truth — every front-end reads/writes here</text>
+
+  <!-- connecting lines -->
+  <line x1="500" y1="160" x2="500" y2="200" stroke="#8A93A6" stroke-width="2"/>
+  <line x1="180" y1="200" x2="820" y2="200" stroke="#8A93A6" stroke-width="2"/>
+  <line x1="180" y1="200" x2="180" y2="240" stroke="#8A93A6" stroke-width="2"/>
+  <line x1="500" y1="200" x2="500" y2="240" stroke="#8A93A6" stroke-width="2"/>
+  <line x1="820" y1="200" x2="820" y2="240" stroke="#8A93A6" stroke-width="2"/>
+
+  <!-- Web Portal / Dealer PWA -->
+  <rect x="40" y="240" width="280" height="150" rx="10" fill="#2A9D8F"/>
+  <text x="180" y="270" text-anchor="middle" font-size="15" font-weight="700" fill="#FFFFFF">WEB PORTAL / DEALER PWA</text>
+  <text x="180" y="292" text-anchor="middle" font-size="11" fill="#EAF7F5">Single React codebase, role-based UI</text>
+  <text x="180" y="312" text-anchor="middle" font-size="11" fill="#EAF7F5">Owner view (mobile PWA + desktop)</text>
+  <text x="180" y="330" text-anchor="middle" font-size="11" fill="#EAF7F5">Accountant/Manager view (desktop)</text>
+  <text x="180" y="348" text-anchor="middle" font-size="11" fill="#EAF7F5">Full manual entry parity with DSM app</text>
+  <text x="180" y="368" text-anchor="middle" font-size="11" fill="#EAF7F5">Installable on phone, browser on PC</text>
+
+  <!-- DSM App -->
+  <rect x="360" y="240" width="280" height="150" rx="10" fill="#FB8B24"/>
+  <text x="500" y="270" text-anchor="middle" font-size="15" font-weight="700" fill="#FFFFFF">DSM MOBILE APP</text>
+  <text x="500" y="292" text-anchor="middle" font-size="11" fill="#FFF3E4">React Native — Android/iOS</text>
+  <text x="500" y="312" text-anchor="middle" font-size="11" fill="#FFF3E4">Field staff: meter reading, billing,</text>
+  <text x="500" y="330" text-anchor="middle" font-size="11" fill="#FFF3E4">QR scan, cash handover</text>
+  <text x="500" y="348" text-anchor="middle" font-size="11" fill="#FFF3E4">Offline-first, syncs on reconnect</text>
+  <text x="500" y="368" text-anchor="middle" font-size="11" fill="#FFF3E4">PIN/biometric login</text>
+
+  <!-- Credit Customer App -->
+  <rect x="680" y="240" width="280" height="150" rx="10" fill="#E63946"/>
+  <text x="820" y="270" text-anchor="middle" font-size="15" font-weight="700" fill="#FFFFFF">CREDIT CUSTOMER APP</text>
+  <text x="820" y="292" text-anchor="middle" font-size="11" fill="#FCE4E6">React Native — Android/iOS</text>
+  <text x="820" y="312" text-anchor="middle" font-size="11" fill="#FCE4E6">Bill history, points balance,</text>
+  <text x="820" y="330" text-anchor="middle" font-size="11" fill="#FCE4E6">gift catalog, dues + UPI pay</text>
+  <text x="820" y="348" text-anchor="middle" font-size="11" fill="#FCE4E6">Push + SMS/WhatsApp fallback</text>
+  <text x="820" y="368" text-anchor="middle" font-size="11" fill="#FCE4E6">OTP login</text>
+
+  <!-- Note box -->
+  <rect x="40" y="420" width="920" height="150" rx="10" fill="#FFFFFF" stroke="#D8D3C4" stroke-width="1.5"/>
+  <text x="500" y="450" text-anchor="middle" font-size="14" font-weight="700" fill="#14213D">Why only 3 front-ends, not 4</text>
+  <text x="500" y="475" text-anchor="middle" font-size="12" fill="#333333">The Dealer App and the Accountant Web Portal are the SAME codebase, gated by role — not two separate builds.</text>
+  <text x="500" y="495" text-anchor="middle" font-size="12" fill="#333333">A dealer logging in from a phone browser sees the mobile-optimized PWA view; an accountant logging in from a desktop</text>
+  <text x="500" y="515" text-anchor="middle" font-size="12" fill="#333333">sees the full desktop layout. Same data, same backend, same login system — just responsive layout + permission flags.</text>
+  <text x="500" y="540" text-anchor="middle" font-size="12" fill="#333333">This halves your build effort as a 2-person team: one web codebase instead of two, and it's the highest-leverage</text>
+  <text x="500" y="558" text-anchor="middle" font-size="12" fill="#333333">architecture decision in this whole document.</text>
+</svg>

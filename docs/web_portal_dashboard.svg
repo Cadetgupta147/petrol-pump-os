@@ -1,0 +1,84 @@
+<svg viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1000" height="640" fill="#F7F5F0"/>
+  <!-- top bar -->
+  <rect x="0" y="0" width="1000" height="56" fill="#14213D"/>
+  <text x="24" y="35" font-size="18" font-weight="700" fill="#FFFFFF">⛽ PumpOS — Dealer Dashboard</text>
+  <text x="760" y="35" font-size="12" fill="#C9D1E0">Logged in as: Owner ▾</text>
+  <circle cx="960" cy="28" r="14" fill="#FB8B24"/>
+  <text x="960" y="32" font-size="11" text-anchor="middle" fill="#FFFFFF">RS</text>
+
+  <!-- nav tabs -->
+  <rect x="0" y="56" width="1000" height="36" fill="#1D2E4A"/>
+  <text x="24" y="79" font-size="12" fill="#FFFFFF">Dashboard</text>
+  <text x="120" y="79" font-size="12" fill="#9AA5BD">Billing</text>
+  <text x="190" y="79" font-size="12" fill="#9AA5BD">Meter Readings</text>
+  <text x="310" y="79" font-size="12" fill="#9AA5BD">Credit Customers</text>
+  <text x="440" y="79" font-size="12" fill="#9AA5BD">Loyalty</text>
+  <text x="510" y="79" font-size="12" fill="#9AA5BD">Inventory</text>
+  <text x="590" y="79" font-size="12" fill="#9AA5BD">Staff</text>
+  <text x="650" y="79" font-size="12" fill="#9AA5BD">Reports</text>
+  <text x="720" y="79" font-size="12" fill="#9AA5BD">Cash Custody</text>
+  <text x="830" y="79" font-size="12" fill="#9AA5BD">Settings</text>
+
+  <!-- KPI row -->
+  <g>
+    <rect x="24" y="112" width="220" height="90" rx="8" fill="#FFFFFF" stroke="#E3DECB"/>
+    <text x="40" y="136" font-size="11" fill="#6B7280">TODAY'S SALES</text>
+    <text x="40" y="164" font-size="22" font-weight="700" fill="#14213D">₹4,82,300</text>
+    <text x="40" y="184" font-size="10" fill="#2A9D8F">6,120 L · Cash/Card/UPI/Credit split ▾</text>
+  </g>
+  <g>
+    <rect x="260" y="112" width="220" height="90" rx="8" fill="#FFFFFF" stroke="#E3DECB"/>
+    <text x="276" y="136" font-size="11" fill="#6B7280">TANK STOCK (vs DIP)</text>
+    <text x="276" y="164" font-size="22" font-weight="700" fill="#14213D">MS 68% · HSD 41%</text>
+    <text x="276" y="184" font-size="10" fill="#E63946">HSD below reorder threshold</text>
+  </g>
+  <g>
+    <rect x="496" y="112" width="220" height="90" rx="8" fill="#FFFFFF" stroke="#E3DECB"/>
+    <text x="512" y="136" font-size="11" fill="#6B7280">CASH CUSTODY STATUS</text>
+    <text x="512" y="164" font-size="22" font-weight="700" fill="#14213D">₹12,400</text>
+    <text x="512" y="184" font-size="10" fill="#FB8B24">outstanding with Manager Raj (2 days)</text>
+  </g>
+  <g>
+    <rect x="732" y="112" width="220" height="90" rx="8" fill="#FFFFFF" stroke="#E3DECB"/>
+    <text x="748" y="136" font-size="11" fill="#6B7280">LOYALTY LIABILITY</text>
+    <text x="748" y="164" font-size="22" font-weight="700" fill="#14213D">₹38,900</text>
+    <text x="748" y="184" font-size="10" fill="#6B7280">unredeemed points, this month</text>
+  </g>
+
+  <!-- recent bills table -->
+  <rect x="24" y="220" width="620" height="380" rx="8" fill="#FFFFFF" stroke="#E3DECB"/>
+  <text x="40" y="246" font-size="13" font-weight="700" fill="#14213D">Recent Bills</text>
+  <line x1="24" y1="258" x2="644" y2="258" stroke="#EEE"/>
+  <text x="40" y="278" font-size="10" fill="#6B7280">TIME</text>
+  <text x="120" y="278" font-size="10" fill="#6B7280">CUSTOMER / VEHICLE</text>
+  <text x="330" y="278" font-size="10" fill="#6B7280">AMOUNT</text>
+  <text x="410" y="278" font-size="10" fill="#6B7280">PAYMENT</text>
+  <text x="490" y="278" font-size="10" fill="#6B7280">CHANNEL</text>
+  <text x="580" y="278" font-size="10" fill="#6B7280">STAFF</text>
+  <g font-size="11" fill="#333333">
+    <text x="40" y="304">10:42 AM</text><text x="120" y="304">RJ14 AB 1234</text><text x="330" y="304">₹1,200</text><text x="410" y="304">UPI</text><text x="490" y="304">DSM App</text><text x="580" y="304">Amit</text>
+    <text x="40" y="330">10:36 AM</text><text x="120" y="330">Sunita Traders (credit)</text><text x="330" y="330">₹8,500</text><text x="410" y="330">Credit</text><text x="490" y="330">DSM App</text><text x="580" y="330">Raj</text>
+    <text x="40" y="356">10:20 AM</text><text x="120" y="356">Walk-in · RJ14 XZ 9081</text><text x="330" y="356">₹650</text><text x="410" y="356">Cash</text><text x="490" y="356">Web (manual)</text><text x="580" y="356">Accountant</text>
+    <text x="40" y="382">10:05 AM</text><text x="120" y="382">Priya Sharma</text><text x="330" y="382">₹2,100</text><text x="410" y="382">Card</text><text x="490" y="382">DSM App</text><text x="580" y="382">Amit</text>
+  </g>
+  <text x="40" y="580" font-size="10" fill="#9AA5BD">Every row shows entry channel + editor — full audit trail, editable with permission.</text>
+
+  <!-- side alerts panel -->
+  <rect x="660" y="220" width="316" height="380" rx="8" fill="#FFFFFF" stroke="#E3DECB"/>
+  <text x="676" y="246" font-size="13" font-weight="700" fill="#14213D">Alerts &amp; To-Do</text>
+  <line x1="660" y1="258" x2="976" y2="258" stroke="#EEE"/>
+  <rect x="676" y="270" width="284" height="46" rx="6" fill="#FDEDED"/>
+  <text x="688" y="288" font-size="11" fill="#B3282D">⚠ HSD tank below reorder level</text>
+  <text x="688" y="304" font-size="10" fill="#B3282D">Current: 41% · Threshold: 45%</text>
+  <rect x="676" y="324" width="284" height="46" rx="6" fill="#FFF4E6">
+  </rect>
+  <text x="688" y="342" font-size="11" fill="#B3562E">⏳ 5 credit customers overdue</text>
+  <text x="688" y="358" font-size="10" fill="#B3562E">Total pending: ₹64,200</text>
+  <rect x="676" y="378" width="284" height="46" rx="6" fill="#EAF7F5"/>
+  <text x="688" y="396" font-size="11" fill="#1D6E63">👥 6 staff clocked in</text>
+  <text x="688" y="412" font-size="10" fill="#1D6E63">2 shifts running · Nozzle 3 unassigned</text>
+  <rect x="676" y="432" width="284" height="46" rx="6" fill="#FFF4E6"/>
+  <text x="688" y="450" font-size="11" fill="#B3562E">🎁 Gift stock low: Engine Oil 1L (3 left)</text>
+  <text x="688" y="466" font-size="10" fill="#B3562E">12 customers eligible to redeem</text>
+</svg>
