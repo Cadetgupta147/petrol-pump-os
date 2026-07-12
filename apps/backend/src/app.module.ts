@@ -8,6 +8,7 @@ import { BillsModule } from './bills/bills.module';
 import { CreditConfigModule } from './credit-config/credit-config.module';
 import { CreditAlertsModule } from './credit-alerts/credit-alerts.module';
 import { MeterReadingsModule } from './meter-readings/meter-readings.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 // .env lives at the repo root (npm workspace), not inside apps/backend.
 //
@@ -38,6 +39,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     CreditConfigModule,
     CreditAlertsModule,
     MeterReadingsModule,
+    DashboardModule,
   ],
   controllers: [HealthController],
 })
