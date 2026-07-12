@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Customer" ADD COLUMN     "creditLimit" DOUBLE PRECISION NOT NULL DEFAULT 0;

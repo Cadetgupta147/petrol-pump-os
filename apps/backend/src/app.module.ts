@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { resolve } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
+import { CustomersModule } from './customers/customers.module';
 
 // .env lives at the repo root (npm workspace), not inside apps/backend.
 //
@@ -28,6 +29,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
       envFilePath: ROOT_ENV_PATH,
     }),
     PrismaModule,
+    CustomersModule,
   ],
   controllers: [HealthController],
 })

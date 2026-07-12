@@ -85,6 +85,7 @@ model Customer {
   vehicleNumber   String?
   qrMemberId      String   @unique @default(cuid())
   loyaltyRateOverride Float? // per-customer override of default earning rate
+  creditLimit     Float    @default(0) // Section 3.4 — max outstanding credit allowed
   createdAt       DateTime @default(now())
 
   bills                 Bill[]
