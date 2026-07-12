@@ -130,11 +130,26 @@ Every feature below includes **what it does, why it exists, and how it works** �
 
 - Customer master: name, phone, vehicle number(s), credit limit, outstanding balance
 - Full ledger per customer: every bill, every payment, running balance
-- Set/edit credit limit — bills should be blocked (or flagged) if a customer is over their limit
+- Set/edit credit limit — see 3.4A below for how over-limit bills are actually handled (dealer's choice, not a hard rule)
 - Record payment received (cash/UPI/bank transfer against dues)
 - Bulk statement export (for month-end billing to credit customers, e.g. a transport company)
 
 **Why it exists:** credit customers are typically your highest-value, highest-risk relationships — a fleet operator running a monthly tab. Losing track of who owes what, and by how much, is the single most common way small pumps bleed money silently.
+
+### 3.4A Informal Credit & Limit Enforcement — Dealer's Choice, Resolved
+
+*(Resolves the open item from §17 — walk-in credit doesn't require full customer registration, and limit enforcement is a dealer-level setting, not hardcoded.)*
+
+**Informal credit customers:** a DSM or accountant can put a bill on credit for a walk-in without full onboarding — just a quick-add of name + vehicle number at the moment of billing. This creates a `Customer` record flagged `informal` (vs. `verified`), which is visually marked **yellow** everywhere credit customers appear (dashboard dues panel, credit customer list, ledger view) until an Owner/Accountant later upgrades them to `verified` (adds phone, sets a real credit limit). Nothing about being `informal` blocks them from getting credit — it's purely a visibility flag so you always know, at a glance, which of your credit customers were never formally vetted.
+
+**Credit limit enforcement mode — `CreditConfig.enforcementMode`:**
+
+| Mode | Behavior | Default? |
+|---|---|---|
+| `NOTIFY` | Bill goes through even over the limit. Dealer gets an immediate alert with a one-tap "Send payment reminder to this customer?" action — yes triggers the push/SMS/WhatsApp flow from §11, no just dismisses it. | **Yes, default** |
+| `BLOCK` | Bill is rejected at the point of sale if it would exceed the limit. | Off by default, available for dealers who want a hard stop |
+
+**Default informal credit limit:** to avoid genuinely unlimited exposure on a customer nobody has vetted, a dealer-set `CreditConfig.defaultInformalCreditLimit` auto-applies to any quick-added customer (editable per-customer once verified). This never blocks a bill under `NOTIFY` mode — it just determines when the notify-and-optionally-remind trigger fires. A dealer can set this to a very high number if they'd rather not have even a soft trigger point.
 
 ### 3.5 Loyalty Program Control
 
@@ -803,6 +818,7 @@ This is a **rough planning estimate, not a promise** — it assumes two people w
 - [ ] Confirm legal entity structure before any future cross-business loyalty (e.g. a second business sharing the same points program)
 - [ ] Agree on the Person A / Person B split (Section 16.1) explicitly before writing code, to avoid overlapping work
 - [ ] **Data privacy (DPDP Act):** customer phone numbers, vehicle numbers, and KYC-lite loyalty profiles (§6.1) are personal data under India's Digital Personal Data Protection Act. Before Phase 3 collects real customer data, confirm you have basic consent capture at signup and a way to delete a customer's data on request — doesn't need to be elaborate at your scale, but it does need to exist.
+- [x] **Informal walk-in credit tabs — RESOLVED, see §3.4A.** Walk-in credit doesn't require full customer registration (quick-add + `informal` flag, shown yellow in UI). Credit limit enforcement is a dealer-configurable setting (`NOTIFY` default — bill still goes through, dealer gets an alert with an optional one-tap payment reminder; `BLOCK` available for dealers who want a hard stop), with a dealer-set default informal credit limit so exposure isn't fully unbounded.
 
 ---
 

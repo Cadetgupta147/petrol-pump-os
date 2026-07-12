@@ -4,6 +4,9 @@ import { resolve } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
 import { CustomersModule } from './customers/customers.module';
+import { BillsModule } from './bills/bills.module';
+import { CreditConfigModule } from './credit-config/credit-config.module';
+import { CreditAlertsModule } from './credit-alerts/credit-alerts.module';
 
 // .env lives at the repo root (npm workspace), not inside apps/backend.
 //
@@ -30,6 +33,9 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     }),
     PrismaModule,
     CustomersModule,
+    BillsModule,
+    CreditConfigModule,
+    CreditAlertsModule,
   ],
   controllers: [HealthController],
 })

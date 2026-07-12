@@ -10,7 +10,7 @@ import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 
-// Section 3.4 — Customer master CRUD (create/view/edit only; no ledger here).
+// Section 3.4 — Customer master CRUD + full per-customer ledger.
 //
 // NO AUTH/ROLE GUARDS YET — this repo has no auth infrastructure at all
 // (see CLAUDE.md: "never trust the frontend to enforce permissions" /
@@ -39,5 +39,12 @@ export class CustomersController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
     return this.customersService.update(id, dto);
+  }
+
+  // Section 3.4 — full ledger per customer: every bill, every payment,
+  // running balance.
+  @Get(':id/ledger')
+  ledger(@Param('id') id: string) {
+    return this.customersService.ledger(id);
   }
 }

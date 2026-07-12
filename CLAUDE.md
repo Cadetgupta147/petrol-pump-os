@@ -63,4 +63,9 @@ Tracked in `docs/master-plan.md` Section 17:
 
 ## Team split
 
-Person A: backend + web portal (`backend-agent`). Person B: mobile apps (`mobile-agent`), built against Person A's API contract (OpenAPI/Swagger, once the backend exists). See Section 16.1. Don't cross-edit each other's `apps/` folder without syncing first — the shared contract lives in `packages/shared-types`.
+Currently solo: one person covering both backend-agent and mobile-agent roles until a 
+second person onboards (see docs/master-plan.md Section 16.1 for the intended split).
+Work sequentially, not in parallel — don't run backend-agent and mobile-agent sessions 
+at the same time, since it's the same Pro subscription and usage window either way.
+Mobile app work (Phase 2+) shouldn't start until the backend has a stable API contract 
+to build against — see Section 16.4 phase order.

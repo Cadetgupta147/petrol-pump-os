@@ -50,6 +50,24 @@ enum RedemptionType {
   BOTH
 }
 
+enum BillAuditAction {
+  CREATED
+  EDITED
+  DELETED
+}
+
+// Section 3.4A — informal (quick-added, unvetted) vs verified customers.
+enum CustomerVerificationStatus {
+  INFORMAL
+  VERIFIED
+}
+
+// Section 3.4A — dealer-configurable credit limit enforcement.
+enum CreditEnforcementMode {
+  NOTIFY
+  BLOCK
+}
+
 // ---------- Staff / Users / Roles ----------
 
 model Staff {
@@ -63,6 +81,9 @@ model Staff {
   updatedAt      DateTime        @updatedAt
 
   billsEntered       Bill[]              @relation("BillEnteredBy")
+  billsLastEdited    Bill[]              @relation("BillLastEditedBy")
+  billsDeleted       Bill[]              @relation("BillDeletedBy")
+  billAuditLogs      BillAuditLog[]
   meterReadings      MeterReading[]
   attendanceLogs     AttendanceLog[]
   cashCustodyLogs    CashCustodyLog[]
@@ -81,17 +102,24 @@ model AttendanceLog {
 model Customer {
   id              String   @id @default(cuid())
   name            String
-  phone           String   @unique // KYC-lite identity — Section 6.1
+  phone           String?  @unique // KYC-lite identity — Section 6.1. Optional: quick-added
+  // (informal) customers via bill-time quick-add (Section 3.4A) don't have a phone yet.
+  // Postgres unique indexes treat multiple NULLs as distinct, so this stays safe.
   vehicleNumber   String?
   qrMemberId      String   @unique @default(cuid())
   loyaltyRateOverride Float? // per-customer override of default earning rate
   creditLimit     Float    @default(0) // Section 3.4 — max outstanding credit allowed
+  // Section 3.4A — INFORMAL (quick-added at bill time, name + vehicle only) vs
+  // VERIFIED (normal /customers onboarding, or an informal customer later
+  // upgraded via PATCH). Visibility flag only — never itself blocks credit.
+  verificationStatus CustomerVerificationStatus @default(VERIFIED)
   createdAt       DateTime @default(now())
 
   bills                 Bill[]
   loyaltyTransactions   LoyaltyTransaction[]
   redemptionTransactions RedemptionTransaction[]
   payments              Payment[]
+  creditAlerts          CreditLimitAlert[]
 }
 
 model Bill {
@@ -113,8 +141,31 @@ model Bill {
   loyaltyPointsEarned Float         @default(0)
   loyaltyBasisUsed    EarningBasis?
 
+  lastEditedBy       Staff?        @relation("BillLastEditedBy", fields: [lastEditedById], references: [id])
+  lastEditedById     String?
+  lastEditedAt       DateTime?
+  deletedBy          Staff?        @relation("BillDeletedBy", fields: [deletedById], references: [id])
+  deletedById        String?
+  deletedAt          DateTime?
+
   loyaltyTransactions LoyaltyTransaction[]
   paymentLines        BillPaymentLine[]
+  auditLogs           BillAuditLog[]
+  creditAlerts        CreditLimitAlert[]
+}
+
+// Immutable audit trail for Bill — one row per create/edit/delete action,
+// each holding a full snapshot. The CREATED row is never modified or
+// removed, so the original entry's history survives every later edit.
+model BillAuditLog {
+  id            String           @id @default(cuid())
+  bill          Bill             @relation(fields: [billId], references: [id])
+  billId        String
+  action        BillAuditAction
+  performedBy   Staff            @relation(fields: [performedById], references: [id])
+  performedById String
+  performedAt   DateTime         @default(now())
+  snapshot      Json
 }
 
 // Section 5A — a bill can be settled across multiple payment methods
@@ -129,6 +180,37 @@ model BillPaymentLine {
   amount      Float
   direction   PaymentDirection // IN = money received, OUT = change given back
   createdAt   DateTime          @default(now())
+}
+
+// Section 3.4A — dealer-configurable credit limit enforcement mode + the
+// default credit limit auto-applied to quick-added (informal) customers.
+// Singleton pattern: only one row is ever really meant to matter — see
+// CreditConfigService.getOrCreate().
+model CreditConfig {
+  id                         String                @id @default(cuid())
+  enforcementMode            CreditEnforcementMode  @default(NOTIFY)
+  defaultInformalCreditLimit Float                  @default(5000)
+  updatedAt                  DateTime               @updatedAt
+}
+
+// Section 3.4A — one alert per bill that exceeded the customer's credit
+// limit while CreditConfig.enforcementMode = NOTIFY (the bill still
+// succeeds; this is the "dealer gets notified" side-effect). reminderRequested
+// is null until the dealer acts on it (true/false) via PATCH /credit-alerts/:id;
+// actually sending the reminder is Section 11, out of scope here.
+model CreditLimitAlert {
+  id                  String    @id @default(cuid())
+  bill                Bill      @relation(fields: [billId], references: [id])
+  billId              String
+  customer            Customer  @relation(fields: [customerId], references: [id])
+  customerId          String
+  outstandingBefore   Float
+  billNetCredit       Float
+  creditLimit         Float
+  overageAmount       Float
+  reminderRequested   Boolean?
+  reminderRequestedAt DateTime?
+  createdAt           DateTime  @default(now())
 }
 
 // ---------- Meter Readings / Tanks ----------
