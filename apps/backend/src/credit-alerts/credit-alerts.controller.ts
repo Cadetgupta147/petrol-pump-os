@@ -5,7 +5,8 @@ import { UpdateCreditAlertDto } from './dto/update-credit-alert.dto';
 // Section 3.4A — dealer-facing view of over-limit credit bills raised under
 // CreditConfig.enforcementMode = NOTIFY.
 //
-// NO AUTH/ROLE GUARDS YET — see CreditAlertsService header.
+// Auth: see CreditAlertsService header — global JwtAuthGuard applies, no
+// @Roles() restriction (not one of Accountant's three carve-outs).
 @Controller('credit-alerts')
 export class CreditAlertsController {
   constructor(private readonly creditAlertsService: CreditAlertsService) {}

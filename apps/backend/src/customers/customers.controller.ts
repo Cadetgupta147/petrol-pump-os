@@ -12,11 +12,9 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 
 // Section 3.4 — Customer master CRUD + full per-customer ledger.
 //
-// NO AUTH/ROLE GUARDS YET — this repo has no auth infrastructure at all
-// (see CLAUDE.md: "never trust the frontend to enforce permissions" /
-// Section 2 role matrix). Every endpoint below is currently open to anyone
-// who can reach the API. Flagged in the module report — must be closed
-// before this ships past local development.
+// Auth: every route below requires a valid JWT (global JwtAuthGuard, see
+// app.module.ts). Open to any authenticated staff member — per Section 2,
+// Owner and Accountant both have full access to customer management.
 @Controller('customers')
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}

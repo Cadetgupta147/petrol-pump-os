@@ -16,8 +16,8 @@ import { CloseShiftDto } from './dto/close-shift.dto';
 // check feeds directly into detecting under-billing/pilferage — treat any
 // consuming feature (e.g. an automated alert) with the same care.
 //
-// NO AUTH/ROLE GUARDS YET — same gap as BillsController/CustomersController.
-// Every endpoint below is currently open to anyone who can reach the API.
+// Auth: enforced at the controller level (global JwtAuthGuard) — see
+// meter-readings.controller.ts.
 //
 // KNOWN SCOPE GAP (flagged per task spec, not silently resolved): `Bill` has
 // no `nozzleId` or `shiftId` FK — there is no direct link from a Bill to the

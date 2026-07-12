@@ -6,9 +6,10 @@ import { UpdateCreditAlertDto } from './dto/update-credit-alert.dto';
 // internally by BillsService (inside the same transaction as the bill that
 // triggered them), so there is deliberately no POST /credit-alerts here.
 //
-// NO AUTH/ROLE GUARDS YET — same gap as CustomersService/BillsService.
-// These alerts surface money-adjacent info (a customer's credit overage) and
-// must be Owner/Accountant-only before this ships past local development.
+// Auth: enforced at the controller level (global JwtAuthGuard, see
+// app.module.ts). Open to any authenticated staff member — per Section 2,
+// Accountant's only restrictions are loyalty rates/staff PINs/business
+// settings, none of which this touches, so it's not @Roles()-restricted.
 @Injectable()
 export class CreditAlertsService {
   constructor(private readonly prisma: PrismaService) {}

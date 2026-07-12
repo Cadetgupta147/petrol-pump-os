@@ -76,6 +76,9 @@ model Staff {
   phone          String          @unique
   role           Role
   pinHash        String? // for DSM app PIN login
+  // Web portal (Owner/Accountant/Manager/Read-only) login credential — Section 2.
+  // Nullable: DSM-only staff authenticate via pinHash on the DSM app, not here.
+  passwordHash   String?
   active         Boolean         @default(true)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt

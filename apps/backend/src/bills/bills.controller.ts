@@ -15,12 +15,12 @@ import { DeleteBillDto } from './dto/delete-bill.dto';
 // Section 3.2 — manual bill entry / bill register (create, read, edit,
 // soft-delete).
 //
-// NO AUTH/ROLE GUARDS YET — same gap as CustomersController (CLAUDE.md:
-// "never trust the frontend to enforce permissions" / Section 2 role
-// matrix). Every endpoint below is currently open to anyone who can reach
-// the API. This module is money-touching (Section 5A split payments,
-// Section 3.4 credit limit) — closing this gap is a prerequisite for
-// shipping past local development.
+// Auth: every route below requires a valid JWT (global JwtAuthGuard, see
+// app.module.ts) and is open to any authenticated staff member — per
+// Section 2, Owner and Accountant both have full access to bill entry/edit.
+// No @Roles() restriction here; this module is money-touching (Section 5A
+// split payments, Section 3.4 credit limit), so keep server-side balancing
+// checks (BillsService) as the actual safeguard, not just who's logged in.
 @Controller('bills')
 export class BillsController {
   constructor(private readonly billsService: BillsService) {}

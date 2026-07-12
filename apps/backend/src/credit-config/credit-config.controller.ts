@@ -4,9 +4,8 @@ import { UpdateCreditConfigDto } from './dto/update-credit-config.dto';
 
 // Section 3.4A — dealer-configurable credit limit enforcement policy.
 //
-// NO AUTH/ROLE GUARDS YET — see CreditConfigService header. This is
-// money-adjacent policy config and must be Owner/Accountant-only before it
-// ships past local development.
+// Auth: see CreditConfigService header — global JwtAuthGuard applies, no
+// @Roles() restriction (not one of Accountant's three carve-outs).
 @Controller('credit-config')
 export class CreditConfigController {
   constructor(private readonly creditConfigService: CreditConfigService) {}

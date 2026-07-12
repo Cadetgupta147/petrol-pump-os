@@ -7,10 +7,9 @@ import { CloseShiftDto } from './dto/close-shift.dto';
 // corrections, per-shift/per-nozzle view, and the litres-sold-vs-billed
 // variance flag).
 //
-// NO AUTH/ROLE GUARDS YET — same gap as BillsController/CustomersController
-// (CLAUDE.md: "never trust the frontend to enforce permissions" / Section 2
-// role matrix). Every endpoint below is currently open to anyone who can
-// reach the API.
+// Auth: every route below requires a valid JWT (global JwtAuthGuard, see
+// app.module.ts). Open to any authenticated staff member — per Section 2,
+// Owner and Accountant both have full access to meter reading management.
 @Controller('meter-readings')
 export class MeterReadingsController {
   constructor(private readonly meterReadingsService: MeterReadingsService) {}

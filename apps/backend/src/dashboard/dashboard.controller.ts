@@ -4,10 +4,9 @@ import { DashboardService } from './dashboard.service';
 // Section 3.1 (Dashboard) / Section 12 (Reports & Analytics) — scoped-down
 // slice: today's sales summary, tank stock snapshot, recent bills list only.
 //
-// NO AUTH/ROLE GUARDS YET — same gap as BillsController/CustomersController/
-// MeterReadingsController (CLAUDE.md: "never trust the frontend to enforce
-// permissions" / Section 2 role matrix). Every endpoint below is currently
-// open to anyone who can reach the API.
+// Auth: every route below requires a valid JWT (global JwtAuthGuard, see
+// app.module.ts). Open to any authenticated staff member — per Section 2,
+// Owner and Accountant both have full access to dashboard/reports.
 @Controller('dashboard')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}

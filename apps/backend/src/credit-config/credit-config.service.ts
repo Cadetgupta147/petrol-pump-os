@@ -13,10 +13,10 @@ import { UpdateCreditConfigDto } from './dto/update-credit-config.dto';
 // row can ever exist, with no race window between concurrent first-ever
 // calls.
 //
-// NO AUTH/ROLE GUARDS YET — same gap as CustomersService/BillsService. This
-// endpoint changes money-adjacent policy (credit enforcement mode) and must
-// be locked down (Owner/Accountant only, per Section 2) before it ships past
-// local development.
+// Auth: enforced at the controller level (global JwtAuthGuard, see
+// app.module.ts). Open to any authenticated staff member — per Section 2,
+// Accountant's only restrictions are loyalty rates/staff PINs/business
+// settings, none of which this touches, so it's not @Roles()-restricted.
 const CREDIT_CONFIG_ID = 'singleton';
 
 @Injectable()

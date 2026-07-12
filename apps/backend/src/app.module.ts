@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { resolve } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
@@ -9,6 +10,9 @@ import { CreditConfigModule } from './credit-config/credit-config.module';
 import { CreditAlertsModule } from './credit-alerts/credit-alerts.module';
 import { MeterReadingsModule } from './meter-readings/meter-readings.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { RolesGuard } from './auth/guards/roles.guard';
 
 // .env lives at the repo root (npm workspace), not inside apps/backend.
 //
@@ -34,6 +38,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
       envFilePath: ROOT_ENV_PATH,
     }),
     PrismaModule,
+    AuthModule,
     CustomersModule,
     BillsModule,
     CreditConfigModule,
@@ -42,5 +47,15 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     DashboardModule,
   ],
   controllers: [HealthController],
+  providers: [
+    // Section 2 — every endpoint requires a valid JWT by default (JwtAuthGuard),
+    // then a role check (RolesGuard) for any route carrying @Roles(...).
+    // Order matters: Nest runs APP_GUARD providers in registration order, so
+    // JwtAuthGuard populates req.user before RolesGuard reads it.
+    // Use @Public() (see auth/decorators/public.decorator.ts) to opt a route
+    // out of authentication entirely — currently just /auth/login and /health.
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+  ],
 })
 export class AppModule {}
