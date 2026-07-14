@@ -10,6 +10,7 @@ import { CreditConfigModule } from './credit-config/credit-config.module';
 import { CreditAlertsModule } from './credit-alerts/credit-alerts.module';
 import { MeterReadingsModule } from './meter-readings/meter-readings.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { TallyExportModule } from './tally-export/tally-export.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -45,6 +46,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     CreditAlertsModule,
     MeterReadingsModule,
     DashboardModule,
+    TallyExportModule,
   ],
   controllers: [HealthController],
   providers: [

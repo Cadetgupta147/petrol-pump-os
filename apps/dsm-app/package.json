@@ -1,0 +1,26 @@
+{
+  "name": "dsm-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DSM (Daily Sales Man) mobile app. See docs/master-plan.md Section 4 and CLAUDE.md.",
+  "main": "index.ts",
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.1.0",
+    "expo": "~57.0.4",
+    "expo-status-bar": "~57.0.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  }
+}

@@ -386,9 +386,14 @@ model Payment {
 // ---------- Tally Export ----------
 
 model TallyExportLog {
-  id         String   @id @default(cuid())
-  exportedAt DateTime @default(now())
-  format     String // "xml" | "api"
-  recordCount Int
-  status     String // "success" | "failed"
+  id            String   @id @default(cuid())
+  exportedAt    DateTime @default(now())
+  format        String // "xml" | "api"
+  recordCount   Int
+  status        String // "success" | "failed"
+  // Section 10 — date range the export covered, logged so the "Tally export
+  // log" report (Section 12) can show what period was exported/synced, not
+  // just when the export was run.
+  dateRangeFrom DateTime
+  dateRangeTo   DateTime
 }
