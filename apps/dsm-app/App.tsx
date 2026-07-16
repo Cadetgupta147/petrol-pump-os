@@ -13,11 +13,15 @@ import { clearSession, loadSession, saveSession } from './src/storage/sessionSto
 export default function App() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [staff, setStaff] = useState<StaffSummary | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
     loadSession()
       .then((session) => {
-        if (session) setStaff(session.staff);
+        if (session) {
+          setStaff(session.staff);
+          setAccessToken(session.accessToken);
+        }
       })
       .finally(() => setCheckingSession(false));
   }, []);
@@ -25,11 +29,13 @@ export default function App() {
   const handleLoginSuccess = async (response: PinLoginResponse) => {
     await saveSession(response);
     setStaff(response.staff);
+    setAccessToken(response.accessToken);
   };
 
   const handleLogOut = async () => {
     await clearSession();
     setStaff(null);
+    setAccessToken(null);
   };
 
   if (checkingSession) {
@@ -43,8 +49,8 @@ export default function App() {
 
   return (
     <>
-      {staff ? (
-        <LoggedInScreen staff={staff} onLogOut={handleLogOut} />
+      {staff && accessToken ? (
+        <LoggedInScreen staff={staff} accessToken={accessToken} onLogOut={handleLogOut} />
       ) : (
         <PinLoginScreen onLoginSuccess={handleLoginSuccess} />
       )}

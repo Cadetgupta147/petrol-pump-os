@@ -1,0 +1,62 @@
+:root {
+  --navy: #0f1b33;
+  --navy-2: #1b2c4d;
+  --orange: #fb8b24;
+  --border: #e7e3d8;
+  --row-line: #f0eee6;
+  --zebra: #fbfaf6;
+  --gray: #6b7280;
+  --gray-light: #9aa5bd;
+  --text-dark: #14213d;
+  --red: #b3282d;
+  --red-bg: #fdeded;
+  --amber: #b3562e;
+  --amber-bg: #fff4e6;
+  --green: #1d6e63;
+  --green-bg: #eaf7f5;
+  --blue: #185fa5;
+  --purple: #534ab7;
+  --purple-bg: #eeedfb;
+  --white: #ffffff;
+  --page-bg: #f7f5ef;
+
+  --dot-teal: #1d9e75;
+  --dot-blue: #378add;
+  --dot-purple: #7f77dd;
+  --dot-amber: #ef9f27;
+  --dot-gray: #9aa5bd;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--text-dark);
+  font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+h1, h2, h3 {
+  margin: 0;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+a {
+  color: inherit;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}

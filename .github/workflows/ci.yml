@@ -27,6 +27,7 @@ jobs:
 
     env:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/petrol_pump_os?schema=public"
+      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/petrol_pump_os?schema=public"
 
     steps:
       - uses: actions/checkout@v4
