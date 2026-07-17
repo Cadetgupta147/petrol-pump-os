@@ -4,6 +4,12 @@ export interface DashboardAlert {
   sub?: string;
   severity: 'red' | 'amber';
   onClick?: () => void;
+  action?: {
+    label: string;
+    pending: boolean;
+    done: boolean;
+    onClick: () => void;
+  };
 }
 
 interface AlertsPanelProps {
@@ -42,6 +48,22 @@ export function AlertsPanel({ alerts }: AlertsPanelProps) {
               </div>
             )}
           </div>
+          {alert.action && (
+            <button
+              type="button"
+              disabled={alert.action.pending || alert.action.done}
+              onClick={(e) => {
+                e.stopPropagation();
+                alert.action?.onClick();
+              }}
+            >
+              {alert.action.done
+                ? 'Reminder requested'
+                : alert.action.pending
+                  ? 'Requesting…'
+                  : alert.action.label}
+            </button>
+          )}
           {alert.onClick && (
             <span style={{ color: alert.severity === 'red' ? 'var(--red)' : 'var(--amber)' }}>
               &rsaquo;

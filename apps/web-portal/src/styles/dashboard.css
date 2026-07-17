@@ -533,3 +533,94 @@
   color: var(--amber);
   text-decoration: none;
 }
+
+/* Add/edit customer modal — Section 3.4. Named .form-* (not .login-*) since
+   this is shared across pages, unlike the login-page-scoped classes above. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 27, 51, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.modal-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 380px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.form-field {
+  margin-bottom: 14px;
+}
+
+.form-field label {
+  display: block;
+  font-size: 12px;
+  color: var(--gray);
+  margin-bottom: 6px;
+}
+
+.form-field input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+}
+
+.form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dark);
+  margin-bottom: 16px;
+}
+
+.form-error {
+  color: var(--red);
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.btn-secondary {
+  background: var(--page-bg);
+  color: var(--text-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.export-btn:disabled,
+.btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  margin-right: 4px;
+}

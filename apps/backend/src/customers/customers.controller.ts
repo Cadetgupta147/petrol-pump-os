@@ -18,6 +18,8 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 // app.module.ts) and is explicitly restricted to Owner/Accountant via
 // @Roles(Role.OWNER, Role.ACCOUNTANT) below — per Section 2, both have full
 // access to customer management.
+// findAll() additionally allows Role.DSM — per Section 4, DSM needs customer
+// lookup for the credit picker.
 @Roles(Role.OWNER, Role.ACCOUNTANT)
 @Controller('customers')
 export class CustomersController {
@@ -28,6 +30,7 @@ export class CustomersController {
     return this.customersService.create(dto);
   }
 
+  @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Get()
   findAll() {
     return this.customersService.findAll();

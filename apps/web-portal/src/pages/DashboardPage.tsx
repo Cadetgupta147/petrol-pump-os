@@ -11,7 +11,7 @@ import { RecentBillsTable } from '../components/dashboard/RecentBillsTable';
 import { AlertsPanel, type DashboardAlert } from '../components/dashboard/AlertsPanel';
 import { ComingSoon } from '../components/dashboard/ComingSoon';
 import { getSalesSummary, getTankStock, getRecentBills } from '../api/dashboard';
-import { getCreditAlerts } from '../api/creditAlerts';
+import { getCreditAlerts, updateCreditAlert } from '../api/creditAlerts';
 import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
 import { getAllBills } from '../api/bills';
 import { downloadTallyExport } from '../api/tallyExport';
@@ -102,6 +102,9 @@ export function DashboardPage() {
   const [varianceByReadingId, setVarianceByReadingId] = useState<Map<string, MeterVariance>>(new Map());
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [pendingReminderIds, setPendingReminderIds] = useState<Set<string>>(new Set());
+  const [reminderError, setReminderError] = useState<string | null>(null);
+  const [varianceCheckError, setVarianceCheckError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,7 +135,7 @@ export function DashboardPage() {
         }
       }
     }
-    load();
+    void load();
     return () => {
       cancelled = true;
     };
@@ -145,26 +148,57 @@ export function DashboardPage() {
     if (!data) return;
     const closedReadings = data.meterReadings.filter((r) => r.closingReading !== null);
     let cancelled = false;
-    Promise.all(
-      closedReadings.map(async (reading) => {
-        try {
-          return [reading.id, await getMeterVariance(reading.id)] as const;
-        } catch {
-          return null;
-        }
-      }),
-    ).then((results) => {
+    async function loadVariance() {
+      const results = await Promise.all(
+        closedReadings.map(async (reading) => {
+          try {
+            return { readingId: reading.id, variance: await getMeterVariance(reading.id), failed: false as const };
+          } catch {
+            return { readingId: reading.id, variance: null, failed: true as const };
+          }
+        }),
+      );
       if (cancelled) return;
       const next = new Map<string, MeterVariance>();
+      const failedCount = results.filter((r) => r.failed).length;
       for (const result of results) {
-        if (result) next.set(result[0], result[1]);
+        if (!result.failed) next.set(result.readingId, result.variance);
       }
       setVarianceByReadingId(next);
-    });
+      setVarianceCheckError(
+        failedCount > 0
+          ? `Could not verify meter variance for ${failedCount} reading${failedCount === 1 ? '' : 's'} — treat as unverified, not clean.`
+          : null,
+      );
+    }
+    void loadVariance();
     return () => {
       cancelled = true;
     };
   }, [data]);
+
+  async function handleRequestReminder(alertId: string) {
+    setReminderError(null);
+    setPendingReminderIds((prev) => new Set(prev).add(alertId));
+    try {
+      const updated = await updateCreditAlert(alertId, true);
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          creditAlerts: prev.creditAlerts.map((a) => (a.id === alertId ? updated : a)),
+        };
+      });
+    } catch (err) {
+      setReminderError(err instanceof ApiError ? err.message : 'Could not request reminder.');
+    } finally {
+      setPendingReminderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(alertId);
+        return next;
+      });
+    }
+  }
 
   const alerts = useMemo<DashboardAlert[]>(() => {
     if (!data) return [];
@@ -200,20 +234,24 @@ export function DashboardPage() {
       }
     }
 
-    const distinctCustomers = new Set(data.creditAlerts.map((a) => a.customerId));
-    if (distinctCustomers.size > 0) {
-      const totalOverage = data.creditAlerts.reduce((sum, a) => sum + a.overageAmount, 0);
+    for (const alert of data.creditAlerts) {
       list.push({
-        id: 'credit-alerts',
-        title: `${distinctCustomers.size} customer${distinctCustomers.size === 1 ? '' : 's'} over credit limit`,
-        sub: `${formatRupees(totalOverage)} total overage — view customers`,
+        id: `credit-${alert.id}`,
+        title: `${alert.customer.name} over credit limit`,
+        sub: `${formatRupees(alert.overageAmount)} over — view customers`,
         severity: 'amber',
         onClick: () => navigate('/customers'),
+        action: {
+          label: 'Request reminder',
+          pending: pendingReminderIds.has(alert.id),
+          done: alert.reminderRequested === true,
+          onClick: () => handleRequestReminder(alert.id),
+        },
       });
     }
 
     return list;
-  }, [data, varianceByReadingId, navigate]);
+  }, [data, varianceByReadingId, navigate, pendingReminderIds]);
 
   async function handleExport() {
     setExportError(null);
@@ -341,6 +379,7 @@ export function DashboardPage() {
             <h3>Nozzle readings</h3>
             <span className="section-note">today&rsquo;s shifts, meter vs billed</span>
           </div>
+          {varianceCheckError && <div className="banner">{varianceCheckError}</div>}
           <NozzleReadingsTable readings={meterReadings} varianceByReadingId={varianceByReadingId} />
         </div>
 
@@ -358,6 +397,7 @@ export function DashboardPage() {
                 <h3>Alerts</h3>
                 <span className="section-note">tank variance, nozzle variance &amp; credit limit</span>
               </div>
+              {reminderError && <div className="banner">{reminderError}</div>}
               <AlertsPanel alerts={alerts} />
             </div>
           </div>

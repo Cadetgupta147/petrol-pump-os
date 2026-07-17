@@ -82,6 +82,25 @@ export interface Bill {
   customer?: { id: string; name: string; verificationStatus: string } | null;
 }
 
+// Mirrors apps/backend/src/bills/dto/update-bill.dto.ts — any subset of
+// vehicleNumber/customerName/amount/litres/productType/rateApplied/
+// customerId/paymentLines (PartialType of CreateBillDto minus enteredById/
+// entryChannel, which stay immutable after creation), plus a required
+// editedById (no auth-derived actor yet, so the caller passes staff.id
+// explicitly — same pattern as CreateBillRequest's enteredById would be).
+// paymentLines, if provided, is a FULL REPLACEMENT of the bill's existing
+// payment lines, not a merge (see BillsService.update()) — this page only
+// edits the scalar fields, so paymentLines is deliberately omitted here.
+export interface UpdateBillRequest {
+  vehicleNumber?: string;
+  customerName?: string;
+  amount?: number;
+  litres?: number;
+  productType?: string;
+  rateApplied?: number;
+  editedById: string;
+}
+
 export interface MeterReading {
   id: string;
   nozzleId: string;
@@ -135,6 +154,28 @@ export interface Customer {
   creditLimit: number;
   verificationStatus: 'INFORMAL' | 'VERIFIED';
   createdAt: string;
+}
+
+// Mirrors apps/backend/src/customers/dto/create-customer.dto.ts. `phone` is
+// required here (the DTO's @IsPhoneNumber('IN') is the real enforcement —
+// this type just keeps the request body honest, not a validation duplicate).
+export interface CreateCustomerRequest {
+  name: string;
+  phone: string;
+  vehicleNumber?: string;
+  creditLimit?: number;
+}
+
+// Mirrors apps/backend/src/customers/dto/update-customer.dto.ts — every
+// field optional (PartialType of CreateCustomerDto) plus verificationStatus,
+// which only exists on the PATCH path (the INFORMAL -> VERIFIED upgrade,
+// Section 3.4A).
+export interface UpdateCustomerRequest {
+  name?: string;
+  phone?: string;
+  vehicleNumber?: string;
+  creditLimit?: number;
+  verificationStatus?: 'INFORMAL' | 'VERIFIED';
 }
 
 export interface LedgerEntry {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
+import { CustomerFormModal } from '../components/customers/CustomerFormModal';
 import { getAllCustomers } from '../api/customers';
 import { ApiError } from '../api/client';
 import { formatRupees } from '../utils/format';
@@ -15,6 +16,12 @@ export function CustomersPage() {
   const navigate = useNavigate();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Two distinct modal states rather than one "editing customer | null"
+  // union that also doubles for "adding": `addingCustomer` and
+  // `editingCustomer` both feed the same CustomerFormModal, whose mode is
+  // selected by whether a `customer` prop is passed.
+  const [addingCustomer, setAddingCustomer] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,14 +39,33 @@ export function CustomersPage() {
     };
   }, []);
 
+  // Called after a successful POST or PATCH from the modal. Re-fetching the
+  // whole list keeps this in sync with server-side defaults (e.g. the
+  // generated qrMemberId on a new customer) rather than trying to guess the
+  // full Customer shape from just the form fields.
+  function handleSaved() {
+    setAddingCustomer(false);
+    setEditingCustomer(null);
+    getAllCustomers()
+      .then(setCustomers)
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+      });
+  }
+
   return (
     <>
       <TopBar />
       <NavBar />
       <div className="content">
-        <div className="section-title">
-          <h3>Credit customers</h3>
-          <span className="section-note">GET /customers — click a row for the full ledger</span>
+        <div className="content-header">
+          <div className="section-title">
+            <h3>Credit customers</h3>
+            <span className="section-note">GET /customers — click a row for the full ledger</span>
+          </div>
+          <button className="export-btn" onClick={() => setAddingCustomer(true)}>
+            + Add customer
+          </button>
         </div>
 
         {error && <div className="error-box">{error}</div>}
@@ -82,12 +108,38 @@ export function CustomersPage() {
                       </span>
                     </td>
                     <td className="num">{formatRupees(customer.creditLimit)}</td>
-                    <td className="chevron">&rsaquo;</td>
+                    <td className="chevron">
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={(event) => {
+                          // Row itself navigates to the ledger on click —
+                          // stop that from firing so Edit opens the modal
+                          // instead of also routing away.
+                          event.stopPropagation();
+                          setEditingCustomer(customer);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <span>&rsaquo;</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        )}
+
+        {addingCustomer && (
+          <CustomerFormModal onClose={() => setAddingCustomer(false)} onSaved={handleSaved} />
+        )}
+        {editingCustomer && (
+          <CustomerFormModal
+            customer={editingCustomer}
+            onClose={() => setEditingCustomer(null)}
+            onSaved={handleSaved}
+          />
         )}
       </div>
     </>

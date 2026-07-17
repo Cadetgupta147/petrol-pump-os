@@ -13,16 +13,20 @@ import { CloseShiftDto } from './dto/close-shift.dto';
 // app.module.ts) and is explicitly restricted to Owner/Accountant via
 // @Roles(Role.OWNER, Role.ACCOUNTANT) below — per Section 2, both have full
 // access to meter reading management.
+// openShift() and closeShift() additionally allow Role.DSM — per Section 2,
+// DSM/Cashier opens and closes their own shift from the DSM app.
 @Roles(Role.OWNER, Role.ACCOUNTANT)
 @Controller('meter-readings')
 export class MeterReadingsController {
   constructor(private readonly meterReadingsService: MeterReadingsService) {}
 
+  @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Post()
   openShift(@Body() dto: OpenShiftDto) {
     return this.meterReadingsService.openShift(dto);
   }
 
+  @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Patch(':id/close')
   closeShift(@Param('id') id: string, @Body() dto: CloseShiftDto) {
     return this.meterReadingsService.closeShift(id, dto);

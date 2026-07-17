@@ -11,3 +11,18 @@ import type { CreditLimitAlert } from './types';
 export function getCreditAlerts(): Promise<CreditLimitAlert[]> {
   return apiFetch<CreditLimitAlert[]>('/credit-alerts');
 }
+
+// GET /credit-alerts/:id — single CreditLimitAlert with bill + customer
+// included, same shape as the list endpoint above.
+export function getCreditAlert(id: string): Promise<CreditLimitAlert> {
+  return apiFetch<CreditLimitAlert>(`/credit-alerts/${id}`);
+}
+
+// PATCH /credit-alerts/:id — sets reminderRequested (and, server-side,
+// stamps reminderRequestedAt). See CreditAlertsService.update.
+export function updateCreditAlert(id: string, reminderRequested: boolean): Promise<CreditLimitAlert> {
+  return apiFetch<CreditLimitAlert>(`/credit-alerts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ reminderRequested }),
+  });
+}
