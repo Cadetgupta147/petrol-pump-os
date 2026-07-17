@@ -10,9 +10,10 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 
 // Customer master CRUD + ledger — Section 3.4. Outstanding balance is
 // deliberately NOT stored on Customer: it's derived on read from the
-// bill/payment ledger (see ledger() below). No auth/role guards exist in
-// this repo yet either — see the RBAC gap called out in the module's final
-// report.
+// bill/payment ledger (see ledger() below). Auth/role guards do exist and
+// apply here: the global JwtAuthGuard (app.module.ts) requires a valid JWT
+// on every route, and CustomersController carries
+// @Roles(Role.OWNER, Role.ACCOUNTANT), enforced by the global RolesGuard.
 @Injectable()
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}

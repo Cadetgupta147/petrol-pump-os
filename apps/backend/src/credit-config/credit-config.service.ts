@@ -13,10 +13,11 @@ import { UpdateCreditConfigDto } from './dto/update-credit-config.dto';
 // row can ever exist, with no race window between concurrent first-ever
 // calls.
 //
-// Auth: enforced at the controller level (global JwtAuthGuard, see
-// app.module.ts). Open to any authenticated staff member — per Section 2,
-// Accountant's only restrictions are loyalty rates/staff PINs/business
-// settings, none of which this touches, so it's not @Roles()-restricted.
+// Auth/role guards do exist and apply here: the global JwtAuthGuard
+// (app.module.ts) requires a valid JWT on every route, and
+// CreditConfigController carries @Roles(Role.OWNER, Role.ACCOUNTANT),
+// enforced by the global RolesGuard. No staff outside those two roles can
+// reach this service via HTTP.
 const CREDIT_CONFIG_ID = 'singleton';
 
 @Injectable()

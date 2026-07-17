@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { MeterReadingsService } from './meter-readings.service';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
@@ -8,8 +10,10 @@ import { CloseShiftDto } from './dto/close-shift.dto';
 // variance flag).
 //
 // Auth: every route below requires a valid JWT (global JwtAuthGuard, see
-// app.module.ts). Open to any authenticated staff member — per Section 2,
-// Owner and Accountant both have full access to meter reading management.
+// app.module.ts) and is explicitly restricted to Owner/Accountant via
+// @Roles(Role.OWNER, Role.ACCOUNTANT) below — per Section 2, both have full
+// access to meter reading management.
+@Roles(Role.OWNER, Role.ACCOUNTANT)
 @Controller('meter-readings')
 export class MeterReadingsController {
   constructor(private readonly meterReadingsService: MeterReadingsService) {}

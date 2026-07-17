@@ -23,8 +23,11 @@ import { DeleteBillDto } from './dto/delete-bill.dto';
 // customers + dealer-configurable credit limit enforcement). This is
 // money-touching code (CLAUDE.md): flagged for human review before merge.
 //
-// No auth/role guards exist in this repo yet — same gap as CustomersService.
-// Every endpoint here is currently open to anyone who can reach the API.
+// Auth/role guards do exist and apply here: the global JwtAuthGuard
+// (app.module.ts) requires a valid JWT on every route, and
+// BillsController carries @Roles(Role.OWNER, Role.ACCOUNTANT), enforced by
+// the global RolesGuard. No staff outside those two roles can reach this
+// service via HTTP.
 const BALANCE_EPSILON = 0.01;
 
 type EffectivePaymentLine = {

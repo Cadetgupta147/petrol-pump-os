@@ -1,12 +1,16 @@
 import { Controller, Get } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { DashboardService } from './dashboard.service';
 
 // Section 3.1 (Dashboard) / Section 12 (Reports & Analytics) — scoped-down
 // slice: today's sales summary, tank stock snapshot, recent bills list only.
 //
 // Auth: every route below requires a valid JWT (global JwtAuthGuard, see
-// app.module.ts). Open to any authenticated staff member — per Section 2,
-// Owner and Accountant both have full access to dashboard/reports.
+// app.module.ts) and is explicitly restricted to Owner/Accountant via
+// @Roles(Role.OWNER, Role.ACCOUNTANT) below — per Section 2, both have full
+// access to dashboard/reports.
+@Roles(Role.OWNER, Role.ACCOUNTANT)
 @Controller('dashboard')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
