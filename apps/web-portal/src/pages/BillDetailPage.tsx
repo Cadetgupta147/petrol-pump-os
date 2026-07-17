@@ -6,7 +6,7 @@ import { BillFormModal } from '../components/bills/BillFormModal';
 import { DeleteBillConfirmModal } from '../components/bills/DeleteBillConfirmModal';
 import { getBill } from '../api/bills';
 import { ApiError } from '../api/client';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/useAuth';
 import { formatRupees, formatDateTime } from '../utils/format';
 import type { Bill } from '../api/types';
 

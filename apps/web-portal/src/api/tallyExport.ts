@@ -1,4 +1,4 @@
-import { getStoredToken, ApiError } from './client';
+import { getStoredToken, ApiError, parseErrorMessage } from './client';
 
 const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -20,15 +20,10 @@ export async function downloadTallyExport(from: string, to: string): Promise<voi
   });
 
   if (!response.ok) {
-    let message = `Tally export failed (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.message) {
-        message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-      }
-    } catch {
-      // body wasn't JSON — keep the generic message above
-    }
+    const message = await parseErrorMessage(
+      response,
+      `Tally export failed (${response.status})`,
+    );
     throw new ApiError(response.status, message);
   }
 

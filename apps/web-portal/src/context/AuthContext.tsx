@@ -1,25 +1,10 @@
-import {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useMemo,
-  type ReactNode,
-} from 'react';
+import { useState, useCallback, useMemo, type ReactNode } from 'react';
 import { login as loginRequest } from '../api/auth';
 import { getStoredToken, setStoredToken } from '../api/client';
 import type { StaffSummary } from '../api/types';
+import { AuthContext, type AuthContextValue } from './useAuth';
 
 const STAFF_STORAGE_KEY = 'pumpos.staff';
-
-interface AuthContextValue {
-  staff: StaffSummary | null;
-  isAuthenticated: boolean;
-  login: (phone: string, password: string) => Promise<void>;
-  logout: () => void;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
 
 function readStoredStaff(): StaffSummary | null {
   const raw = localStorage.getItem(STAFF_STORAGE_KEY);
@@ -58,12 +43,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return ctx;
 }

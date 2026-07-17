@@ -1,4 +1,4 @@
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../context/useAuth';
 
 // Pump name is a placeholder until Section 3 grows a real "business
 // settings" entity to read it from — nothing in the current schema stores

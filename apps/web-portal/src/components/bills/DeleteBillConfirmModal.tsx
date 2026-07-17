@@ -50,7 +50,7 @@ export function DeleteBillConfirmModal({ bill, deletedById, onClose, onDeleted }
           <button type="button" className="btn-secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
-          <button type="button" className="export-btn" onClick={handleConfirm} disabled={submitting}>
+          <button type="button" className="export-btn" onClick={() => { void handleConfirm(); }} disabled={submitting}>
             {submitting ? 'Deleting…' : 'Delete bill'}
           </button>
         </div>

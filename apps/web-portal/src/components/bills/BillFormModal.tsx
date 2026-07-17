@@ -59,7 +59,7 @@ export function BillFormModal({ bill, editedById, onClose, onSaved }: BillFormMo
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={handleSubmit}>
+      <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={(e) => { void handleSubmit(e); }}>
         <div className="section-title">
           <h3>Edit bill</h3>
         </div>

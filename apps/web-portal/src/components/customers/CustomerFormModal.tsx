@@ -65,7 +65,7 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={handleSubmit}>
+      <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={(e) => { void handleSubmit(e); }}>
         <div className="section-title">
           <h3>{isEdit ? 'Edit customer' : 'Add customer'}</h3>
         </div>

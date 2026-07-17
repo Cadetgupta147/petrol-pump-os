@@ -245,7 +245,7 @@ export function DashboardPage() {
           label: 'Request reminder',
           pending: pendingReminderIds.has(alert.id),
           done: alert.reminderRequested === true,
-          onClick: () => handleRequestReminder(alert.id),
+          onClick: () => { void handleRequestReminder(alert.id); },
         },
       });
     }
@@ -318,7 +318,7 @@ export function DashboardPage() {
                 ))}
               </div>
             )}
-            <button className="export-btn" onClick={handleExport} disabled={exporting}>
+            <button className="export-btn" onClick={() => { void handleExport(); }} disabled={exporting}>
               {exporting ? 'Exporting…' : 'Export to Tally ↓'}
             </button>
           </div>

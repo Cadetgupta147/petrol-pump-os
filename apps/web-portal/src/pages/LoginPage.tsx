@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/useAuth';
 import { ApiError } from '../api/client';
 
 // Section 2 — web portal login, Staff.phone + password (see
@@ -38,7 +38,7 @@ export function LoginPage() {
 
   return (
     <div className="login-page">
-      <form className="login-card" onSubmit={handleSubmit}>
+      <form className="login-card" onSubmit={(e) => { void handleSubmit(e); }}>
         <div className="topbar-brand" style={{ marginBottom: 24 }}>
           <div className="topbar-drop" style={{ background: 'var(--orange)' }} />
           <span className="topbar-title" style={{ color: 'var(--navy)', fontSize: 18 }}>

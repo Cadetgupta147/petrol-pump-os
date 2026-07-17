@@ -24,6 +24,30 @@ export class ApiError extends Error {
   }
 }
 
+export interface ApiErrorBody {
+  message?: string | string[];
+}
+
+// Narrows `response.json()`'s implicit `any` — the body is untrusted
+// input from the network, not something we can assume has a `.message`
+// field just because most NestJS error responses do.
+export async function parseErrorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  try {
+    const body: unknown = await response.json();
+    if (body && typeof body === 'object' && 'message' in body) {
+      const msg = (body as ApiErrorBody).message;
+      if (Array.isArray(msg)) return msg.join(', ');
+      if (typeof msg === 'string') return msg;
+    }
+  } catch {
+    // response body wasn't JSON — keep the fallback
+  }
+  return fallback;
+}
+
 // Every dashboard/bills/meter-readings/credit-alerts/customers route on the
 // backend requires a JWT (global JwtAuthGuard) except /auth/login and
 // /auth/pin-login, so this always attaches the bearer token when one is
@@ -48,17 +72,10 @@ export async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    let message = `Request to ${path} failed (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.message) {
-        message = Array.isArray(body.message)
-          ? body.message.join(', ')
-          : body.message;
-      }
-    } catch {
-      // response body wasn't JSON — keep the generic message above
-    }
+    const message = await parseErrorMessage(
+      response,
+      `Request to ${path} failed (${response.status})`,
+    );
     throw new ApiError(response.status, message);
   }
 
