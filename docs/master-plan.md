@@ -68,7 +68,7 @@ This is the answer to "the web portal is for the accountant or anyone doing manu
 | Role | Typical person | Can do | Cannot do |
 |---|---|---|---|
 | **Owner/Dealer** | You | Everything: settings, loyalty rate/gift config, staff management, all reports, all edits, financial data | Nothing restricted |
-| **Accountant** | Your accountant or bookkeeper | Full manual bill/meter entry, credit ledger, cash reconciliation entry, view all reports, export to Tally | Cannot change loyalty rates, cannot edit staff PINs, cannot change business settings |
+| **Accountant** | Your accountant or bookkeeper | Full manual bill/meter entry, credit ledger, cash reconciliation entry, view all reports, export to Tally | Cannot change loyalty rates, cannot edit staff PINs, cannot change business settings, cannot delete bills (Section 3.2 — delete is Owner-only) |
 | **Manager** | A trusted on-site manager | Day-to-day ops: bills, meter readings, staff attendance, cash handover entry | Cannot view full P&L, cannot change settings or loyalty config |
 | **DSM/Cashier** | Field staff | DSM app only: their own shift's bills, meter readings, cash handover | No web portal access at all |
 | **Read-only** | Investor, family member, auditor | View dashboards and reports only | Cannot edit or enter anything |
@@ -108,7 +108,7 @@ Every feature below includes **what it does, why it exists, and how it works** �
 | Sub-feature | Detail |
 |---|---|
 | View all bills | Filters: date range, customer, DSM, payment type, vehicle number |
-| Manually add/edit/delete a bill | Full parity with what the DSM app can do — this was your explicit original requirement, and it's how an accountant fixes a mistake without needing the DSM's phone |
+| Manually add/edit/delete a bill | Full parity with what the DSM app can do for add/edit — this was your explicit original requirement, and it's how an accountant fixes a mistake without needing the DSM's phone. **Deviation:** delete is Owner-only (Accountant can edit but not delete) — undoing billing history was judged too consequential to leave to Accountant |
 | Bill detail view | Shows entry channel (web/DSM app), timestamp, which staff member entered/edited it — this is your audit trail, don't skip it |
 
 **Why full edit parity matters:** DSMs make typos, phones die mid-shift, and sometimes a bill needs to be corrected days later when a customer disputes an amount. Without web-side edit access, every correction becomes a support ticket to whoever manages the DSM app — full parity removes that bottleneck.
@@ -819,6 +819,7 @@ This is a **rough planning estimate, not a promise** — it assumes two people w
 - [ ] Agree on the Person A / Person B split (Section 16.1) explicitly before writing code, to avoid overlapping work
 - [ ] **Data privacy (DPDP Act):** customer phone numbers, vehicle numbers, and KYC-lite loyalty profiles (§6.1) are personal data under India's Digital Personal Data Protection Act. Before Phase 3 collects real customer data, confirm you have basic consent capture at signup and a way to delete a customer's data on request — doesn't need to be elaborate at your scale, but it does need to exist.
 - [x] **Informal walk-in credit tabs — RESOLVED, see §3.4A.** Walk-in credit doesn't require full customer registration (quick-add + `informal` flag, shown yellow in UI). Credit limit enforcement is a dealer-configurable setting (`NOTIFY` default — bill still goes through, dealer gets an alert with an optional one-tap payment reminder; `BLOCK` available for dealers who want a hard stop), with a dealer-set default informal credit limit so exposure isn't fully unbounded.
+- [ ] **Web portal customer edit form seeds from stale list data (§3.4).** `CustomerFormModal` in edit mode is seeded from the row object already in memory (from `GET /customers`), not a fresh `GET /customers/:id` fetch. Since the form submits all four editable fields on save (not a diff), a stale row can silently overwrite a field someone else changed in the meantime — a lost-update, not just a display staleness issue. Accepted as-is at current team size (solo; only Owner/Accountant can reach this endpoint, so the realistic collision window is one person in two tabs). **Fix trigger: add fetch-on-open once the Person A / Person B split (§16.1) is actually active** — two people editing concurrently is the point this stops being a theoretical risk. Fetch-on-open narrows the window but doesn't fully close it without optimistic concurrency (e.g. an `updatedAt`/version check on `PATCH /customers/:id`); that's over-engineering until team size or edit volume justifies it.
 
 ---
 

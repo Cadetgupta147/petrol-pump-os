@@ -66,7 +66,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       .overrideProvider(PrismaService)
       .useValue({})
       .overrideProvider(BillsService)
-      .useValue({ findAll: () => [] })
+      .useValue({ findAll: () => [], create: () => ({}), remove: () => ({}) })
       .overrideProvider(CustomersService)
       .useValue({ findAll: () => [] })
       .overrideProvider(DashboardService)
@@ -78,7 +78,11 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
         generateXml: () => ({ xml: '<ENVELOPE/>', filename: 'test.xml' }),
       })
       .overrideProvider(MeterReadingsService)
-      .useValue({ findAll: () => [] })
+      .useValue({
+        findAll: () => [],
+        openShift: () => ({}),
+        closeShift: () => ({}),
+      })
       .overrideProvider(CreditConfigService)
       .useValue({ getOrCreate: () => ({}) })
       .compile();
@@ -100,6 +104,22 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       staffId: 'staff-accountant',
       role: Role.ACCOUNTANT,
       sub: 'staff-accountant',
+    });
+  }
+
+  async function dsmToken(): Promise<string> {
+    return jwtService.signAsync({
+      staffId: 'staff-dsm',
+      role: Role.DSM,
+      sub: 'staff-dsm',
+    });
+  }
+
+  async function ownerToken(): Promise<string> {
+    return jwtService.signAsync({
+      staffId: 'staff-owner',
+      role: Role.OWNER,
+      sub: 'staff-owner',
     });
   }
 
@@ -128,5 +148,75 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
   it('rejects GET /customers with no Authorization header (401)', async () => {
     const res = await fetch(`${baseUrl}/customers`);
     expect(res.status).toBe(401);
+  });
+
+  // Section 2/4 — DSM/Cashier must reach the DSM app's core workflow
+  // (create a bill, look up a customer for the credit picker, open/close
+  // their own shift) even though these controllers are class-level
+  // Owner/Accountant-only. Each of these four routes carries a method-level
+  // @Roles(..., Role.DSM) override.
+  it.each([
+    ['POST /bills', 'POST', '/bills', {}],
+    ['GET /customers', 'GET', '/customers', undefined],
+    ['POST /meter-readings', 'POST', '/meter-readings', {}],
+    ['PATCH /meter-readings/:id/close', 'PATCH', '/meter-readings/some-id/close', {}],
+  ])('allows a DSM token through %s', async (_label, method, path, body) => {
+    const token = await dsmToken();
+    const res = await fetch(`${baseUrl}${path}`, {
+      method: method as string,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+  });
+
+  it('rejects a DSM token on PATCH /bills/:id (403)', async () => {
+    const token = await dsmToken();
+    const res = await fetch(`${baseUrl}/bills/some-id`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  // Section 3.2 deviation — bill deletion is Owner-only (narrower than the
+  // edit/delete parity the section text otherwise describes), because
+  // undoing billing history is treated as more consequential than edit
+  // access. DELETE /bills/:id carries a method-level
+  // @Roles(Role.OWNER) override on remove(), unlike PATCH which stays on the
+  // class-level Owner/Accountant decorator.
+  it('allows an Owner token through DELETE /bills/:id', async () => {
+    const token = await ownerToken();
+    const res = await fetch(`${baseUrl}/bills/some-id`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ deletedById: 'staff-owner' }),
+    });
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+  });
+
+  it('rejects an Accountant token on DELETE /bills/:id (403)', async () => {
+    const token = await accountantToken();
+    const res = await fetch(`${baseUrl}/bills/some-id`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ deletedById: 'staff-accountant' }),
+    });
+    expect(res.status).toBe(403);
   });
 });

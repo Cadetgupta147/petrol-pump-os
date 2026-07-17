@@ -2,15 +2,28 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
+import { BillFormModal } from '../components/bills/BillFormModal';
+import { DeleteBillConfirmModal } from '../components/bills/DeleteBillConfirmModal';
 import { getBill } from '../api/bills';
 import { ApiError } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { formatRupees, formatDateTime } from '../utils/format';
 import type { Bill } from '../api/types';
 
 export function BillDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { staff } = useAuth();
   const [bill, setBill] = useState<Bill | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  // Client-side gating here is UX only, not enforcement — the real
+  // restriction is server-side (BillsController: PATCH stays class-level
+  // Owner/Accountant, DELETE carries a method-level @Roles(Role.OWNER)
+  // override, per the Section 3.2 deviation documented on remove()).
+  const canEdit = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT';
+  const canDelete = staff?.role === 'OWNER';
 
   useEffect(() => {
     if (!id) return;
@@ -29,6 +42,30 @@ export function BillDetailPage() {
     };
   }, [id]);
 
+  // After a successful PATCH, re-fetch rather than reconstruct the Bill from
+  // just the form fields — same pattern CustomersPage uses, keeps this in
+  // sync with server-side fields the form doesn't touch (lastEditedById,
+  // lastEditedAt, etc.).
+  function handleSaved() {
+    setEditing(false);
+    if (!id) return;
+    getBill(id)
+      .then(setBill)
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+      });
+  }
+
+  function handleDeleted() {
+    setConfirmingDelete(false);
+    if (!id) return;
+    getBill(id)
+      .then(setBill)
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+      });
+  }
+
   return (
     <>
       <TopBar />
@@ -43,9 +80,25 @@ export function BillDetailPage() {
 
         {!error && bill && (
           <>
-            <div className="section-title">
-              <h3>{bill.customerName ?? bill.vehicleNumber ?? 'Walk-in bill'}</h3>
-              <span className="section-note">{formatDateTime(bill.timestamp)} &middot; entered via {bill.entryChannel === 'DSM_APP' ? 'DSM app' : 'web'}</span>
+            <div className="content-header">
+              <div className="section-title">
+                <h3>{bill.customerName ?? bill.vehicleNumber ?? 'Walk-in bill'}</h3>
+                <span className="section-note">{formatDateTime(bill.timestamp)} &middot; entered via {bill.entryChannel === 'DSM_APP' ? 'DSM app' : 'web'}</span>
+              </div>
+              {!bill.deletedAt && (canEdit || canDelete) && (
+                <div className="content-header-right">
+                  {canEdit && (
+                    <button type="button" className="btn-secondary" onClick={() => setEditing(true)}>
+                      Edit
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button type="button" className="btn-secondary" onClick={() => setConfirmingDelete(true)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="section">
@@ -95,6 +148,23 @@ export function BillDetailPage() {
 
             {bill.deletedAt && (
               <div className="banner">This bill was soft-deleted on {formatDateTime(bill.deletedAt)}.</div>
+            )}
+
+            {editing && staff && (
+              <BillFormModal
+                bill={bill}
+                editedById={staff.id}
+                onClose={() => setEditing(false)}
+                onSaved={handleSaved}
+              />
+            )}
+            {confirmingDelete && staff && (
+              <DeleteBillConfirmModal
+                bill={bill}
+                deletedById={staff.id}
+                onClose={() => setConfirmingDelete(false)}
+                onDeleted={handleDeleted}
+              />
             )}
           </>
         )}
