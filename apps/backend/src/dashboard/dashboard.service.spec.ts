@@ -61,7 +61,7 @@ describe('DashboardService', () => {
 
       expect(prisma.bill.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ deletedAt: null }),
+          where: expect.objectContaining({ deletedAt: null }) as unknown,
         }),
       );
       expect(result.totalLitres).toBe(35);

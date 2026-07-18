@@ -1,3 +1,5 @@
+import type { AddressInfo } from 'net';
+import type { Server } from 'http';
 import { INestApplication } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -90,7 +92,8 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
     app = moduleRef.createNestApplication();
     await app.init();
     await app.listen(0);
-    const address = app.getHttpServer().address();
+    const httpServer = app.getHttpServer() as Server;
+    const address = httpServer.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
     jwtService = moduleRef.get(JwtService);
   });
@@ -163,7 +166,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
   ])('allows a DSM token through %s', async (_label, method, path, body) => {
     const token = await dsmToken();
     const res = await fetch(`${baseUrl}${path}`, {
-      method: method as string,
+      method,
       headers: {
         Authorization: `Bearer ${token}`,
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),

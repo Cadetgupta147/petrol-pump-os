@@ -39,7 +39,9 @@ async function bootstrap() {
   });
   const port = process.env.API_PORT ?? 3000;
   await app.listen(port);
-  // eslint-disable-next-line no-console
   console.log(`Backend listening on port ${port}`);
 }
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  console.error('Backend failed to start:', error);
+  process.exit(1);
+});

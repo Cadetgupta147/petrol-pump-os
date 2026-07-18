@@ -1,6 +1,6 @@
 # Execution Playbook — Petrol Pump OS
 
-**📍 CURRENT STATUS (updated after Phase 2 wrap-up):** Phase 1 ✅ complete. Phase 2 ✅ complete. **Start here → Phase 3, slice 3.1.**
+**📍 CURRENT STATUS (updated after the post-Phase-2 hardening pass):** Phase 1 ✅ complete. Phase 2 ✅ complete. Phase 2.5 (UI wiring gaps + lint hardening) — all web-portal work done and committed; **backend ESLint report received, fixes not yet applied.** **Start here → decide fix strategy for the backend lint report below, then Phase 3, slice 3.1.**
 
 **Purpose:** a self-serve queue of prompts you can run against Claude Code, one after another, without needing to come back to chat — as long as each one passes its validation checklist before you move to the next. Pairs with `docs/master-plan.md` (the feature spec) — this file is the *execution* companion, telling you what to actually type and what to check.
 
@@ -430,7 +430,105 @@ pairing flow. Stop before committing.
 
 ---
 
+## Phase 2.5 — UI Wiring Gap Closure & Lint Hardening
+
+**Why this phase exists:** a full audit (backend controllers vs. web-portal/dsm-app API clients vs. pages) found several endpoints with real backend logic and zero UI to trigger them, one live bug (DSM role 403s), and zero lint coverage across both `apps/web-portal` and `apps/backend`. None of this was in the original playbook — it's logged here so future-you sees *why* these commits exist, not just that they do.
+
+### 2.5.1 DSM Role Fix ✅ *(done and committed)*
+
+**What was wrong:** `BillsController`, `CustomersController`, and `MeterReadingsController` were `@Roles(Role.OWNER, Role.ACCOUNTANT)` only — but the DSM app authenticates via `POST /auth/pin-login`, which can return `role: "DSM"`. Real DSM staff got 403'd on the four endpoints the DSM app exists to call.
+
+**Fix:** method-level `@Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)` overrides added on exactly `POST /bills`, `GET /customers`, `POST /meter-readings`, `PATCH /meter-readings/:id/close` — class-level restriction (Owner/Accountant only) preserved everywhere else on those controllers.
+
+**Commit:** `Fix DSM role 403 on core DSM app endpoints — Section 2`
+
+---
+
+### 2.5.2 Customer Create/Edit UI ✅ *(done and committed)*
+
+**What was missing:** `POST /customers` and `PATCH /customers/:id` existed on the backend with zero UI to call them — the only way to add a customer was curl or Prisma Studio.
+
+**Built:** `CustomerFormModal` (shared add/edit), "+ Add customer" and per-row "Edit" on `CustomersPage`. Dangling `getCustomer(id)` client function removed (both real call sites already had the full object in hand). **Known accepted risk, logged in master-plan.md §17:** edit form uses stale in-memory row data, no fetch-on-open — acceptable at current (effectively solo) team size, revisit once a second person has Owner/Accountant access.
+
+**Commit:** `Add customer create/edit UI, resolve dangling getCustomer — Section 3.4`
+
+---
+
+### 2.5.3 Bill Edit/Delete UI + Owner-Only Delete (spec deviation) ✅ *(done and committed)*
+
+**What was missing:** `PATCH /bills/:id` and `DELETE /bills/:id` existed with zero UI.
+
+**Deliberate spec deviation:** master-plan.md originally gave Accountant full edit/delete parity on bills (§3.2/§2). **Delete was narrowed to Owner-only** — edit and delete carry different risk profiles: edit is frequent and low-risk (the original bottleneck-removal reasoning still applies), delete is rare and is the one action that could hide misconduct (e.g. deleting a cash bill after pocketing the cash removes it from every report). **`docs/master-plan.md` Sections 2 and 3.2 were updated to document this split** — edit stays Owner+Accountant, delete is Owner-only, both server-side (`@Roles(Role.OWNER)` on `remove()`) and UI-gated.
+
+**Built:** `BillFormModal` (edit, Owner+Accountant), `DeleteBillConfirmModal` (real confirmation dialog, not `window.confirm`, Owner-only) on `BillDetailPage`.
+
+**Commit:** `Add bill edit/delete UI, restrict delete to Owner-only (spec deviation, master-plan updated) — Section 3.2`
+
+---
+
+### 2.5.4 Credit Alert Detail + Request-Reminder UI ✅ *(done and committed)*
+
+**What was missing:** `GET /credit-alerts/:id` had no client function at all; `PATCH /credit-alerts/:id` (the "request reminder" flag) had no UI trigger despite being built specifically for one.
+
+**Built:** per-alert rows in the Dashboard Alerts panel (replacing the old single aggregated "N customers over limit" row), each with its own "Request reminder" button (pending → done states, initializes correctly from the server on load, failure surfaces a banner rather than failing silently).
+
+**Known limitation, logged in master-plan.md §17:** the reminder-requested flag is one-way with no reset — confirm whether a fresh over-limit event reuses the same alert row (needs a reset) or creates a new one (no issue) before this becomes confusing at higher alert volume.
+
+**Commit:** `Add credit alert detail view and request-reminder action — Section 3.4`
+
+---
+
+### 2.5.5 ESLint — Web Portal ✅ *(done and committed)*
+
+**What was wrong:** `eslint` was referenced in `package.json`'s lint script but never installed — `npm run lint` had been silently no-op-ing across all prior web-portal work.
+
+**Fix:** flat-config ESLint set up (typescript-eslint with type-checking, react-hooks, react-refresh). Found 23 problems, all fixed: 12 unsafe-`any` errors (consolidated into one shared `parseErrorMessage()` helper), 6 `no-misused-promises` errors (async handlers wrapped correctly), 2 floating-promise errors (one confirmed safe as `void load()`, the other — meter variance check — got a real fix: per-reading failure tracking + an "unverified" banner, since silently downgrading a failed OMC-relevant variance check to "looks clean" was the wrong failure mode), 1 Fast Refresh warning (`useAuth` hook split into its own file, all importers updated).
+
+**Commit:** `Set up ESLint for web-portal and fix all resulting issues (unsafe any, misused promises, floating promises, fast-refresh)`
+
+---
+
+### 2.5.6 ESLint — Backend 🔵 *(YOU ARE HERE — report received, fixes not yet applied)*
+
+**Same issue, more consequential:** `apps/backend` has had zero lint coverage across all backend work so far — including split-payment validation, role guards, and credit-limit logic. The setup step already ran; the fix step hasn't.
+
+**Next prompt to run** — first, get the categories of issues (if you haven't already re-run this since the report came back, this is what triggered the current state):
+```
+Use the backend-agent. apps/backend has the same issue as web-portal did —
+eslint is referenced in package.json's lint script but never actually
+installed, so npm run lint has been silently no-op-ing across all backend
+work so far, including the money-touching bills/customers/meter-readings
+code. Set it up properly, matching web-portal's flat-config style where it
+makes sense for a NestJS codebase. Run it and report categories of issues
+found — don't auto-fix yet, just show me what's there first.
+```
+
+**When the report comes back:** treat it the same way the web-portal floating-promises were treated, not as a rubber-stamp batch fix. Specifically ask for an explanation (not just a fix) on any category touching:
+- Bill/payment validation logic (Section 5A's balancing check)
+- Role guard code (`@Roles()` decorators, `RolesGuard`)
+- Credit limit checks (Section 3.4)
+
+For everything else (unsafe-any, unused imports, formatting-adjacent rules), a straightforward fix-and-report is fine. Use this follow-up shape once the categories are in:
+```
+Before fixing [category X], show me what it's actually flagging and why —
+specifically for anything touching bill/payment validation, role guards, or
+credit-limit logic. Fix the rest directly. Stop before committing.
+```
+
+**Validate:**
+- [ ] `npm run lint` shows 0 errors
+- [ ] Full test suite still passes (54+ tests from prior work)
+- [ ] `npm run build` still clean
+- [ ] Spot-check that any fix touching money/role logic actually got the "explain first" treatment, not a blanket auto-fix
+
+**Commit:** `Set up ESLint for backend and fix all resulting issues`
+
+**🎯 Phase 2.5 complete when 2.5.6 passes.** Only then move to Phase 3.
+
+---
+
 ## Phase 3 — Loyalty Program (QR)
+
 
 Reference: §16.4 Phase 3, §6 for full feature detail.
 

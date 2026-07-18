@@ -1,3 +1,5 @@
+import type { AddressInfo } from 'net';
+import type { Server } from 'http';
 import { Controller, Get, INestApplication } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -66,7 +68,8 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
     app = moduleRef.createNestApplication();
     await app.init();
     await app.listen(0);
-    const address = app.getHttpServer().address();
+    const httpServer = app.getHttpServer() as Server;
+    const address = httpServer.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
     jwtService = moduleRef.get(JwtService);
   });

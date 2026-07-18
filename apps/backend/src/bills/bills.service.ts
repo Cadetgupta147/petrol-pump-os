@@ -179,7 +179,7 @@ export class BillsService {
             billId: created.id,
             action: 'CREATED',
             performedById: dto.enteredById,
-            snapshot: created as unknown as Prisma.InputJsonValue,
+            snapshot: created,
           },
         });
 
@@ -361,7 +361,7 @@ export class BillsService {
             billId: updated.id,
             action: 'EDITED',
             performedById: dto.editedById,
-            snapshot: updated as unknown as Prisma.InputJsonValue,
+            snapshot: updated,
           },
         });
 
@@ -414,7 +414,7 @@ export class BillsService {
             billId: deleted.id,
             action: 'DELETED',
             performedById: dto.deletedById,
-            snapshot: deleted as unknown as Prisma.InputJsonValue,
+            snapshot: deleted,
           },
         });
 
