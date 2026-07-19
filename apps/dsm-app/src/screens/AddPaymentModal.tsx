@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { BillPaymentLineInput, PaymentType } from '../api/billsApi';
 
@@ -49,14 +49,20 @@ export function AddPaymentModal({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  // Reset the form each time the modal opens. This component instance
+  // persists across opens (it's a child kept mounted under <Modal>, not
+  // remounted), so this compares against the previous `visible` value
+  // during render rather than reacting to it in an effect.
+  const [prevVisible, setPrevVisible] = useState(visible);
+  if (visible !== prevVisible) {
+    setPrevVisible(visible);
     if (visible) {
       setMethod('CASH');
       setAmountInput('');
       setError(null);
       setBusy(false);
     }
-  }, [visible]);
+  }
 
   const handleAdd = async () => {
     const amount = Number(amountInput);
@@ -152,7 +158,7 @@ export function AddPaymentModal({
             </Text>
           ) : null}
 
-          <Pressable style={[styles.button, busy && styles.buttonDisabled]} onPress={handleAdd} disabled={busy} testID="confirm-add-payment-button">
+          <Pressable style={[styles.button, busy && styles.buttonDisabled]} onPress={() => { void handleAdd(); }} disabled={busy} testID="confirm-add-payment-button">
             <Text style={styles.buttonText}>Add</Text>
           </Pressable>
           <Pressable style={styles.linkButton} onPress={onClose} testID="cancel-add-payment-button">

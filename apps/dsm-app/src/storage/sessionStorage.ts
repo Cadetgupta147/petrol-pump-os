@@ -25,7 +25,17 @@ export async function loadSession(): Promise<StoredSession | null> {
   if (!accessToken || !staffJson) {
     return null;
   }
-  return { accessToken, staff: JSON.parse(staffJson) as StaffSummary };
+  try {
+    return { accessToken, staff: JSON.parse(staffJson) as StaffSummary };
+  } catch {
+    // Corrupted STAFF_KEY (interrupted write, or a stale shape from an
+    // older app version) — this would otherwise throw identically on every
+    // future launch, since the bad bytes never change on their own. Wipe it
+    // so the DSM logs in once and gets a clean session going forward,
+    // instead of failing silently forever.
+    await clearSession();
+    return null;
+  }
 }
 
 export async function clearSession(): Promise<void> {

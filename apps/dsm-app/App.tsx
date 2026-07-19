@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import type { PinLoginResponse, StaffSummary } from './src/api/authApi';
 import { PinLoginScreen } from './src/screens/PinLoginScreen';
@@ -14,6 +14,7 @@ export default function App() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [staff, setStaff] = useState<StaffSummary | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   useEffect(() => {
     loadSession()
@@ -23,19 +24,44 @@ export default function App() {
           setAccessToken(session.accessToken);
         }
       })
+      .catch((err: unknown) => {
+        // Real AsyncStorage I/O failure — the corrupted-JSON case is
+        // already self-healed inside loadSession() and never reaches here.
+        // Don't clear the stored session over what may be a transient read
+        // failure: just fall through to the PIN login screen for this
+        // launch (same as "no session found") and leave storage alone so a
+        // later successful read can still restore it.
+        console.warn('loadSession() failed — treating this launch as no session', err);
+      })
       .finally(() => setCheckingSession(false));
   }, []);
 
   const handleLoginSuccess = async (response: PinLoginResponse) => {
-    await saveSession(response);
-    setStaff(response.staff);
-    setAccessToken(response.accessToken);
+    setSessionError(null);
+    try {
+      await saveSession(response);
+      setStaff(response.staff);
+      setAccessToken(response.accessToken);
+    } catch (err) {
+      // saveSession() failed (AsyncStorage write error). Without this, the
+      // DSM already got a successful server login, then this silently does
+      // nothing — the Log In button just resets with no explanation, and
+      // they're stuck tapping it again with no indication anything's wrong.
+      console.warn('handleLoginSuccess() failed to save session', err);
+      setSessionError("Couldn't save session — try logging in again.");
+    }
   };
 
   const handleLogOut = async () => {
-    await clearSession();
-    setStaff(null);
-    setAccessToken(null);
+    setSessionError(null);
+    try {
+      await clearSession();
+      setStaff(null);
+      setAccessToken(null);
+    } catch (err) {
+      console.warn('handleLogOut() failed to clear session', err);
+      setSessionError("Couldn't log out — try again.");
+    }
   };
 
   if (checkingSession) {
@@ -49,10 +75,19 @@ export default function App() {
 
   return (
     <>
+      {sessionError ? (
+        <View style={styles.errorBanner} testID="session-error-banner">
+          <Text style={styles.errorBannerText}>{sessionError}</Text>
+        </View>
+      ) : null}
       {staff && accessToken ? (
-        <LoggedInScreen staff={staff} accessToken={accessToken} onLogOut={handleLogOut} />
+        <LoggedInScreen
+          staff={staff}
+          accessToken={accessToken}
+          onLogOut={() => { void handleLogOut(); }}
+        />
       ) : (
-        <PinLoginScreen onLoginSuccess={handleLoginSuccess} />
+        <PinLoginScreen onLoginSuccess={(response) => { void handleLoginSuccess(response); }} />
       )}
       <StatusBar style="auto" />
     </>
@@ -65,5 +100,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#fff',
+  },
+  errorBanner: {
+    backgroundColor: '#fdecea',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0c36d',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  errorBannerText: {
+    color: '#b00020',
+    fontSize: 13,
+    textAlign: 'center',
   },
 });

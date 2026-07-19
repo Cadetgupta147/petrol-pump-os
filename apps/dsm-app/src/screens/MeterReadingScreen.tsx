@@ -177,7 +177,7 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
 
         <Pressable
           style={[styles.buttonSecondary, (!nozzleId.trim() || checking) && styles.buttonDisabled]}
-          onPress={handleCheckNozzle}
+          onPress={() => { void handleCheckNozzle(); }}
           disabled={!nozzleId.trim() || checking}
           testID="check-nozzle-button"
         >
@@ -223,7 +223,7 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
             ) : null}
             <Pressable
               style={[styles.button, opening && styles.buttonDisabled]}
-              onPress={handleOpenShift}
+              onPress={() => { void handleOpenShift(); }}
               disabled={opening}
               testID="open-shift-button"
             >
@@ -254,7 +254,7 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
             ) : null}
             <Pressable
               style={[styles.button, closing && styles.buttonDisabled]}
-              onPress={handleCloseShift}
+              onPress={() => { void handleCloseShift(); }}
               disabled={closing}
               testID="close-shift-button"
             >

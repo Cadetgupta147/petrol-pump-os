@@ -36,15 +36,33 @@ export function CreditCustomerPicker({ visible, accessToken, onSelectExisting, o
   const [quickAddVehicle, setQuickAddVehicle] = useState('');
   const [quickAddError, setQuickAddError] = useState<string | null>(null);
 
+  // Reset the picker's own form state (search text, quick-add draft) each
+  // time it opens — render-time prev-value-comparison pattern, so this only
+  // fires on an actual open/close transition, not on an unrelated
+  // accessToken change (e.g. a mid-session token refresh) that would
+  // otherwise silently wipe whatever the DSM had typed into search or a
+  // half-filled quick-add form.
+  const [prevVisible, setPrevVisible] = useState(visible);
+  if (visible !== prevVisible) {
+    setPrevVisible(visible);
+    if (visible) {
+      setSearch('');
+      setShowQuickAdd(false);
+      setQuickAddName('');
+      setQuickAddVehicle('');
+      setQuickAddError(null);
+    }
+  }
+
   useEffect(() => {
     if (!visible) return;
-    // Reset transient state each time the picker opens, and (re)fetch —
-    // "fetch once" per open, not on every keystroke.
-    setSearch('');
-    setShowQuickAdd(false);
-    setQuickAddName('');
-    setQuickAddVehicle('');
-    setQuickAddError(null);
+    // "Fetch once" per open (or again if the token changes while open) —
+    // not on every keystroke. Resetting loading/error state right before
+    // firing the request is the standard data-fetching effect idiom (this
+    // is what the fetch effect itself is for, per the task scope), not
+    // state derived from other state — the lint rule doesn't distinguish
+    // that from the anti-pattern it's built to catch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadError(null);
     setLoading(true);
     listCustomers(accessToken)

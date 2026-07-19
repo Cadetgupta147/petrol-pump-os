@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
 } from 'react-native';
 import { pinLogin, PinLoginError, type PinLoginResponse } from '../api/authApi';
 
@@ -87,7 +86,7 @@ export function PinLoginScreen({ onLoginSuccess }: Props) {
 
       <Pressable
         style={[styles.button, !canSubmit && styles.buttonDisabled]}
-        onPress={handleSubmit}
+        onPress={() => { void handleSubmit(); }}
         disabled={!canSubmit}
         testID="login-button"
       >

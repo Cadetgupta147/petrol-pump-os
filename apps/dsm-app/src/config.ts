@@ -17,4 +17,5 @@ import { Platform } from 'react-native';
 //     explicitly to the host machine's LAN IP (see .env.example).
 const DEFAULT_BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
 
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? DEFAULT_BASE_URL;
+export const API_BASE_URL =
+  (process.env.EXPO_PUBLIC_API_BASE_URL as string | undefined) ?? DEFAULT_BASE_URL;

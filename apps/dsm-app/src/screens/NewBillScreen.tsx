@@ -104,20 +104,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [sharingReceipt, setSharingReceipt] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
 
-  // Section 3.4A — "if the DSM removes the CREDIT line before saving, clear
-  // whichever of the two was set." Runs whenever the line list changes, not
-  // just on explicit removal, so it also covers removing the last of
-  // several CREDIT lines one at a time.
-  useEffect(() => {
-    const stillHasCredit = lines.some((line) => line.paymentType === 'CREDIT');
-    if (!stillHasCredit && (creditCustomerId || creditQuickAdd)) {
-      setCreditCustomerId(undefined);
-      setCreditQuickAdd(undefined);
-      setCreditCustomerLabel(undefined);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines]);
-
   const amount = Number(amountInput) || 0;
   const litres = Number(litresInput) || 0;
   const rateApplied = Number(rateAppliedInput) || 0;
@@ -168,13 +154,17 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   // entered, debounced so it fires when typing pauses rather than on every
   // keystroke. The request counter discards stale responses (a slow reply
   // for ₹100 must not overwrite the banner for ₹1000 typed since).
+  // pointsPreview holds only the last successfully fetched preview — it is
+  // never cleared from inside this effect. Whether it's currently relevant
+  // to show is computed at render time from the current inputs (see the
+  // banner's render gate below), not stored as a second copy of "should I
+  // show nothing" state here.
   const scannedCustomerId = scannedCustomer?.customerId;
   useEffect(() => {
     previewRequestRef.current += 1;
     const requestId = previewRequestRef.current;
 
     if (!scannedCustomerId || (amount <= 0 && litres <= 0)) {
-      setPointsPreview(null);
       return;
     }
 
@@ -184,9 +174,9 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
           if (previewRequestRef.current === requestId) setPointsPreview(preview);
         })
         .catch(() => {
-          // Non-blocking by design — a failed preview just shows nothing;
-          // the authoritative calculation happens server-side at save.
-          if (previewRequestRef.current === requestId) setPointsPreview(null);
+          // Non-blocking by design — a failed fetch just leaves the last
+          // successful preview (if any) as-is; the authoritative calculation
+          // happens server-side at save regardless.
         });
     }, POINTS_PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -254,8 +244,19 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     setAddPaymentVisible(false);
   };
 
+  // Section 3.4A — "if the DSM removes the CREDIT line before saving, clear
+  // whichever of the two was set." Checked right here rather than in an
+  // effect watching `lines`, so the line removal and the credit-field clear
+  // land in the same state update instead of one render apart.
   const handleRemoveLine = (localId: string) => {
-    setLines((prev) => prev.filter((line) => line.localId !== localId));
+    const nextLines = lines.filter((line) => line.localId !== localId);
+    setLines(nextLines);
+    const stillHasCredit = nextLines.some((line) => line.paymentType === 'CREDIT');
+    if (!stillHasCredit && (creditCustomerId || creditQuickAdd)) {
+      setCreditCustomerId(undefined);
+      setCreditQuickAdd(undefined);
+      setCreditCustomerLabel(undefined);
+    }
   };
 
   const resetForm = () => {
@@ -383,7 +384,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
 
           <Pressable
             style={[styles.buttonSecondary, savingReceipt && styles.buttonDisabledOutline]}
-            onPress={handleSaveReceiptPdf}
+            onPress={() => { void handleSaveReceiptPdf(); }}
             disabled={savingReceipt}
             testID="save-receipt-pdf-button"
           >
@@ -405,7 +406,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
           {savedReceipt ? (
             <Pressable
               style={[styles.buttonSecondary, sharingReceipt && styles.buttonDisabledOutline]}
-              onPress={handleShareReceipt}
+              onPress={() => { void handleShareReceipt(); }}
               disabled={sharingReceipt}
               testID="share-receipt-button"
             >
@@ -542,7 +543,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
           ))}
         </View>
 
-        {pointsPreview ? (
+        {pointsPreview && scannedCustomerId && (amount > 0 || litres > 0) ? (
           // Section 6.3 step 4 / Section 14 mockup — the DSM sees the points
           // this bill will earn BEFORE saving, so they can confirm it looks
           // right. Display only: the server recalculates authoritatively at
@@ -604,7 +605,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
 
         <Pressable
           style={[styles.button, !canSave && styles.buttonDisabled]}
-          onPress={handleSave}
+          onPress={() => { void handleSave(); }}
           disabled={!canSave}
           testID="save-bill-button"
         >

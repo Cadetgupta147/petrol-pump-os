@@ -47,11 +47,25 @@ export function ScanCustomerModal({ visible, accessToken, onResolved, onCancel }
   const scanLockedRef = useRef(false);
   const rescanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
+  // Reset the form's state each time the modal opens — same render-time
+  // prev-value-comparison pattern as AddPaymentModal, since this component
+  // instance persists across opens rather than being remounted.
+  const [prevVisible, setPrevVisible] = useState(visible);
+  if (visible !== prevVisible) {
+    setPrevVisible(visible);
     if (visible) {
       setManualId('');
       setLookingUp(false);
       setError(null);
+    }
+  }
+
+  // scanLockedRef is a ref, not state — React doesn't allow mutating a ref
+  // during render (unlike the state resets above), so it's reset here
+  // instead, alongside the pre-existing rescan-timer cleanup this effect
+  // already owned.
+  useEffect(() => {
+    if (visible) {
       scanLockedRef.current = false;
     }
     return () => {
