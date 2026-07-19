@@ -11,6 +11,8 @@ This file is read automatically by Claude Code at the start of every session in 
 
 One NestJS backend + Postgres, three frontends (React web PWA, two React Native apps), one Prisma schema as source of truth. Monorepo, npm workspaces. See `docs/master-plan.md` Section 15 for full stack and Section 16.2 for repo layout.
 
+- **Postgres is hosted on Supabase — there is no local/Docker database.** Never try to start Docker Desktop or a Postgres container; the backend connects to Supabase via `DATABASE_URL` in `.env`. To run the stack locally, just start the backend (`npm run start:dev` in `apps/backend`) — if the DB is unreachable, check the network/Supabase project status, not local services.
+
 ```
 apps/{backend,web-portal,dsm-app,customer-app}
 packages/{shared-types,ui-components}

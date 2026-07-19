@@ -8,6 +8,7 @@ import { CustomersPage } from './pages/CustomersPage';
 import { CustomerLedgerPage } from './pages/CustomerLedgerPage';
 import { BillDetailPage } from './pages/BillDetailPage';
 import { LoyaltySettingsPage } from './pages/LoyaltySettingsPage';
+import { CreditSettingsPage } from './pages/CreditSettingsPage';
 
 // Root path just forwards to whichever of /dashboard or /login is correct
 // for the current auth state, rather than being its own page.
@@ -50,6 +51,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <LoyaltySettingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/credit-settings"
+        element={
+          <RequireAuth>
+            <CreditSettingsPage />
           </RequireAuth>
         }
       />

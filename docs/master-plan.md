@@ -68,7 +68,7 @@ This is the answer to "the web portal is for the accountant or anyone doing manu
 | Role | Typical person | Can do | Cannot do |
 |---|---|---|---|
 | **Owner/Dealer** | You | Everything: settings, loyalty rate/gift config, staff management, all reports, all edits, financial data | Nothing restricted |
-| **Accountant** | Your accountant or bookkeeper | Full manual bill/meter entry, credit ledger, cash reconciliation entry, view all reports, export to Tally | Cannot change loyalty rates, cannot edit staff PINs, cannot change business settings, cannot delete bills (Section 3.2 — delete is Owner-only) |
+| **Accountant** | Your accountant or bookkeeper | Full manual bill/meter entry, credit ledger, cash reconciliation entry, view all reports, export to Tally | Cannot change loyalty rates, cannot edit staff PINs, cannot change business settings, cannot delete bills (Section 3.2 — delete is Owner-only), cannot change credit enforcement policy (Section 3.4A — Owner-only) |
 | **Manager** | A trusted on-site manager | Day-to-day ops: bills, meter readings, staff attendance, cash handover entry | Cannot view full P&L, cannot change settings or loyalty config |
 | **DSM/Cashier** | Field staff | DSM app only: their own shift's bills, meter readings, cash handover | No web portal access at all |
 | **Read-only** | Investor, family member, auditor | View dashboards and reports only | Cannot edit or enter anything |
@@ -299,17 +299,18 @@ The DSM never sees or picks a rate — the system looks it up silently the momen
 
 ```
 1. Customer arrives → DSM opens "New Bill" in DSM app
-2. DSM scans customer's QR card (or types phone number if card forgotten)
-3. App fetches: customer name, vehicle no., earning basis + rate, outstanding balance
+2. DSM scans customer's QR card (or types the member ID printed on the card, with checksum, if card can't be scanned)
+3. App looks up the customer: this scan/lookup returns only the pointer fields — customerId, qrMemberId, name, vehicleNumber, verificationStatus — never balance or rate, per the pointer-not-wallet principle in Section 6.1
 4. DSM enters: amount / litres, vehicle number, customer name
    → VALIDATION: at least one of [vehicle number, customer name] must be filled
 5. DSM confirms → bill saved →
    - Credit ledger updated (if credit customer)
-   - Points calculated using the customer's active basis + rate
+   - Points calculated server-side using the customer's active basis + rate, resolved silently (Section 6.2) via a separate call — the DSM app never sees or requests a rate
    - Points added to customer's balance
    - Push notification sent: "Bill of ₹X added, Y points earned"
    - Receipt printed via Bluetooth printer
 6. Web portal reflects the new bill instantly
+7. Fractional points are rounded to 2 decimals only when displayed to a human — the calculated/stored value always keeps full precision
 ```
 
 ### 6.4 Redemption side — entirely the dealer's call

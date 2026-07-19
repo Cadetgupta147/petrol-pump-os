@@ -9,6 +9,7 @@ const BUILT: { label: string; to: string }[] = [
   { label: 'Dashboard', to: '/dashboard' },
   { label: 'Credit customers', to: '/customers' },
   { label: 'Loyalty', to: '/loyalty' },
+  { label: 'Credit settings', to: '/credit-settings' },
 ];
 
 const NOT_BUILT = [

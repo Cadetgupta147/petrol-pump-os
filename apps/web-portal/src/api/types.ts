@@ -216,6 +216,26 @@ export interface UpsertLoyaltyConfigRequest {
   defaultRate: number;
 }
 
+export type CreditEnforcementMode = 'NOTIFY' | 'BLOCK';
+
+// Mirrors prisma CreditConfig (singleton). Unlike loyalty-config, GET
+// /credit-config never 404s — CreditConfigService.getOrCreate() upserts a
+// row on first read, so there is no "not configured yet" empty state here
+// (Section 3.4A).
+export interface CreditConfig {
+  id: string;
+  enforcementMode: CreditEnforcementMode;
+  defaultInformalCreditLimit: number;
+  updatedAt: string;
+}
+
+// Mirrors apps/backend/src/credit-config/dto/update-credit-config.dto.ts —
+// PATCH body, any subset of the two fields.
+export interface UpdateCreditConfigRequest {
+  enforcementMode?: CreditEnforcementMode;
+  defaultInformalCreditLimit?: number;
+}
+
 // Mirrors CustomersService.qrCard() — Section 6.1. The QR itself encodes
 // ONLY qrMemberId; name/vehicleNumber are for the printed card's
 // human-readable caption, not inside the code.
