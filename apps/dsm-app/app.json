@@ -22,7 +22,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "The camera is used to scan customer QR loyalty cards at bill entry."
+        }
+      ]
     ]
   }
 }

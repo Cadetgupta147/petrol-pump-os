@@ -18,10 +18,12 @@ import {
   type BillPaymentLineInput,
   type QuickAddCustomerInput,
 } from '../api/billsApi';
-import type { CustomerSummary } from '../api/customersApi';
+import type { CustomerLookup, CustomerSummary } from '../api/customersApi';
+import { calculatePointsPreview, type PointsPreview } from '../api/loyaltyApi';
 import { generateAndSaveReceiptPdf, ReceiptError, shareReceiptPdf, type SavedReceipt } from '../receipts/billReceipt';
 import { AddPaymentModal } from './AddPaymentModal';
 import { CreditCustomerPicker } from './CreditCustomerPicker';
+import { ScanCustomerModal } from './ScanCustomerModal';
 
 interface Props {
   staff: StaffSummary;
@@ -48,9 +50,15 @@ function makeLocalId(): string {
 }
 
 // Section 4 (New Bill screen, vehicle/customer-name validation) + Section 5A
-// (full split-payment "Add Payment" flow). QR scan is explicitly out of
-// scope for this slice — both vehicle number and customer name are plain
-// text entry only.
+// (full split-payment "Add Payment" flow) + Section 6.3 (QR-scan customer
+// identification: scan/type a member ID, auto-fill name + vehicle, live
+// loyalty points preview before Save — per the Section 14 mockup, Scan QR is
+// the primary action at the top and the text fields below are the walk-in
+// fallback path).
+//
+// Debounce for the points preview call — fires once typing pauses, not on
+// every keystroke.
+const POINTS_PREVIEW_DEBOUNCE_MS = 450;
 export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -66,6 +74,21 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [creditCustomerId, setCreditCustomerId] = useState<string | undefined>(undefined);
   const [creditQuickAdd, setCreditQuickAdd] = useState<QuickAddCustomerInput | undefined>(undefined);
   const [creditCustomerLabel, setCreditCustomerLabel] = useState<string | undefined>(undefined);
+
+  // Section 6.3 — the customer resolved from a scanned/hand-typed member ID.
+  // Kept separate from the credit-picker pair above: a scanned customer
+  // stays attached to a pure cash/UPI bill too (that's how they earn
+  // points), while creditCustomerId/creditQuickAdd only exist while a
+  // CREDIT line does.
+  const [scannedCustomer, setScannedCustomer] = useState<CustomerLookup | null>(null);
+  const [scanVisible, setScanVisible] = useState(false);
+
+  // Live points preview (Section 6.3 step 4 / Section 14 mockup banner).
+  // Strictly non-blocking: null means "nothing to show" (no customer, zero
+  // bill, loyalty unconfigured, or the preview call failed) — never an
+  // error state on the bill form.
+  const [pointsPreview, setPointsPreview] = useState<PointsPreview | null>(null);
+  const previewRequestRef = useRef(0);
 
   const [addPaymentVisible, setAddPaymentVisible] = useState(false);
   const [creditPickerVisible, setCreditPickerVisible] = useState(false);
@@ -106,7 +129,18 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const balanced = Math.abs(remaining) <= EPSILON;
 
   const hasVehicleOrName = vehicleNumber.trim().length > 0 || customerName.trim().length > 0;
-  const hasCreditCustomer = !!creditCustomerId || !!creditQuickAdd;
+
+  // One customerId slot per bill (see bills.service.ts): a scanned customer
+  // takes it; otherwise the credit picker's choice does. Scanning clears the
+  // picker state (handleCustomerResolved), so the two never coexist.
+  const effectiveCustomerId = scannedCustomer?.customerId ?? creditCustomerId;
+  const hasCreditCustomer = !!effectiveCustomerId || !!creditQuickAdd;
+
+  // Only reachable by scanning a customer, adding a CREDIT line (which skips
+  // the picker because hasCreditCustomer is true), then removing the scanned
+  // customer — the CREDIT line would be left with nobody to owe it.
+  const hasCreditLine = lines.some((line) => line.paymentType === 'CREDIT');
+  const creditLineNeedsCustomer = hasCreditLine && !hasCreditCustomer;
 
   const canSave =
     !submitting &&
@@ -115,7 +149,8 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     litres > 0 &&
     rateApplied > 0 &&
     lines.length > 0 &&
-    balanced;
+    balanced &&
+    !creditLineNeedsCustomer;
 
   // Small "what's missing" hint below Save — the button being merely
   // disabled doesn't tell the DSM *why*, especially for the numeric fields
@@ -127,6 +162,59 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   if (!(rateApplied > 0)) missingReasons.push('a valid rate applied');
   if (lines.length === 0) missingReasons.push('at least one payment');
   else if (!balanced) missingReasons.push('payments that add up to the full amount');
+  if (creditLineNeedsCustomer) missingReasons.push('a customer for the CREDIT payment');
+
+  // Section 6.3 step 4 — fetch the points preview as amount/litres are
+  // entered, debounced so it fires when typing pauses rather than on every
+  // keystroke. The request counter discards stale responses (a slow reply
+  // for ₹100 must not overwrite the banner for ₹1000 typed since).
+  const scannedCustomerId = scannedCustomer?.customerId;
+  useEffect(() => {
+    previewRequestRef.current += 1;
+    const requestId = previewRequestRef.current;
+
+    if (!scannedCustomerId || (amount <= 0 && litres <= 0)) {
+      setPointsPreview(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      calculatePointsPreview({ amount, litres, customerId: scannedCustomerId }, accessToken)
+        .then((preview) => {
+          if (previewRequestRef.current === requestId) setPointsPreview(preview);
+        })
+        .catch(() => {
+          // Non-blocking by design — a failed preview just shows nothing;
+          // the authoritative calculation happens server-side at save.
+          if (previewRequestRef.current === requestId) setPointsPreview(null);
+        });
+    }, POINTS_PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [scannedCustomerId, amount, litres, accessToken]);
+
+  // Section 6.3 steps 2–3 — a member ID resolved (scan or manual fallback):
+  // attach the customer and auto-fill name + vehicle number. The scanned
+  // customer replaces any credit-picker choice — one customerId slot per
+  // bill — so any CREDIT lines now belong to the scanned customer too.
+  const handleCustomerResolved = (customer: CustomerLookup) => {
+    setScannedCustomer(customer);
+    setCustomerName(customer.name);
+    if (customer.vehicleNumber) {
+      setVehicleNumber(customer.vehicleNumber);
+    }
+    setCreditCustomerId(undefined);
+    setCreditQuickAdd(undefined);
+    setCreditCustomerLabel(undefined);
+    setScanVisible(false);
+  };
+
+  // Detach the scanned customer but keep the auto-filled text fields — the
+  // DSM may be correcting a wrong scan, and Section 4's vehicle/name rule
+  // still applies to whatever remains.
+  const handleRemoveScannedCustomer = () => {
+    setScannedCustomer(null);
+    setPointsPreview(null);
+  };
 
   const requestCreditCustomer = (): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -181,6 +269,8 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     setCreditCustomerId(undefined);
     setCreditQuickAdd(undefined);
     setCreditCustomerLabel(undefined);
+    setScannedCustomer(null);
+    setPointsPreview(null);
     setSuccessBill(null);
     setSubmitError(null);
     setSavingReceipt(false);
@@ -227,7 +317,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     try {
       const bill = await createBill(
         {
-          customerId: creditCustomerId,
+          customerId: effectiveCustomerId,
           quickAddCustomer: creditQuickAdd,
           vehicleNumber: vehicleNumber.trim() || undefined,
           customerName: customerName.trim() || undefined,
@@ -262,7 +352,21 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
           <Text style={styles.resultLine}>Amount: ₹{successBill.amount.toFixed(2)}</Text>
           <Text style={styles.resultLine}>Litres: {successBill.litres}</Text>
           <Text style={styles.resultLine}>Product: {successBill.productType}</Text>
+          {successBill.customerId && successBill.loyaltyPointsEarned > 0 ? (
+            <Text style={styles.resultLine} testID="points-earned-line">
+              Points earned: {successBill.loyaltyPointsEarned.toFixed(2)}
+            </Text>
+          ) : null}
         </View>
+
+        {successBill.loyaltyWarning ? (
+          // Non-blocking warning banner (same pattern as §8A.3's warning
+          // banners): the bill IS saved — loyalty just isn't configured, so
+          // no points were credited. Owner action, not a DSM error.
+          <View style={styles.warningBanner} testID="loyalty-warning-banner">
+            <Text style={styles.warningBannerText}>{successBill.loyaltyWarning}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.receiptSection}>
           {savedReceipt ? (
@@ -328,6 +432,40 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>New Bill</Text>
+
+        {/* Section 14 mockup — QR scan is the primary action, large, at the
+            top; the text fields below stay as the walk-in fallback path. */}
+        {scannedCustomer ? (
+          <View
+            style={[
+              styles.customerChip,
+              // Section 3.4A — INFORMAL (never formally vetted) customers get
+              // the yellow treatment everywhere they appear.
+              scannedCustomer.verificationStatus === 'INFORMAL' && styles.customerChipInformal,
+            ]}
+            testID="scanned-customer-chip"
+          >
+            <View style={styles.customerChipBody}>
+              <Text style={styles.customerChipName}>
+                {scannedCustomer.name}
+                {scannedCustomer.verificationStatus === 'INFORMAL' ? '  ·  INFORMAL' : ''}
+              </Text>
+              <Text style={styles.customerChipId}>{scannedCustomer.qrMemberId}</Text>
+            </View>
+            <Pressable onPress={handleRemoveScannedCustomer} disabled={submitting} testID="remove-scanned-customer">
+              <Text style={styles.removeText}>Remove</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            style={styles.scanButton}
+            onPress={() => setScanVisible(true)}
+            disabled={submitting}
+            testID="scan-qr-button"
+          >
+            <Text style={styles.buttonText}>Scan Customer QR</Text>
+          </Pressable>
+        )}
 
         <Text style={styles.label}>Vehicle Number</Text>
         <TextInput
@@ -403,6 +541,25 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
             </Pressable>
           ))}
         </View>
+
+        {pointsPreview ? (
+          // Section 6.3 step 4 / Section 14 mockup — the DSM sees the points
+          // this bill will earn BEFORE saving, so they can confirm it looks
+          // right. Display only: the server recalculates authoritatively at
+          // save time (Section 6.2 — the DSM never sees or picks a rate;
+          // showing the applied basis/rate read-only is how they confirm).
+          <View style={styles.pointsBanner} testID="points-preview-banner">
+            <Text style={styles.pointsBannerText}>
+              Loyalty: +{pointsPreview.points.toFixed(2)} points on this bill
+            </Text>
+            <Text style={styles.pointsBannerSub}>
+              {pointsPreview.basis === 'RUPEE'
+                ? `${pointsPreview.rate} pt per ₹100`
+                : `${pointsPreview.rate} pt per litre`}
+              {pointsPreview.rateSource === 'CUSTOMER_OVERRIDE' ? ' · customer-specific rate' : ''}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.paymentsSection}>
           <Text
@@ -481,6 +638,13 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
         onQuickAdd={handleQuickAddCustomer}
         onCancel={handleCancelCreditPicker}
       />
+
+      <ScanCustomerModal
+        visible={scanVisible}
+        accessToken={accessToken}
+        onResolved={handleCustomerResolved}
+        onCancel={() => setScanVisible(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -518,6 +682,72 @@ const styles = StyleSheet.create({
     color: '#b26a00',
     marginBottom: 12,
     fontSize: 13,
+  },
+  scanButton: {
+    backgroundColor: '#1a73e8',
+    borderRadius: 8,
+    paddingVertical: 18,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  customerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#c8e0c9',
+    backgroundColor: '#e6f4ea',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 20,
+  },
+  // Section 3.4A yellow treatment for INFORMAL customers.
+  customerChipInformal: {
+    borderColor: '#f0c36d',
+    backgroundColor: '#fff8e1',
+  },
+  customerChipBody: {
+    flex: 1,
+  },
+  customerChipName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#333',
+  },
+  customerChipId: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 2,
+  },
+  pointsBanner: {
+    backgroundColor: '#e8f0fe',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  pointsBannerText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#174ea6',
+  },
+  pointsBannerSub: {
+    fontSize: 13,
+    color: '#174ea6',
+    marginTop: 2,
+  },
+  warningBanner: {
+    marginHorizontal: 24,
+    marginBottom: 8,
+    backgroundColor: '#fff8e1',
+    borderWidth: 1,
+    borderColor: '#f0c36d',
+    borderRadius: 8,
+    padding: 12,
+  },
+  warningBannerText: {
+    fontSize: 13,
+    color: '#7a5b00',
   },
   error: {
     color: '#b00020',

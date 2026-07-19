@@ -53,7 +53,14 @@ export interface Bill {
   enteredById: string;
   entryChannel: string;
   timestamp: string;
+  // Section 6.3 step 5 — stamped on the bill at save time by the server.
+  loyaltyPointsEarned: number;
+  loyaltyBasisUsed: 'RUPEE' | 'LITRE' | null;
   paymentLines: BillPaymentLine[];
+  // Present only when a customer-linked bill saved fine but earned nothing
+  // because LoyaltyConfig isn't set (Section 17 open item) — shown as a
+  // non-blocking banner after save, never an error.
+  loyaltyWarning?: string;
 }
 
 // Thrown for both "server reachable but rejected the bill" (e.g. 400 —
