@@ -14,6 +14,11 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreditConfigService } from '../credit-config/credit-config.service';
+import {
+  computeLoyaltyPoints,
+  LoyaltyService,
+} from '../loyalty/loyalty.service';
+import { allocateQrMemberId } from '../customers/member-id';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { DeleteBillDto } from './dto/delete-bill.dto';
@@ -51,6 +56,7 @@ export class BillsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly creditConfigService: CreditConfigService,
+    private readonly loyaltyService: LoyaltyService,
   ) {}
 
   async create(dto: CreateBillDto) {
@@ -128,10 +134,24 @@ export class BillsService {
       creditConfig.enforcementMode,
     );
 
+    // Section 6.3 step 5 — points are credited at bill save. Fetch the
+    // dealer's LoyaltyConfig up front (read-only); the actual crediting
+    // happens inside the transaction below.
+    //
+    // DECISION (no LoyaltyConfig set): the bill still SUCCEEDS, with zero
+    // points and no LoyaltyTransaction — billing is the pump's core revenue
+    // operation and must not be blocked by an unconfigured Phase-3 loyalty
+    // setting (bills exist from Phase 1; loyalty config has no default on
+    // purpose, Section 17). To keep that from silently hiding
+    // misconfiguration, the response carries an explicit loyaltyWarning
+    // field whenever a customer-linked bill was saved without crediting.
+    const loyaltyConfig = await this.loyaltyService.getConfig();
+
     // Bill + its BillPaymentLine rows (and, for quick-add, the new Customer
-    // row and/or the CreditLimitAlert row) are created together in one
-    // transaction, alongside a BillAuditLog(CREATED) snapshot row — nothing
-    // here should ever be left partially committed.
+    // row and/or the CreditLimitAlert row, and the LoyaltyTransaction) are
+    // created together in one transaction, alongside a BillAuditLog(CREATED)
+    // snapshot row — nothing here should ever be left partially committed;
+    // a bill and its loyalty transaction can never diverge.
     try {
       const [bill] = await this.prisma.$transaction(async (tx) => {
         let resolvedCustomerId = dto.customerId;
@@ -143,10 +163,27 @@ export class BillsService {
               vehicleNumber: dto.quickAddCustomer!.vehicleNumber,
               verificationStatus: 'INFORMAL',
               creditLimit: creditConfig.defaultInformalCreditLimit,
+              // Section 6.1/6.7 — same member-id generator as the normal
+              // /customers onboarding path, same transaction as the create.
+              qrMemberId: await allocateQrMemberId(tx),
             },
           });
           resolvedCustomerId = quickAddedCustomer.id;
         }
+
+        // Section 6.2/6.3 — points for customer-linked bills only (walk-ins
+        // earn nothing). Same computeLoyaltyPoints() as the preview
+        // endpoint: override-then-default precedence, dealer-level basis.
+        // A quick-added customer is brand-new, so it can't have an override.
+        const loyaltyCalc =
+          resolvedCustomerId && loyaltyConfig
+            ? computeLoyaltyPoints({
+                config: loyaltyConfig,
+                loyaltyRateOverride: customer?.loyaltyRateOverride ?? null,
+                amount: dto.amount,
+                litres: dto.litres,
+              })
+            : null;
 
         const created = await tx.bill.create({
           data: {
@@ -159,8 +196,8 @@ export class BillsService {
             rateApplied: dto.rateApplied,
             enteredById: dto.enteredById,
             entryChannel: dto.entryChannel,
-            // Loyalty calculation is a separate module — out of scope here.
-            // loyaltyPointsEarned defaults to 0, loyaltyBasisUsed stays null.
+            loyaltyPointsEarned: loyaltyCalc?.points ?? 0,
+            loyaltyBasisUsed: loyaltyCalc?.basis ?? null,
             paymentLines: {
               create: dto.paymentLines.map((line) => ({
                 paymentType: line.paymentType,
@@ -173,6 +210,21 @@ export class BillsService {
           // is visible directly in the response, not just its id.
           include: { paymentLines: true, customer: true },
         });
+
+        // The customer's points balance is derived (sum of pointsDelta), not
+        // stored — so this row IS the credit. Zero-point calculations (e.g.
+        // an override of 0) still stamp the bill's loyalty fields above but
+        // add no ledger row: an empty delta in a points ledger is noise.
+        if (loyaltyCalc && loyaltyCalc.points !== 0) {
+          await tx.loyaltyTransaction.create({
+            data: {
+              customerId: resolvedCustomerId!,
+              billId: created.id,
+              pointsDelta: loyaltyCalc.points,
+              reason: 'EARNED_ON_BILL',
+            },
+          });
+        }
 
         await tx.billAuditLog.create({
           data: {
@@ -198,6 +250,17 @@ export class BillsService {
 
         return [created];
       });
+
+      // The loud part of the no-config decision (see above): a
+      // customer-linked bill that earned nothing because loyalty is
+      // unconfigured says so explicitly instead of silently returning 0.
+      if (bill.customerId && !loyaltyConfig) {
+        return {
+          ...bill,
+          loyaltyWarning:
+            'Loyalty config is not set — no points were credited for this bill. Owner: PUT /loyalty-config to enable earning.',
+        };
+      }
       return bill;
     } catch (error) {
       this.handlePrismaError(error, dto.enteredById);
@@ -225,6 +288,12 @@ export class BillsService {
     return bill;
   }
 
+  // KNOWN GAP (flagged, not silent): editing a bill does NOT recalculate
+  // already-credited loyalty points — loyaltyPointsEarned/loyaltyBasisUsed
+  // and the LoyaltyTransaction row stay as credited at creation, even if
+  // amount/litres/customerId change. Reconciling points on edit (recompute +
+  // compensating LoyaltyTransaction) is a follow-up slice; until then the
+  // bill's audit trail preserves what was credited and why.
   async update(id: string, dto: UpdateBillDto) {
     const existing = await this.prisma.bill.findUnique({
       where: { id },
@@ -386,6 +455,11 @@ export class BillsService {
     }
   }
 
+  // KNOWN GAP (flagged, not silent): soft-deleting a bill does NOT reverse
+  // its credited loyalty points — the earn-side LoyaltyTransaction survives,
+  // so a deleted bill's points remain in the customer's balance. A
+  // compensating negative LoyaltyTransaction on delete is a follow-up slice
+  // (same one as the edit gap above).
   async remove(id: string, dto: DeleteBillDto) {
     const existing = await this.prisma.bill.findUnique({
       where: { id },
