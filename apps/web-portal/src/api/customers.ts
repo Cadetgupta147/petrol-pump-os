@@ -1,5 +1,11 @@
 import { apiFetch } from './client';
-import type { Customer, CustomerLedger, CreateCustomerRequest, UpdateCustomerRequest } from './types';
+import type {
+  Customer,
+  CustomerLedger,
+  CustomerQrCard,
+  CreateCustomerRequest,
+  UpdateCustomerRequest,
+} from './types';
 
 export function getAllCustomers(): Promise<Customer[]> {
   return apiFetch<Customer[]>('/customers');
@@ -41,4 +47,25 @@ export function updateCustomer(id: string, dto: UpdateCustomerRequest): Promise<
 // or an overdue-customer count on the dashboard.
 export function getCustomerLedger(id: string): Promise<CustomerLedger> {
   return apiFetch<CustomerLedger>(`/customers/${id}/ledger`);
+}
+
+// GET /customers/:id/qr — Section 6.1. The QR encodes ONLY the member id (a
+// pointer, not a wallet) — the PNG is for on-screen display, the SVG for
+// printing the physical card (Section 6.7). Owner/Accountant server-side.
+export function getCustomerQrCard(id: string): Promise<CustomerQrCard> {
+  return apiFetch<CustomerQrCard>(`/customers/${id}/qr`);
+}
+
+// PATCH /customers/:id/loyalty-rate-override — Section 6.2 rate precedence
+// step 1. Owner-ONLY server-side (a per-customer override is a loyalty
+// rate, which Section 2 bars Accountant from changing). null clears the
+// override back to the dealer default; 0 is a real "earns nothing" override.
+export function setLoyaltyRateOverride(
+  id: string,
+  loyaltyRateOverride: number | null,
+): Promise<Customer> {
+  return apiFetch<Customer>(`/customers/${id}/loyalty-rate-override`, {
+    method: 'PATCH',
+    body: JSON.stringify({ loyaltyRateOverride }),
+  });
 }

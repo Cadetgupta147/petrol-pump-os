@@ -74,6 +74,13 @@ export interface Bill {
   entryChannel: EntryChannel;
   timestamp: string;
   loyaltyPointsEarned: number;
+  // Section 6.3 step 5 — stamped at creation with the basis the credit used;
+  // null for walk-ins or bills saved before loyalty was configured.
+  loyaltyBasisUsed: EarningBasis | null;
+  // Present only on the POST /bills response, and only when a
+  // customer-linked bill was saved while LoyaltyConfig was unset (the
+  // backend's loud "zero points were credited" signal).
+  loyaltyWarning?: string;
   lastEditedById: string | null;
   lastEditedAt: string | null;
   deletedById: string | null;
@@ -151,6 +158,9 @@ export interface Customer {
   phone: string | null;
   vehicleNumber: string | null;
   qrMemberId: string;
+  // Section 6.2 — per-customer earning rate override. null = "uses the
+  // dealer default"; 0 is a real override meaning "earns nothing".
+  loyaltyRateOverride: number | null;
   creditLimit: number;
   verificationStatus: 'INFORMAL' | 'VERIFIED';
   createdAt: string;
@@ -176,6 +186,46 @@ export interface UpdateCustomerRequest {
   vehicleNumber?: string;
   creditLimit?: number;
   verificationStatus?: 'INFORMAL' | 'VERIFIED';
+}
+
+export type EarningBasis = 'RUPEE' | 'LITRE';
+export type RedemptionType = 'CASH' | 'GIFT' | 'BOTH';
+
+// Mirrors prisma LoyaltyConfig (singleton). GET /loyalty-config answers 404
+// until the Owner has configured it (translated to null in api/loyalty.ts) —
+// there are no hardcoded defaults for earningBasis/defaultRate (open
+// decision, master-plan Section 17).
+export interface LoyaltyConfig {
+  id: string;
+  earningBasis: EarningBasis;
+  defaultRate: number;
+  redemptionTypeAllowed: RedemptionType | null;
+  customerCanChooseRedemption: boolean;
+  defaultRedemptionMode: RedemptionType | null;
+  cashRedemptionRatio: number | null;
+  minRedeemablePoints: number | null;
+  updatedAt: string;
+}
+
+// Mirrors apps/backend/src/loyalty/dto/upsert-loyalty-config.dto.ts —
+// earningBasis + defaultRate required on every PUT; redemption-side fields
+// exist on the DTO but are deliberately not sent from this UI yet (Section
+// 6.4 redemption settings are a later slice).
+export interface UpsertLoyaltyConfigRequest {
+  earningBasis: EarningBasis;
+  defaultRate: number;
+}
+
+// Mirrors CustomersService.qrCard() — Section 6.1. The QR itself encodes
+// ONLY qrMemberId; name/vehicleNumber are for the printed card's
+// human-readable caption, not inside the code.
+export interface CustomerQrCard {
+  customerId: string;
+  qrMemberId: string;
+  name: string;
+  vehicleNumber: string | null;
+  pngDataUrl: string;
+  svg: string;
 }
 
 export interface LedgerEntry {

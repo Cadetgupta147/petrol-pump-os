@@ -1,23 +1,59 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
-import { getCustomerLedger } from '../api/customers';
+import { QrCardModal } from '../components/customers/QrCardModal';
+import { getCustomerLedger, setLoyaltyRateOverride } from '../api/customers';
 import { ApiError } from '../api/client';
+import { useAuth } from '../context/useAuth';
 import { formatRupees, formatDateTime } from '../utils/format';
 import type { CustomerLedger } from '../api/types';
 
 export function CustomerLedgerPage() {
   const { id } = useParams<{ id: string }>();
+  const { staff } = useAuth();
+  const isOwner = staff?.role === 'OWNER';
   const [ledger, setLedger] = useState<CustomerLedger | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showQrCard, setShowQrCard] = useState(false);
+  // Section 6.2 — Owner-only per-customer rate override editing. Kept as a
+  // string so an empty input can mean "clear the override" (null).
+  const [overrideInput, setOverrideInput] = useState('');
+  const [overrideSaving, setOverrideSaving] = useState(false);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
+
+  async function handleOverrideSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!id || !ledger) return;
+    setOverrideError(null);
+    setOverrideSaving(true);
+    try {
+      const trimmed = overrideInput.trim();
+      const value = trimmed === '' ? null : Number(trimmed);
+      const saved = await setLoyaltyRateOverride(id, value);
+      setLedger({ ...ledger, customer: saved });
+    } catch (err) {
+      // The backend is the real gate — e.g. a 403 for a non-owner, or a 400
+      // for a negative rate — we just surface its message.
+      setOverrideError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setOverrideSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     getCustomerLedger(id)
       .then((result) => {
-        if (!cancelled) setLedger(result);
+        if (!cancelled) {
+          setLedger(result);
+          setOverrideInput(
+            result.customer.loyaltyRateOverride === null
+              ? ''
+              : String(result.customer.loyaltyRateOverride),
+          );
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -83,6 +119,62 @@ export function CustomerLedgerPage() {
 
             <div className="section">
               <div className="section-title">
+                <h3>Loyalty</h3>
+                <span className="section-note">
+                  Section 6.1/6.2 — the QR card only points at this customer; rate and points live
+                  here, server-side
+                </span>
+              </div>
+              <div className="grid grid-2">
+                <div className="card">
+                  <div className="card-label">EARNING RATE</div>
+                  <div className="card-value">
+                    {ledger.customer.loyaltyRateOverride === null
+                      ? 'Dealer default'
+                      : ledger.customer.loyaltyRateOverride}
+                  </div>
+                  <div className="card-sub">
+                    {ledger.customer.loyaltyRateOverride === null
+                      ? 'no per-customer override set'
+                      : 'per-customer override — beats the dealer default'}
+                  </div>
+                  {isOwner && (
+                    <form
+                      onSubmit={(e) => {
+                        void handleOverrideSubmit(e);
+                      }}
+                      style={{ display: 'flex', gap: 8, marginTop: 8 }}
+                    >
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={overrideInput}
+                        onChange={(e) => setOverrideInput(e.target.value)}
+                        placeholder="empty = dealer default"
+                        aria-label="Loyalty rate override"
+                      />
+                      <button type="submit" className="export-btn" disabled={overrideSaving}>
+                        {overrideSaving ? 'Saving…' : 'Save'}
+                      </button>
+                    </form>
+                  )}
+                  {overrideError && <div className="form-error">{overrideError}</div>}
+                </div>
+                <div className="card">
+                  <div className="card-label">QR CARD</div>
+                  <div className="card-sub" style={{ marginBottom: 8 }}>
+                    Member ID: {ledger.customer.qrMemberId}
+                  </div>
+                  <button type="button" className="export-btn" onClick={() => setShowQrCard(true)}>
+                    View / print QR card
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="section">
+              <div className="section-title">
                 <h3>Ledger</h3>
                 <span className="section-note">every bill and payment, oldest first, running balance</span>
               </div>
@@ -128,6 +220,8 @@ export function CustomerLedgerPage() {
             </div>
           </>
         )}
+
+        {showQrCard && id && <QrCardModal customerId={id} onClose={() => setShowQrCard(false)} />}
       </div>
     </>
   );

@@ -8,12 +8,12 @@ import { NavLink } from 'react-router-dom';
 const BUILT: { label: string; to: string }[] = [
   { label: 'Dashboard', to: '/dashboard' },
   { label: 'Credit customers', to: '/customers' },
+  { label: 'Loyalty', to: '/loyalty' },
 ];
 
 const NOT_BUILT = [
   'Billing',
   'Meter readings',
-  'Loyalty',
   'Inventory',
   'Staff',
   'Reports',

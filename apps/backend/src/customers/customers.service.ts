@@ -4,9 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
+import { allocateQrMemberId } from './member-id';
 
 // Customer master CRUD + ledger — Section 3.4. Outstanding balance is
 // deliberately NOT stored on Customer: it's derived on read from the
@@ -19,14 +22,21 @@ export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
   create(dto: CreateCustomerDto) {
-    return this.prisma.customer
-      .create({
-        data: {
-          name: dto.name,
-          phone: dto.phone,
-          vehicleNumber: dto.vehicleNumber,
-          creditLimit: dto.creditLimit ?? 0,
-        },
+    // Member id allocation + customer create share one transaction so a
+    // failed create (e.g. duplicate phone) rolls the counter increment back
+    // — no burned sequence numbers (Section 6.1/6.7, see member-id.ts).
+    return this.prisma
+      .$transaction(async (tx) => {
+        const qrMemberId = await allocateQrMemberId(tx);
+        return tx.customer.create({
+          data: {
+            name: dto.name,
+            phone: dto.phone,
+            vehicleNumber: dto.vehicleNumber,
+            creditLimit: dto.creditLimit ?? 0,
+            qrMemberId,
+          },
+        });
       })
       .catch((error) => this.handlePrismaError(error));
   }
@@ -69,6 +79,54 @@ export class CustomersService {
         },
       })
       .catch((error) => this.handlePrismaError(error));
+  }
+
+  // Section 6.1 — the QR card payload. The QR encodes ONLY qrMemberId (a
+  // pointer, not a wallet): no name, no phone, no points balance, no rate.
+  // Everything else is looked up server-side when the QR is scanned, so
+  // rate/balance changes never require reprinting a card, and a QR scanned
+  // outside this system resolves to nothing.
+  async qrCard(id: string) {
+    const customer = await this.findOne(id);
+    const payload = customer.qrMemberId;
+
+    const [pngDataUrl, svg] = await Promise.all([
+      // PNG data URL for on-screen display in the web portal.
+      QRCode.toDataURL(payload, {
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 512,
+      }),
+      // SVG for print — Section 6.7's laminated PVC card wants a
+      // resolution-independent source.
+      QRCode.toString(payload, {
+        type: 'svg',
+        errorCorrectionLevel: 'M',
+        margin: 2,
+      }),
+    ]);
+
+    return {
+      customerId: customer.id,
+      qrMemberId: payload,
+      // Name + vehicle are returned for the printed card's human-readable
+      // caption (Section 14's card mockup) — they are NOT inside the QR.
+      name: customer.name,
+      vehicleNumber: customer.vehicleNumber,
+      pngDataUrl,
+      svg,
+    };
+  }
+
+  // Section 6.2 — per-customer earning rate override (rate precedence step
+  // 1). null clears the override; 0 is a real override meaning "earns
+  // nothing". Owner-only at the controller.
+  async setLoyaltyRateOverride(id: string, dto: SetLoyaltyRateOverrideDto) {
+    await this.findOne(id);
+    return this.prisma.customer.update({
+      where: { id },
+      data: { loyaltyRateOverride: dto.loyaltyRateOverride },
+    });
   }
 
   // Section 3.4 — full ledger per customer: every bill, every payment,

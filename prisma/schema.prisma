@@ -109,7 +109,14 @@ model Customer {
   // (informal) customers via bill-time quick-add (Section 3.4A) don't have a phone yet.
   // Postgres unique indexes treat multiple NULLs as distinct, so this stays safe.
   vehicleNumber   String?
-  qrMemberId      String   @unique @default(cuid())
+  // Section 6.1/6.7 — human-friendly member id, e.g. "PUMP001-CUST-04521-6":
+  // pump code + literal CUST + zero-padded sequence + Luhn check digit over
+  // the sequence (for manual fallback entry when the card won't scan). This
+  // is the ONLY thing the QR encodes. Generated app-side via
+  // allocateQrMemberId() (customers/member-id.ts) from MemberIdCounter — no
+  // DB default on purpose, so every create path must go through the
+  // generator.
+  qrMemberId      String   @unique
   loyaltyRateOverride Float? // per-customer override of default earning rate
   creditLimit     Float    @default(0) // Section 3.4 — max outstanding credit allowed
   // Section 3.4A — INFORMAL (quick-added at bill time, name + vehicle only) vs
@@ -123,6 +130,17 @@ model Customer {
   redemptionTransactions RedemptionTransaction[]
   payments              Payment[]
   creditAlerts          CreditLimitAlert[]
+}
+
+// Section 6.1/6.7 — monotonic sequence behind Customer.qrMemberId.
+// Singleton row (id = 'singleton'), atomically incremented via
+// update({ data: { lastSeq: { increment: 1 } } }) inside the customer-create
+// transaction (see customers/member-id.ts), so two concurrent creates can
+// never mint the same member number. Seeded by the
+// human_friendly_member_ids migration at count(existing customers).
+model MemberIdCounter {
+  id      String @id
+  lastSeq Int
 }
 
 model Bill {
@@ -312,17 +330,27 @@ model RateHistory {
 
 // ---------- Loyalty Program ----------
 
+// Singleton (same pattern as CreditConfig — see LoyaltyService).
+// Section 6.2 — earning side. earningBasis/defaultRate have NO schema
+// defaults on purpose: the launch default basis and rate are open decisions
+// (Section 17), so the dealer must set them explicitly via the API before
+// any points can be calculated.
 model LoyaltyConfig {
   id                     String         @id @default(cuid())
   earningBasis           EarningBasis
   defaultRate            Float
-  redemptionTypeAllowed  RedemptionType
+  // Section 6.4 — redemption side. Nullable because redemption policy at
+  // launch (cash / gift / both, ratio, minimum) is itself still an open
+  // decision (Section 17) — the earning side must be configurable without
+  // forcing a guessed redemption setup.
+  redemptionTypeAllowed  RedemptionType?
   // Section 6.4 — whether the customer picks cash/gift each redemption, or the
   // dealer has fixed a default. Only meaningful when redemptionTypeAllowed = BOTH.
   customerCanChooseRedemption Boolean       @default(false)
   defaultRedemptionMode       RedemptionType?
-  cashRedemptionRatio    Float // points -> currency conversion
-  minRedeemablePoints    Int
+  cashRedemptionRatio    Float? // points -> currency conversion
+  minRedeemablePoints    Int?
+  updatedAt              DateTime       @updatedAt
 }
 
 model LoyaltyTransaction {

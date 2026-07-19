@@ -9,6 +9,7 @@ import { BillsModule } from './bills/bills.module';
 import { CreditConfigModule } from './credit-config/credit-config.module';
 import { CreditAlertsModule } from './credit-alerts/credit-alerts.module';
 import { MeterReadingsModule } from './meter-readings/meter-readings.module';
+import { LoyaltyModule } from './loyalty/loyalty.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { TallyExportModule } from './tally-export/tally-export.module';
 import { AuthModule } from './auth/auth.module';
@@ -45,6 +46,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     CreditConfigModule,
     CreditAlertsModule,
     MeterReadingsModule,
+    LoyaltyModule,
     DashboardModule,
     TallyExportModule,
   ],
