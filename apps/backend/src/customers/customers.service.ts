@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -9,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
-import { allocateQrMemberId } from './member-id';
+import { allocateQrMemberId, isValidQrMemberId } from './member-id';
 
 // Customer master CRUD + ledger — Section 3.4. Outstanding balance is
 // deliberately NOT stored on Customer: it's derived on read from the
@@ -79,6 +80,51 @@ export class CustomersService {
         },
       })
       .catch((error) => this.handlePrismaError(error));
+  }
+
+  // Section 6.3 step 2/3 — resolve a scanned (or hand-typed) member ID back
+  // to the customer, for the DSM app's New Bill auto-fill. Two deliberate
+  // narrowings vs. findOne():
+  //   1. The Luhn check digit is validated BEFORE any DB lookup — this is
+  //      exactly the manual-fallback-entry case isValidQrMemberId() exists
+  //      for (Section 6.1's checksum): a mistyped ID fails fast with a 400
+  //      the DSM can act on ("re-check the card"), instead of a misleading
+  //      404.
+  //   2. The response is a minimal auto-fill projection, NOT the full
+  //      Customer record: no phone, no creditLimit, no loyaltyRateOverride,
+  //      no points. The QR is a pointer, not a wallet (Section 6.1), and the
+  //      DSM role gets only what the bill-entry screen needs (Section 6.2:
+  //      "The DSM never sees or picks a rate — the system looks it up
+  //      silently").
+  // NOTE: Customer has no soft-delete (no deletedAt column in the schema) —
+  // there is nothing to exclude here. If customer soft-delete is ever added,
+  // this lookup must filter it.
+  async findByMemberId(qrMemberId: string) {
+    if (!isValidQrMemberId(qrMemberId)) {
+      throw new BadRequestException(
+        `"${qrMemberId}" is not a valid member ID — expected e.g. PUMP001-CUST-04521-6 (check the last digit if typed by hand)`,
+      );
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { qrMemberId },
+    });
+    if (!customer) {
+      throw new NotFoundException(
+        `No customer found for member ID ${qrMemberId}`,
+      );
+    }
+
+    return {
+      customerId: customer.id,
+      qrMemberId: customer.qrMemberId,
+      name: customer.name,
+      vehicleNumber: customer.vehicleNumber,
+      // INFORMAL vs VERIFIED — the bill screen shows this so the DSM knows a
+      // quick-added customer hasn't been through real onboarding yet
+      // (Section 3.4A). It's a visibility flag, never itself a blocker.
+      verificationStatus: customer.verificationStatus,
+    };
   }
 
   // Section 6.1 — the QR card payload. The QR encodes ONLY qrMemberId (a

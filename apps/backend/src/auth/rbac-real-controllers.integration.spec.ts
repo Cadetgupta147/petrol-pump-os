@@ -70,7 +70,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       .overrideProvider(BillsService)
       .useValue({ findAll: () => [], create: () => ({}), remove: () => ({}) })
       .overrideProvider(CustomersService)
-      .useValue({ findAll: () => [] })
+      .useValue({ findAll: () => [], findByMemberId: () => ({}) })
       .overrideProvider(DashboardService)
       .useValue({ getSalesSummary: () => ({ totalSales: 0 }) })
       .overrideProvider(CreditAlertsService)
@@ -86,7 +86,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
         closeShift: () => ({}),
       })
       .overrideProvider(CreditConfigService)
-      .useValue({ getOrCreate: () => ({}) })
+      .useValue({ getOrCreate: () => ({}), update: () => ({}) })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -133,7 +133,6 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
     ['GET /credit-alerts', '/credit-alerts'],
     ['GET /tally-export/xml', '/tally-export/xml?from=2026-07-01&to=2026-07-17'],
     ['GET /meter-readings', '/meter-readings'],
-    ['GET /credit-config', '/credit-config'],
   ])('allows an Accountant token through %s', async (_label, path) => {
     const token = await accountantToken();
     const res = await fetch(`${baseUrl}${path}`, {
@@ -153,14 +152,28 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
     expect(res.status).toBe(401);
   });
 
+  it('rejects GET /customers/by-member-id/:qrMemberId with no Authorization header (401)', async () => {
+    const res = await fetch(
+      `${baseUrl}/customers/by-member-id/PUMP001-CUST-00001-8`,
+    );
+    expect(res.status).toBe(401);
+  });
+
   // Section 2/4 — DSM/Cashier must reach the DSM app's core workflow
-  // (create a bill, look up a customer for the credit picker, open/close
+  // (create a bill, look up a customer for the credit picker, resolve a
+  // scanned QR member ID for New Bill auto-fill (Section 6.3), open/close
   // their own shift) even though these controllers are class-level
-  // Owner/Accountant-only. Each of these four routes carries a method-level
+  // Owner/Accountant-only. Each of these routes carries a method-level
   // @Roles(..., Role.DSM) override.
   it.each([
     ['POST /bills', 'POST', '/bills', {}],
     ['GET /customers', 'GET', '/customers', undefined],
+    [
+      'GET /customers/by-member-id/:qrMemberId',
+      'GET',
+      '/customers/by-member-id/PUMP001-CUST-00001-8',
+      undefined,
+    ],
     ['POST /meter-readings', 'POST', '/meter-readings', {}],
     ['PATCH /meter-readings/:id/close', 'PATCH', '/meter-readings/some-id/close', {}],
   ])('allows a DSM token through %s', async (_label, method, path, body) => {
@@ -219,6 +232,32 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ deletedById: 'staff-accountant' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  // Section 3.4A deviation — credit enforcement policy (enforcementMode,
+  // defaultInformalCreditLimit) is business-settings policy, narrowed to
+  // Owner-only, unlike the rest of this controller's class-level
+  // Owner/Accountant decorator elsewhere in this file. CreditConfigController
+  // now carries a class-level @Roles(Role.OWNER) override.
+  it('rejects an Accountant token on GET /credit-config (403)', async () => {
+    const token = await accountantToken();
+    const res = await fetch(`${baseUrl}/credit-config`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects an Accountant token on PATCH /credit-config (403)', async () => {
+    const token = await accountantToken();
+    const res = await fetch(`${baseUrl}/credit-config`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
     });
     expect(res.status).toBe(403);
   });

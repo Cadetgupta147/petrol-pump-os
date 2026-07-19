@@ -15,9 +15,9 @@ import { UpdateCreditConfigDto } from './dto/update-credit-config.dto';
 //
 // Auth/role guards do exist and apply here: the global JwtAuthGuard
 // (app.module.ts) requires a valid JWT on every route, and
-// CreditConfigController carries @Roles(Role.OWNER, Role.ACCOUNTANT),
-// enforced by the global RolesGuard. No staff outside those two roles can
-// reach this service via HTTP.
+// CreditConfigController carries @Roles(Role.OWNER), enforced by the
+// global RolesGuard. No staff outside that role can reach this service via
+// HTTP.
 const CREDIT_CONFIG_ID = 'singleton';
 
 @Injectable()

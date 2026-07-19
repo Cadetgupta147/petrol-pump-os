@@ -37,6 +37,18 @@ export class CustomersController {
     return this.customersService.findAll();
   }
 
+  // Section 6.3 step 2/3 — resolve a scanned/hand-typed member ID for the
+  // DSM app's New Bill auto-fill. DSM-allowed like findAll() (this IS the
+  // DSM's QR-scan workflow); returns a minimal projection, not the full
+  // customer record — see CustomersService.findByMemberId(). Declared
+  // before the ':id' routes so the literal segment can never be captured as
+  // a customer id.
+  @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
+  @Get('by-member-id/:qrMemberId')
+  findByMemberId(@Param('qrMemberId') qrMemberId: string) {
+    return this.customersService.findByMemberId(qrMemberId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.customersService.findOne(id);

@@ -50,8 +50,12 @@ export interface PointsCalculation {
 //   2. otherwise config.defaultRate
 // The earning basis is ALWAYS the dealer-level setting — the override
 // changes the rate, never the basis. Points stay fractional (schema uses
-// Float) but are rounded to 2 decimals so float noise never leaks into a
-// stored balance or a customer-visible number.
+// Float) and are kept at full precision here — this value flows straight
+// into the preview response and into LoyaltyTransaction.pointsDelta /
+// Bill.loyaltyPointsEarned, so rounding at this layer would bake float
+// noise (or lost precision) permanently into a stored balance. Rounding to
+// 2 decimals is a presentation-layer concern for whoever displays a points
+// number to a human — it does not belong in this function.
 export function computeLoyaltyPoints(params: {
   config: { earningBasis: EarningBasis; defaultRate: number };
   loyaltyRateOverride: number | null;
@@ -73,7 +77,7 @@ export function computeLoyaltyPoints(params: {
     basis: config.earningBasis,
     rate,
     rateSource,
-    points: Math.round(raw * 100) / 100,
+    points: raw,
   };
 }
 

@@ -71,19 +71,23 @@ describe('LoyaltyService', () => {
       expect(result.points).toBe(0);
     });
 
-    it('rounds to 2 decimals so float noise never leaks out', async () => {
+    it('preserves full IEEE754 precision — no rounding at calculation time', async () => {
       prisma.loyaltyConfig.findUnique.mockResolvedValue({
         ...rupeeConfig,
         defaultRate: 1.5,
       });
 
-      // (999.99 / 100) × 1.5 = 14.999849999999999 in IEEE754
+      // (999.99 / 100) × 1.5 = 14.99985 (exact in this case, but the point is
+      // this function must never round it). Rounding is a presentation-layer
+      // concern for whatever UI displays this to a human — the
+      // calculated/stored value must keep full precision (Section 6.3).
       const result = await service.calculatePoints({
         amount: 999.99,
         litres: 10,
       });
 
-      expect(result.points).toBe(15);
+      expect(result.points).toBe((999.99 / 100) * 1.5);
+      expect(result.points).toBe(14.99985);
     });
   });
 
