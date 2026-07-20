@@ -4,20 +4,18 @@ import { StatusBar } from 'expo-status-bar';
 import type { VerifyOtpResponse, CustomerSummary } from './src/api/customerAuthApi';
 import { PhoneEntryScreen } from './src/screens/PhoneEntryScreen';
 import { OtpEntryScreen } from './src/screens/OtpEntryScreen';
-import { LoggedInPlaceholderScreen } from './src/screens/LoggedInPlaceholderScreen';
+import { CustomerPortalShell } from './src/screens/CustomerPortalShell';
 import {
   clearCustomerSession,
   loadCustomerSession,
   saveCustomerSession,
 } from './src/storage/customerSessionStorage';
 
-// App-level state machine for this slice: checking stored session -> phone
-// entry -> OTP entry -> logged-in placeholder. No navigation library — three
-// screens don't need one yet (same reasoning as apps/dsm-app/App.tsx).
-//
-// Task scope note: phone number + OTP login ONLY. Nothing here routes to any
-// other feature (bill history, points, gift catalog, dues/"Pay Now") — those
-// are separate, later slices per docs/master-plan.md Section 5.
+// App-level state machine: checking stored session -> phone entry -> OTP
+// entry -> logged-in shell (Home/History/Rewards tabs, Section 5/6). No
+// navigation library — CustomerPortalShell's own tab switcher follows this
+// exact same local-state-driven pattern (same reasoning as
+// apps/dsm-app/App.tsx).
 type Stage =
   | { name: 'checkingSession' }
   | { name: 'phoneEntry' }
@@ -106,9 +104,13 @@ export default function App() {
     );
   } else if (stage.name === 'loggedIn' && accessToken) {
     content = (
-      <LoggedInPlaceholderScreen
-        customer={stage.customer}
-        onLogOut={() => {
+      <CustomerPortalShell
+        accessToken={accessToken}
+        onUnauthorized={() => {
+          // A 401 from any customer-portal call means this token is
+          // expired/killed server-side — force the same logout path a
+          // manual "log out" tap would use, per the task brief, rather than
+          // leaving the customer stuck on a screen that will never load.
           void handleLogOut();
         }}
       />

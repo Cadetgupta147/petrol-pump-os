@@ -6,19 +6,36 @@ React Native (Expo) app for credit/loyalty customers. Owner: Person B
 ## Status
 
 Scaffolded with Expo (TypeScript template), mirroring `apps/dsm-app`'s
-structure/conventions. Implements **phone number + OTP login only**, per this
-slice's scope — and only as far as the client side goes (see "Backend gap"
-below, this does not work end-to-end yet). No bill history, points balance,
-gift catalog, dues/"Pay Now", push notifications, or any other Section 5
-feature — those are separate, later slices. After a successful login there is
-only a minimal placeholder screen (confirmation + log out), not a real
-dashboard/home screen.
+structure/conventions. Implements **phone number + OTP login** (client side
+only — see "Backend gap" below) plus, once logged in, a real dashboard:
+**Home, Bill History, and Rewards (gift catalog + redemption)**, per
+`docs/master-plan.md` Section 5, 6.4, and 14, wired against the live
+`apps/backend/src/customer-portal/` module. Push notifications, SMS/WhatsApp
+fallback, the Profile tab, and an actual UPI "Pay Now" payment flow are still
+out of scope — none of those are backend-supported yet either.
 
 ## Screens
 
 - `src/screens/PhoneEntryScreen.tsx` — collect + validate phone number, request OTP
 - `src/screens/OtpEntryScreen.tsx` — enter the OTP, verify, resend (with a client-side cooldown display only — see note below)
-- `src/screens/LoggedInPlaceholderScreen.tsx` — minimal post-login confirmation
+- `src/screens/CustomerPortalShell.tsx` — the logged-in shell: owns the `/me`, `/bills`, and `/gift-catalog` fetches and switches between three tabs via local state (no navigation library, same pattern as `App.tsx`)
+- `src/screens/HomeScreen.tsx` — greeting, points balance + cash/gift-equivalent subtext, outstanding-due card ("Pay Now" is a "coming soon" notice, not a real payment — see below), redeem-section entry cards, recent bills preview
+- `src/screens/BillHistoryScreen.tsx` — full itemized bill history
+- `src/screens/GiftCatalogScreen.tsx` — gift catalog (affordable/locked states) plus the cash-discount-switch panel, only shown when the pump allows it
+- `src/api/customerPortalApi.ts` — authenticated (Bearer token) GET/POST client for the four `/customer-portal/*` routes
+- `src/lib/customerPortalFormat.ts` — pure formatting/derivation helpers (Indian-digit-grouped numbers, bill timestamp labels, redemption request shaping, points clamping), unit tested in the sibling `.test.ts` file
+
+### Deviations from the Section 14 mockups (flagged, not silently dropped)
+
+- The home mockup's "Link your physical QR loyalty card" banner is **not**
+  built — there's no backend endpoint for it, and it's outside the
+  customer-portal module's four-route contract this slice was built against.
+- The mockup shows "Nozzle 2" on each bill row; `Bill` has no nozzle field in
+  the schema, so bill rows show date/time + product type + litres instead.
+- "Pay Now" does not attempt any payment. The customer app's in-app payment
+  gateway is an explicitly open decision (`CLAUDE.md`/Section 17), so the
+  button shows an inline "coming soon" notice on tap rather than a silent
+  no-op or a broken checkout flow.
 
 ## IMPORTANT — backend gap, flagged per task instructions
 
