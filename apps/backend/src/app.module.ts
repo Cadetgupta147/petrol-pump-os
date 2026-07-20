@@ -16,6 +16,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { TallyExportModule } from './tally-export/tally-export.module';
 import { TanksModule } from './tanks/tanks.module';
 import { PurchasesModule } from './purchases/purchases.module';
+import { RateMasterModule } from './rate-master/rate-master.module';
+import { DensityLogsModule } from './density-logs/density-logs.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -61,6 +63,8 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     TallyExportModule,
     TanksModule,
     PurchasesModule,
+    RateMasterModule,
+    DensityLogsModule,
   ],
   controllers: [HealthController],
   providers: [

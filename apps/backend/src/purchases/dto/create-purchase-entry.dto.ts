@@ -1,4 +1,4 @@
-import { IsBoolean, IsNumber, IsOptional, IsPositive, IsString } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
 
 // POST /purchase-entries — Section 7.1's field list (date, supplier, product,
 // quantity, rate, invoice_no, tanker_no, entered_via). `date` is not
@@ -8,6 +8,13 @@ import { IsBoolean, IsNumber, IsOptional, IsPositive, IsString } from 'class-val
 // amount, or trust decision, so it's safe to accept from the client.
 // Defaults to false (manual entry) when omitted; the service persists
 // whatever is sent rather than hardcoding it.
+//
+// Section 7.3 — densityValue/ppmValue/recordedById are optional: a delivery
+// doesn't always come with an on-the-spot quality check. Cross-field
+// validation NOT expressible via decorators alone (if densityValue is
+// present, recordedById must also be present — same "at least one of X/Y"
+// validation style as BillsService.create()'s vehicleNumber/customerName
+// check) lives in PurchasesService.create().
 export class CreatePurchaseEntryDto {
   @IsString()
   supplierName!: string;
@@ -45,4 +52,20 @@ export class CreatePurchaseEntryDto {
   @IsOptional()
   @IsBoolean()
   ocrExtracted?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  densityValue?: number;
+
+  // Min(0), not IsPositive() — 0 ppm is a valid, ideal reading (see the same
+  // note on CreateDensityLogDto.ppmValue).
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  ppmValue?: number;
+
+  @IsOptional()
+  @IsString()
+  recordedById?: string;
 }

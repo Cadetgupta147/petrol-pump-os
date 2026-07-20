@@ -27,7 +27,11 @@ export interface CreateBillInput {
   amount: number;
   litres: number;
   productType: string;
-  rateApplied: number;
+  // Section 7.4 — rateApplied is deliberately NOT sent by the client. The
+  // server resolves it authoritatively from Rate Master at creation time
+  // (apps/backend/src/bills/dto/create-bill.dto.ts); the global
+  // ValidationPipe has forbidNonWhitelisted on, so sending it here would
+  // reject the whole request, not just be ignored.
   enteredById: string;
   entryChannel: 'DSM_APP';
   paymentLines: BillPaymentLineInput[];

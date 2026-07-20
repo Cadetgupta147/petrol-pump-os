@@ -90,7 +90,6 @@ function fakeBill(overrides: Partial<Bill> = {}): Bill {
 function fillBaseBillFields(getByTestId: ReturnType<typeof render>['getByTestId']) {
   fireEvent.changeText(getByTestId('amount-input'), '500');
   fireEvent.changeText(getByTestId('litres-input'), '10');
-  fireEvent.changeText(getByTestId('rate-applied-input'), '50');
 }
 
 beforeEach(() => {

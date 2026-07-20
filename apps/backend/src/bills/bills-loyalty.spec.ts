@@ -9,6 +9,7 @@ import { BillsService } from './bills.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreditConfigService } from '../credit-config/credit-config.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
+import { RateMasterService } from '../rate-master/rate-master.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 
 // Section 6.3 step 5 — points credited atomically with bill creation.
@@ -54,6 +55,11 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
     $transaction: jest.Mock;
   };
   let creditConfigService: { getOrCreate: jest.Mock };
+  // Section 7.4 — rateApplied is resolved server-side via RateMasterService,
+  // not client-supplied (see create-bill.dto.ts). Mocked here so every test
+  // exercises BillsService.create() without needing to configure Rate
+  // Master rows through Prisma too.
+  let rateMasterService: { getCurrentRate: jest.Mock };
 
   const rupeeConfig = {
     id: 'singleton',
@@ -67,12 +73,13 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
   };
 
   // amount 1000 / litres 20, fully CASH-paid, vehicle number present.
+  // rateApplied is NOT part of CreateBillDto anymore — see rateMasterService
+  // mock above, which resolves it to 100 for every test here.
   const baseDto: Omit<CreateBillDto, 'customerId' | 'quickAddCustomer'> = {
     vehicleNumber: 'KA01AB1234',
     amount: 1000,
     litres: 20,
     productType: 'petrol',
-    rateApplied: 100,
     enteredById: 'staff-1',
     entryChannel: EntryChannel.WEB,
     paymentLines: [
@@ -126,12 +133,22 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       }),
     };
 
+    rateMasterService = {
+      getCurrentRate: jest.fn().mockResolvedValue({
+        id: 'rh-1',
+        productType: 'petrol',
+        rate: 100,
+        effectiveFrom: new Date('2026-01-01T00:00:00Z'),
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BillsService,
         LoyaltyService,
         { provide: PrismaService, useValue: prisma },
         { provide: CreditConfigService, useValue: creditConfigService },
+        { provide: RateMasterService, useValue: rateMasterService },
       ],
     }).compile();
 

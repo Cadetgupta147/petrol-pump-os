@@ -1,6 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, PurchaseEntry } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePurchaseEntryDto } from './dto/create-purchase-entry.dto';
+import { computeDensityFlag } from '../density-logs/density-logs.service';
 
 // Section 7.1/7.2 — manual purchase entry. Tanker delivery -> Purchase
 // Entry created -> tank level increases, all in one transaction.
@@ -33,6 +36,18 @@ export class PurchasesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreatePurchaseEntryDto) {
+    // Section 7.3 — "at least one of X/Y" validation style, same as
+    // BillsService.create()'s vehicleNumber/customerName check: densityValue
+    // without recordedById would create a DensityLog row with no known actor,
+    // which DipReading/DensityLog's existing schema conventions don't allow
+    // (recordedById is a required FK) — reject up front instead of letting
+    // it surface as an opaque FK/validation error later.
+    if (dto.densityValue !== undefined && !dto.recordedById) {
+      throw new BadRequestException(
+        'recordedById is required when densityValue is provided',
+      );
+    }
+
     // Match Tank by exact productType string equality — same loose
     // string-typed-product convention Bill/RateHistory already use (no typed
     // Product enum exists in this schema to join against instead).
@@ -45,9 +60,23 @@ export class PurchasesService {
       );
     }
 
-    const [purchaseEntry] = await this.prisma.$transaction([
+    const purchaseEntryId = randomUUID();
+
+    // Section 7.3 — when a density/quality reading rides along with this
+    // delivery, it's linked (purchaseEntryId) and created atomically with the
+    // PurchaseEntry + Tank stock increment below. This transaction stays in
+    // its existing ARRAY form (not rewritten into the callback form) to match
+    // the rest of this method — Prisma resolves array-form entries inside one
+    // transaction the same as the callback form, so atomicity is preserved.
+    // Because the array form can't read back purchaseEntry.id mid-transaction
+    // (each promise is built up front, not sequenced against prior results),
+    // the id is pre-generated with the same @default(cuid())-compatible
+    // generator Prisma itself would otherwise assign, and passed explicitly
+    // to both creates.
+    const operations: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.purchaseEntry.create({
         data: {
+          id: purchaseEntryId,
           supplierName: dto.supplierName,
           productType: dto.productType,
           quantityLitres: dto.quantityLitres,
@@ -63,7 +92,25 @@ export class PurchasesService {
         where: { id: tank.id },
         data: { currentStockLitres: { increment: dto.quantityLitres } },
       }),
-    ]);
+    ];
+
+    if (dto.densityValue !== undefined) {
+      operations.push(
+        this.prisma.densityLog.create({
+          data: {
+            tankId: tank.id,
+            densityValue: dto.densityValue,
+            ppmValue: dto.ppmValue,
+            recordedById: dto.recordedById!,
+            purchaseEntryId,
+            flagged: computeDensityFlag(dto.productType, dto.densityValue),
+          },
+        }),
+      );
+    }
+
+    const results = await this.prisma.$transaction(operations);
+    const purchaseEntry = results[0] as PurchaseEntry;
 
     return purchaseEntry;
   }

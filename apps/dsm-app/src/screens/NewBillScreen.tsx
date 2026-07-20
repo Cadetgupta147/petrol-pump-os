@@ -65,7 +65,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [customerName, setCustomerName] = useState('');
   const [amountInput, setAmountInput] = useState('');
   const [litresInput, setLitresInput] = useState('');
-  const [rateAppliedInput, setRateAppliedInput] = useState('');
   const [productType, setProductType] = useState<ProductType>('PETROL');
 
   const [lines, setLines] = useState<LocalPaymentLine[]>([]);
@@ -114,7 +113,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
 
   const amount = Number(amountInput) || 0;
   const litres = Number(litresInput) || 0;
-  const rateApplied = Number(rateAppliedInput) || 0;
 
   const sumIn = lines.filter((line) => line.direction === 'IN').reduce((total, line) => total + line.amount, 0);
   const sumOut = lines.filter((line) => line.direction === 'OUT').reduce((total, line) => total + line.amount, 0);
@@ -141,7 +139,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     hasVehicleOrName &&
     amount > 0 &&
     litres > 0 &&
-    rateApplied > 0 &&
     lines.length > 0 &&
     balanced &&
     !creditLineNeedsCustomer;
@@ -153,7 +150,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   if (!hasVehicleOrName) missingReasons.push('vehicle number or customer name');
   if (!(amount > 0)) missingReasons.push('a valid amount');
   if (!(litres > 0)) missingReasons.push('valid litres');
-  if (!(rateApplied > 0)) missingReasons.push('a valid rate applied');
   if (lines.length === 0) missingReasons.push('at least one payment');
   else if (!balanced) missingReasons.push('payments that add up to the full amount');
   if (creditLineNeedsCustomer) missingReasons.push('a customer for the CREDIT payment');
@@ -298,7 +294,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     setCustomerName('');
     setAmountInput('');
     setLitresInput('');
-    setRateAppliedInput('');
     setProductType('PETROL');
     setLines([]);
     setCreditCustomerId(undefined);
@@ -360,7 +355,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
           amount,
           litres,
           productType,
-          rateApplied,
           enteredById: staff.id,
           entryChannel: 'DSM_APP',
           paymentLines: lines.map(({ paymentType, amount: lineAmount, direction }) => ({
@@ -560,17 +554,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
           keyboardType="decimal-pad"
           editable={!submitting}
           testID="litres-input"
-        />
-
-        <Text style={styles.label}>Rate Applied (₹/litre)</Text>
-        <TextInput
-          style={styles.input}
-          value={rateAppliedInput}
-          onChangeText={setRateAppliedInput}
-          placeholder="e.g. 96.50"
-          keyboardType="decimal-pad"
-          editable={!submitting}
-          testID="rate-applied-input"
         />
 
         <Text style={styles.label}>Product Type</Text>

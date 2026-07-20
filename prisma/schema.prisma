@@ -91,6 +91,7 @@ model Staff {
   attendanceLogs     AttendanceLog[]
   cashCustodyLogs    CashCustodyLog[]
   dipReadings        DipReading[]
+  densityLogs        DensityLog[]
 }
 
 model AttendanceLog {
@@ -323,14 +324,33 @@ model DipReading {
   variance             Float    // systemStockAtReading - reading
   flagged              Boolean
   createdAt            DateTime @default(now())
+
+  densityLogs          DensityLog[]
 }
 
+// Section 7.3 — density/quality check (density value in g/mL and, optionally,
+// PPM/water-contamination reading), optionally linked to the delivery
+// (PurchaseEntry) or the physical stock check (DipReading) that prompted it —
+// both nullable because a density log isn't always tied to either. recordedBy
+// reuses the same Staff actor pattern as DipReading.recordedBy rather than
+// asking for a duplicate identity field when a density log rides along with
+// a DIP reading (see DipReadingsService/TanksService.recordDipReading()).
 model DensityLog {
-  id        String   @id @default(cuid())
-  tank      Tank     @relation(fields: [tankId], references: [id])
-  tankId    String
-  reading   Float
-  recordedAt DateTime @default(now())
+  id              String         @id @default(cuid())
+  tank            Tank           @relation(fields: [tankId], references: [id])
+  tankId          String
+  densityValue    Float
+  ppmValue        Float?
+  recordedBy      Staff          @relation(fields: [recordedById], references: [id])
+  recordedById    String
+  purchaseEntry   PurchaseEntry? @relation(fields: [purchaseEntryId], references: [id])
+  purchaseEntryId String?
+  dipReading      DipReading?    @relation(fields: [dipReadingId], references: [id])
+  dipReadingId    String?
+  // Out-of-range flag — see DENSITY_RANGE_BY_PRODUCT in density-logs.service.ts
+  // for the placeholder acceptable-range map and what "unknown product" means.
+  flagged         Boolean        @default(false)
+  recordedAt      DateTime       @default(now())
 }
 
 // ---------- Walk-in Sales Aggregation (Section 8A) ----------
@@ -386,6 +406,8 @@ model PurchaseEntry {
   invoiceImageUrl String? // OCR source image, Section 9
   ocrExtracted Boolean  @default(false)
   createdAt    DateTime @default(now())
+
+  densityLogs  DensityLog[]
 }
 
 model LubricantItem {
@@ -395,11 +417,19 @@ model LubricantItem {
   reorderAt Int
 }
 
+// Section 7.4 — Rate Master. Append-only history: corrections are new dated
+// rows, not edits — there is deliberately no PATCH/DELETE (same philosophy
+// as BillAuditLog's immutability). The unique constraint on
+// (productType, effectiveFrom) prevents two rows from claiming the same
+// effective date for the same product, which would make "the current rate"
+// ambiguous at that date. See RateMasterService.getCurrentRate().
 model RateHistory {
   id          String   @id @default(cuid())
   productType String
   rate        Float
   effectiveFrom DateTime
+
+  @@unique([productType, effectiveFrom])
 }
 
 // ---------- Loyalty Program ----------

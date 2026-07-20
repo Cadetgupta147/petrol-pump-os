@@ -22,6 +22,14 @@ import { QuickAddCustomerDto } from './quick-add-customer.dto';
 //   - customerId, if provided, must reference an existing Customer.
 //   - customerId and quickAddCustomer are mutually exclusive.
 //   - quickAddCustomer is only valid alongside at least one CREDIT payment line.
+//
+// Section 7.4 — rateApplied is deliberately NOT a field here. The server
+// resolves it authoritatively from Rate Master (RateMasterService.
+// getCurrentRate()) at bill-creation time — CLAUDE.md's "never trust the
+// frontend" hard rule applies directly to money fields like this one, so the
+// client no longer supplies a rate for create(). Contrast with
+// UpdateBillDto, which still accepts a manual rateApplied — see the comment
+// at BillsService.update() for why that asymmetry is intentional, not a gap.
 export class CreateBillDto {
   @IsOptional()
   @IsString()
@@ -53,10 +61,6 @@ export class CreateBillDto {
 
   @IsString()
   productType!: string;
-
-  @IsNumber()
-  @IsPositive()
-  rateApplied!: number;
 
   @IsString()
   enteredById!: string;

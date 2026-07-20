@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeDensityFlag } from '../density-logs/density-logs.service';
 import { CreateTankDto } from './dto/create-tank.dto';
 import { UpdateTankDto } from './dto/update-tank.dto';
 import { CreateDipReadingDto } from './dto/create-dip-reading.dto';
@@ -117,6 +118,24 @@ export class TanksService {
             lastDipAt: created.createdAt,
           },
         });
+
+        // Section 7.3 — when a density/quality reading rides along with this
+        // DIP check, it's linked (dipReadingId) and created atomically in
+        // the same transaction. staffId doubles as the DensityLog's
+        // recordedById — see CreateDipReadingDto's comment for why there's
+        // no separate field.
+        if (dto.densityValue !== undefined) {
+          await tx.densityLog.create({
+            data: {
+              tankId,
+              densityValue: dto.densityValue,
+              ppmValue: dto.ppmValue,
+              recordedById: dto.staffId,
+              dipReadingId: created.id,
+              flagged: computeDensityFlag(tank.productType, dto.densityValue),
+            },
+          });
+        }
 
         return created;
       });

@@ -21,6 +21,7 @@ describe('TanksService', () => {
       update: jest.Mock;
     };
     dipReading: { create: jest.Mock; findMany: jest.Mock };
+    densityLog: { create: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -44,6 +45,7 @@ describe('TanksService', () => {
         update: jest.fn(),
       },
       dipReading: { create: jest.fn(), findMany: jest.fn() },
+      densityLog: { create: jest.fn() },
       $transaction: jest.fn((cb: TxCallback) => cb(prisma)),
     };
 
@@ -170,6 +172,55 @@ describe('TanksService', () => {
           }) as unknown,
         }),
       );
+    });
+
+    // Section 7.3 — linked DensityLog creation, same transaction.
+    describe('density linkage', () => {
+      it('creates a linked DensityLog when densityValue is provided, flagged via the tank productType', async () => {
+        prisma.tank.findUnique.mockResolvedValue(tank);
+        prisma.tank.findUniqueOrThrow.mockResolvedValue(tank); // productType: 'petrol'
+        prisma.dipReading.create.mockResolvedValue({
+          id: 'dip-1',
+          createdAt: new Date('2026-07-20T00:00:00Z'),
+        });
+        prisma.tank.update.mockResolvedValue({});
+        prisma.densityLog.create.mockResolvedValue({ id: 'dl-1' });
+
+        await service.recordDipReading('tank-1', {
+          reading: 4990,
+          staffId: 's1',
+          densityValue: 0.5, // below the MS range -> flagged
+          ppmValue: 5,
+        });
+
+        expect(prisma.densityLog.create).toHaveBeenCalledWith({
+          data: {
+            tankId: 'tank-1',
+            densityValue: 0.5,
+            ppmValue: 5,
+            recordedById: 's1', // reuses staffId, no separate field
+            dipReadingId: 'dip-1',
+            flagged: true,
+          },
+        });
+      });
+
+      it('does not create a DensityLog when densityValue is omitted', async () => {
+        prisma.tank.findUnique.mockResolvedValue(tank);
+        prisma.tank.findUniqueOrThrow.mockResolvedValue(tank);
+        prisma.dipReading.create.mockResolvedValue({
+          id: 'dip-2',
+          createdAt: new Date(),
+        });
+        prisma.tank.update.mockResolvedValue({});
+
+        await service.recordDipReading('tank-1', {
+          reading: 4990,
+          staffId: 's1',
+        });
+
+        expect(prisma.densityLog.create).not.toHaveBeenCalled();
+      });
     });
   });
 

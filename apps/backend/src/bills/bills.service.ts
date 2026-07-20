@@ -19,6 +19,7 @@ import {
   LoyaltyService,
 } from '../loyalty/loyalty.service';
 import { allocateQrMemberId } from '../customers/member-id';
+import { RateMasterService } from '../rate-master/rate-master.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { DeleteBillDto } from './dto/delete-bill.dto';
@@ -57,6 +58,7 @@ export class BillsService {
     private readonly prisma: PrismaService,
     private readonly creditConfigService: CreditConfigService,
     private readonly loyaltyService: LoyaltyService,
+    private readonly rateMasterService: RateMasterService,
   ) {}
 
   async create(dto: CreateBillDto) {
@@ -147,6 +149,19 @@ export class BillsService {
     // field whenever a customer-linked bill was saved without crediting.
     const loyaltyConfig = await this.loyaltyService.getConfig();
 
+    // Section 7.4 — the server resolves rateApplied authoritatively from
+    // Rate Master rather than trusting a client-supplied value (CLAUDE.md:
+    // "never trust the frontend" applies directly to money fields). Left to
+    // propagate uncaught: a bill cannot be created for a product with no
+    // active Rate Master entry, full stop (same hard-block precedent as
+    // PurchasesService.create()'s missing-Tank 404 — see RateMasterService.
+    // getCurrentRate()). Contrast with update(), which still accepts a
+    // manual rateApplied override — see UpdateBillDto's comment for why that
+    // asymmetry is intentional.
+    const resolvedRate = await this.rateMasterService.getCurrentRate(
+      dto.productType,
+    );
+
     // Bill + its BillPaymentLine rows (and, for quick-add, the new Customer
     // row and/or the CreditLimitAlert row, and the LoyaltyTransaction) are
     // created together in one transaction, alongside a BillAuditLog(CREATED)
@@ -193,7 +208,7 @@ export class BillsService {
             amount: dto.amount,
             litres: dto.litres,
             productType: dto.productType,
-            rateApplied: dto.rateApplied,
+            rateApplied: resolvedRate.rate,
             enteredById: dto.enteredById,
             entryChannel: dto.entryChannel,
             loyaltyPointsEarned: loyaltyCalc?.points ?? 0,

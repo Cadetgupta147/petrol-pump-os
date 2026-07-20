@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PurchasesService } from './purchases.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,11 +8,13 @@ import { PrismaService } from '../prisma/prisma.service';
 // productType (the deliberate asymmetry vs. closeShift()'s soft warning —
 // see purchases.service.ts's comment, exercised on the meter-readings side
 // in meter-readings.service.spec.ts).
+// Section 7.3 — optional linked DensityLog creation, same transaction.
 describe('PurchasesService', () => {
   let service: PurchasesService;
   let prisma: {
     tank: { findFirst: jest.Mock; update: jest.Mock };
     purchaseEntry: { create: jest.Mock; findMany: jest.Mock; findUnique: jest.Mock };
+    densityLog: { create: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -37,6 +39,7 @@ describe('PurchasesService', () => {
         findMany: jest.fn(),
         findUnique: jest.fn(),
       },
+      densityLog: { create: jest.fn() },
       $transaction: jest.fn(),
     };
 
@@ -70,6 +73,7 @@ describe('PurchasesService', () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(prisma.purchaseEntry.create).toHaveBeenCalledWith({
       data: {
+        id: expect.any(String) as unknown,
         supplierName: baseDto.supplierName,
         productType: baseDto.productType,
         quantityLitres: baseDto.quantityLitres,
@@ -85,6 +89,9 @@ describe('PurchasesService', () => {
       where: { id: 'tank-1' },
       data: { currentStockLitres: { increment: baseDto.quantityLitres } },
     });
+    // No densityValue supplied — no DensityLog operation joins the
+    // transaction.
+    expect(prisma.densityLog.create).not.toHaveBeenCalled();
     expect(result).toEqual(createdEntry);
   });
 
@@ -120,5 +127,61 @@ describe('PurchasesService', () => {
     await expect(service.findOne('nope')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  describe('Section 7.3 density linkage', () => {
+    it('rejects densityValue without recordedById, before touching the DB', async () => {
+      await expect(
+        service.create({ ...baseDto, densityValue: 0.75 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.tank.findFirst).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('creates a linked DensityLog in the same transaction when densityValue is provided, flagged via computeDensityFlag', async () => {
+      const tank = { id: 'tank-1', productType: 'petrol' };
+      prisma.tank.findFirst.mockResolvedValue(tank);
+      const createdEntry = { id: 'pe-1', ...baseDto };
+      prisma.$transaction.mockResolvedValue([createdEntry, {}, {}]);
+
+      await service.create({
+        ...baseDto,
+        densityValue: 0.5, // below the MS range -> flagged
+        ppmValue: 12,
+        recordedById: 'staff-1',
+      });
+
+      expect(prisma.densityLog.create).toHaveBeenCalledWith({
+        data: {
+          tankId: 'tank-1',
+          densityValue: 0.5,
+          ppmValue: 12,
+          recordedById: 'staff-1',
+          purchaseEntryId: expect.any(String) as unknown,
+          flagged: true,
+        },
+      });
+      // Same transaction as the PurchaseEntry create + Tank update — one
+      // $transaction call, three operations.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const transactionCalls = prisma.$transaction.mock.calls as unknown[][];
+      const opsArg = transactionCalls[0][0] as unknown[];
+      expect(opsArg).toHaveLength(3);
+    });
+
+    it('does not create a DensityLog when densityValue is omitted', async () => {
+      prisma.tank.findFirst.mockResolvedValue({
+        id: 'tank-1',
+        productType: 'petrol',
+      });
+      prisma.$transaction.mockResolvedValue([{ id: 'pe-1' }, {}]);
+
+      await service.create(baseDto);
+
+      expect(prisma.densityLog.create).not.toHaveBeenCalled();
+      const transactionCalls = prisma.$transaction.mock.calls as unknown[][];
+      const opsArg = transactionCalls[0][0] as unknown[];
+      expect(opsArg).toHaveLength(2);
+    });
   });
 });
