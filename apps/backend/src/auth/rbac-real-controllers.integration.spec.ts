@@ -25,6 +25,11 @@ import { MeterReadingsModule } from '../meter-readings/meter-readings.module';
 import { MeterReadingsService } from '../meter-readings/meter-readings.service';
 import { CreditConfigModule } from '../credit-config/credit-config.module';
 import { CreditConfigService } from '../credit-config/credit-config.service';
+import { TanksModule } from '../tanks/tanks.module';
+import { TanksService } from '../tanks/tanks.service';
+import { PurchasesModule } from '../purchases/purchases.module';
+import { PurchasesService } from '../purchases/purchases.service';
+import { OcrService } from '../ocr/ocr.service';
 
 // Closes the "real controllers, not just the synthetic test controller"
 // coverage gap called out in the RBAC decorator task: confirms the
@@ -59,6 +64,8 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
         TallyExportModule,
         MeterReadingsModule,
         CreditConfigModule,
+        TanksModule,
+        PurchasesModule,
       ],
       providers: [
         { provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -87,6 +94,23 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       })
       .overrideProvider(CreditConfigService)
       .useValue({ getOrCreate: () => ({}), update: () => ({}) })
+      .overrideProvider(TanksService)
+      .useValue({
+        findAll: () => [],
+        create: () => ({}),
+        varianceReport: () => [],
+        recordDipReading: () => ({}),
+        listDipReadings: () => [],
+      })
+      .overrideProvider(PurchasesService)
+      .useValue({ findAll: () => [], create: () => ({}) })
+      // Section 9 — PurchasesController now also depends on OcrService
+      // (POST /purchase-entries/ocr-extract); stubbed here for the same
+      // reason as PurchasesService above — this file only exercises
+      // @Roles guard wiring, not real OCR/Vision behavior (see
+      // ocr.service.spec.ts for that).
+      .overrideProvider(OcrService)
+      .useValue({ extractInvoiceFields: () => ({}) })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -133,6 +157,9 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
     ['GET /credit-alerts', '/credit-alerts'],
     ['GET /tally-export/xml', '/tally-export/xml?from=2026-07-01&to=2026-07-17'],
     ['GET /meter-readings', '/meter-readings'],
+    ['GET /tanks', '/tanks'],
+    ['GET /tanks/variance-report', '/tanks/variance-report'],
+    ['GET /purchase-entries', '/purchase-entries'],
   ])('allows an Accountant token through %s', async (_label, path) => {
     const token = await accountantToken();
     const res = await fetch(`${baseUrl}${path}`, {
@@ -258,6 +285,53 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  // Section 7.1/7.2 — TanksController/PurchasesController are class-level
+  // Owner/Accountant-only, with a single method-level DSM override on DIP
+  // reading creation (physical stick measurement, matching
+  // MeterReadingsController's openShift/closeShift DSM allowance).
+  it('rejects a DSM token on GET /tanks (403)', async () => {
+    const token = await dsmToken();
+    const res = await fetch(`${baseUrl}/tanks`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a DSM token on POST /purchase-entries (403)', async () => {
+    const token = await dsmToken();
+    const res = await fetch(`${baseUrl}/purchase-entries`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('allows a DSM token through POST /tanks/:id/dip-readings', async () => {
+    const token = await dsmToken();
+    const res = await fetch(`${baseUrl}/tanks/some-id/dip-readings`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+  });
+
+  it('rejects a DSM token on GET /tanks/:id/dip-readings (403 — reads stay Owner/Accountant only)', async () => {
+    const token = await dsmToken();
+    const res = await fetch(`${baseUrl}/tanks/some-id/dip-readings`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(403);
   });

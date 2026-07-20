@@ -49,12 +49,13 @@ Tracked in `docs/master-plan.md` Section 17:
 - PhonePe vs. Paytm Business as the merchant webhook provider for automated UPI capture (Section 8A.3) — mechanism is decided, specific provider isn't yet.
 - Loyalty earning basis default (rupee vs. litre) and default rate
 - Redemption type at launch (cash-only / gift-only / both), and whether customers get to choose per-redemption or the dealer fixes a default (Section 6.4)
-- OCR provider (Google Cloud Vision vs. AWS Textract)
 - Tally export approach (file export vs. API push) — defaulted to `"file"` in `.env.example` per the Phase 2 recommendation
 - WhatsApp Business API provider
 - Receipt printer hardware model
 
-**Resolved since the plan update:** counter-side UPI collection for walk-in customers doesn't need a payment gateway (Razorpay/Cashfree) — it's captured via a free PhonePe/Paytm Business merchant webhook instead (Section 8A.3). Card payments at the counter stay manual through Phase 5; real-time card automation is deliberately deferred, not planned for this build.
+**Resolved since the plan update:**
+- Counter-side UPI collection for walk-in customers doesn't need a payment gateway (Razorpay/Cashfree) — it's captured via a free PhonePe/Paytm Business merchant webhook instead (Section 8A.3). Card payments at the counter stay manual through Phase 5; real-time card automation is deliberately deferred, not planned for this build.
+- **OCR provider (Section 9) is Google Cloud Vision, specifically its `DOCUMENT_TEXT_DETECTION` feature — not Document AI, not Form Parser.** Plain text detection is sufficient here: supplier invoices/challans are printed, structured documents, so regex/parsing over the raw detected text reliably recovers invoice number, date, supplier, product, quantity, rate, amount, and tanker number without paying for a structured-extraction product. This also stays on Vision's flat ~$1.50/1,000-page pricing tier rather than the $30+/1,000 tier that Document AI/Form Parser-style structured extraction costs. Extracted fields always pre-fill the Purchase Entry form for human confirmation — the OCR endpoint never writes a `PurchaseEntry` row itself (see `apps/backend/src/purchases`).
 
 ## Known gaps to close before the relevant phase
 

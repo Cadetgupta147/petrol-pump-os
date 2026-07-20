@@ -90,6 +90,7 @@ model Staff {
   meterReadings      MeterReading[]
   attendanceLogs     AttendanceLog[]
   cashCustodyLogs    CashCustodyLog[]
+  dipReadings        DipReading[]
 }
 
 model AttendanceLog {
@@ -282,6 +283,12 @@ model MeterReading {
   closingReading Float?
   shiftStart DateTime @default(now())
   shiftEnd   DateTime?
+  // Section 7.2 — product dispensed by this nozzle for this shift, captured
+  // at open-shift time. There is no Nozzle master entity in this schema (see
+  // apps/backend/src/tanks task spec), so this is how closeShift() resolves
+  // which Tank to auto-deduct. Nullable so existing pre-Section-7 rows don't
+  // need a migration backfill; OpenShiftDto requires it for all new shifts.
+  productType String?
 }
 
 model Tank {
@@ -291,8 +298,31 @@ model Tank {
   currentStockLitres Float
   lastDipReading Float?
   lastDipAt      DateTime?
+  // Section 7.1 — OMC audit reference for the tank's calibration chart
+  // (converts a physical dip-stick reading to litres). Not used in any
+  // calculation here — informational/audit field only.
+  calibrationChartRef String?
 
   densityLogs DensityLog[]
+  dipReadings DipReading[]
+}
+
+// Section 7.1/7.2 — physical DIP stick reading, compared against the
+// system-calculated running stock (Tank.currentStockLitres) to produce a
+// variance report (shortage/excess flag). See tanks.service.ts for the
+// variance formula and why it's derived from currentStockLitres rather than
+// re-aggregated from PurchaseEntry/MeterReading history.
+model DipReading {
+  id                   String   @id @default(cuid())
+  tank                 Tank     @relation(fields: [tankId], references: [id])
+  tankId               String
+  recordedBy           Staff    @relation(fields: [recordedById], references: [id])
+  recordedById         String
+  reading               Float    // physical stick measurement, litres
+  systemStockAtReading Float    // Tank.currentStockLitres captured at the moment of this reading
+  variance             Float    // systemStockAtReading - reading
+  flagged              Boolean
+  createdAt            DateTime @default(now())
 }
 
 model DensityLog {
@@ -346,6 +376,13 @@ model PurchaseEntry {
   productType  String
   quantityLitres Float
   amount       Float
+  // Section 7.1 — per-litre rate as stated on the invoice. Kept as its own
+  // field rather than derived from amount/quantityLitres at read time, since
+  // an invoice's stated rate can differ slightly from amount/quantity due to
+  // rounding/taxes — deriving it would silently paper over that mismatch.
+  ratePerLitre Float
+  invoiceNo    String?
+  tankerNo     String?
   invoiceImageUrl String? // OCR source image, Section 9
   ocrExtracted Boolean  @default(false)
   createdAt    DateTime @default(now())

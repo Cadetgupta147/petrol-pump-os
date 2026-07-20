@@ -59,6 +59,7 @@ export class MeterReadingsService {
           nozzleId: dto.nozzleId,
           staffId: dto.staffId,
           openingReading: dto.openingReading,
+          productType: dto.productType,
         },
       });
       return this.withComputedLitresSold(created);
@@ -67,6 +68,24 @@ export class MeterReadingsService {
     }
   }
 
+  // Section 7.2 step 2 — every nozzle sale (from meter reading) auto-deducts
+  // the matching tank, in the same transaction as the closingReading/shiftEnd
+  // update.
+  //
+  // ASYMMETRY vs PurchasesService.create()'s hard-block-on-missing-Tank
+  // (documented there too, read both comments together): if this shift has
+  // no productType (a legacy row from before Section 7.2, since
+  // MeterReading.productType is nullable precisely to avoid a migration
+  // backfill) or no Tank matches it, we do NOT block the shift close — a DSM
+  // must always be able to close their shift and go home regardless of
+  // whether back-office inventory setup is complete. Instead the response
+  // carries a `tankWarning` field, in the same shape/spirit as
+  // BillsService.create()'s `loyaltyWarning`: the operation still succeeds,
+  // but the gap is surfaced loudly rather than silently absorbed. Contrast
+  // with PurchasesService, where a deliberate accounting action (recording a
+  // delivery) IS hard-blocked without a matching Tank, because letting a real
+  // delivery go unrecorded against inventory would be worse than blocking it
+  // — closing a shift has no equivalent "just don't do it" option.
   async closeShift(id: string, dto: CloseShiftDto) {
     const existing = await this.prisma.meterReading.findUnique({
       where: { id },
@@ -83,14 +102,42 @@ export class MeterReadingsService {
       );
     }
 
-    const updated = await this.prisma.meterReading.update({
-      where: { id },
-      data: {
-        closingReading: dto.closingReading,
-        shiftEnd: new Date(),
+    const litresSold = dto.closingReading - existing.openingReading;
+
+    const { updated, tankWarning } = await this.prisma.$transaction(
+      async (tx) => {
+        const updatedReading = await tx.meterReading.update({
+          where: { id },
+          data: {
+            closingReading: dto.closingReading,
+            shiftEnd: new Date(),
+          },
+        });
+
+        let warning: string | undefined;
+        if (!existing.productType) {
+          warning =
+            'This shift has no productType recorded (legacy shift) — tank stock was not auto-deducted.';
+        } else {
+          const tank = await tx.tank.findFirst({
+            where: { productType: existing.productType },
+          });
+          if (!tank) {
+            warning = `No tank configured for product ${existing.productType} — tank stock was not auto-deducted.`;
+          } else {
+            await tx.tank.update({
+              where: { id: tank.id },
+              data: { currentStockLitres: { decrement: litresSold } },
+            });
+          }
+        }
+
+        return { updated: updatedReading, tankWarning: warning };
       },
-    });
-    return this.withComputedLitresSold(updated);
+    );
+
+    const withLitres = this.withComputedLitresSold(updated);
+    return tankWarning ? { ...withLitres, tankWarning } : withLitres;
   }
 
   async findAll() {

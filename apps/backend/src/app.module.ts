@@ -14,6 +14,8 @@ import { GiftCatalogModule } from './gift-catalog/gift-catalog.module';
 import { RedemptionsModule } from './redemptions/redemptions.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { TallyExportModule } from './tally-export/tally-export.module';
+import { TanksModule } from './tanks/tanks.module';
+import { PurchasesModule } from './purchases/purchases.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -57,6 +59,8 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     RedemptionsModule,
     DashboardModule,
     TallyExportModule,
+    TanksModule,
+    PurchasesModule,
   ],
   controllers: [HealthController],
   providers: [
