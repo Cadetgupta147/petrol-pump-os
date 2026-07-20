@@ -11,6 +11,15 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
 import { allocateQrMemberId, isValidQrMemberId } from './member-id';
+// Section 3.4/6.1 — a phone typed here (dealer-created customer, web portal)
+// must land in the DB in the EXACT same canonical form
+// CustomerAuthService.verifyOtp's `findUnique({ where: { phone } })` expects
+// (Section 5's OTP login), or a real customer can never log into the
+// Credit Customer App with the number printed on their own KYC record.
+// normalizeIndianMobile is the single source of truth for that canonical
+// form — reused here rather than re-implemented, so the two call sites can
+// never drift apart.
+import { normalizeIndianMobile } from '../customer-auth/phone.util';
 
 // Customer master CRUD + ledger — Section 3.4. Outstanding balance is
 // deliberately NOT stored on Customer: it's derived on read from the
@@ -32,7 +41,7 @@ export class CustomersService {
         return tx.customer.create({
           data: {
             name: dto.name,
-            phone: dto.phone,
+            phone: normalizeIndianMobile(dto.phone),
             vehicleNumber: dto.vehicleNumber,
             creditLimit: dto.creditLimit ?? 0,
             qrMemberId,
@@ -66,7 +75,9 @@ export class CustomersService {
         where: { id },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
-          ...(dto.phone !== undefined && { phone: dto.phone }),
+          ...(dto.phone !== undefined && {
+            phone: normalizeIndianMobile(dto.phone),
+          }),
           ...(dto.vehicleNumber !== undefined && {
             vehicleNumber: dto.vehicleNumber,
           }),

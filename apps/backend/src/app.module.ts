@@ -10,9 +10,12 @@ import { CreditConfigModule } from './credit-config/credit-config.module';
 import { CreditAlertsModule } from './credit-alerts/credit-alerts.module';
 import { MeterReadingsModule } from './meter-readings/meter-readings.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
+import { GiftCatalogModule } from './gift-catalog/gift-catalog.module';
+import { RedemptionsModule } from './redemptions/redemptions.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { TallyExportModule } from './tally-export/tally-export.module';
 import { AuthModule } from './auth/auth.module';
+import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 
@@ -41,12 +44,15 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     }),
     PrismaModule,
     AuthModule,
+    CustomerAuthModule,
     CustomersModule,
     BillsModule,
     CreditConfigModule,
     CreditAlertsModule,
     MeterReadingsModule,
     LoyaltyModule,
+    GiftCatalogModule,
+    RedemptionsModule,
     DashboardModule,
     TallyExportModule,
   ],

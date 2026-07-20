@@ -124,12 +124,49 @@ model Customer {
   // upgraded via PATCH). Visibility flag only — never itself blocks credit.
   verificationStatus CustomerVerificationStatus @default(VERIFIED)
   createdAt       DateTime @default(now())
+  // Section 5 — customer JWT "kill switch". Embedded as a claim in every
+  // customer JWT at issuance (CustomerAuthService.verifyOtp) and re-checked
+  // against this live DB value on every customer-authenticated request
+  // (CustomerJwtStrategy.validate). Bumping this value (no endpoint yet —
+  // manual via Prisma Studio) invalidates every previously-issued token for
+  // this customer at once, e.g. for a lost/stolen phone — a minimal "kill
+  // all sessions" lever without building full refresh-token rotation.
+  tokenVersion    Int      @default(0)
 
   bills                 Bill[]
   loyaltyTransactions   LoyaltyTransaction[]
   redemptionTransactions RedemptionTransaction[]
   payments              Payment[]
   creditAlerts          CreditLimitAlert[]
+  otpRequests           CustomerOtp[]
+}
+
+// Section 5 — Credit Customer App login (phone + OTP). One row per OTP
+// *request* (not an upsert-per-phone), so every send attempt is retained for
+// rate-limiting/audit purposes — see CustomerAuthService for the actual
+// rate-limit/lockout rules enforced against these rows:
+//   - codeHash: bcrypt hash of the 6-digit OTP — the plaintext code is never
+//     persisted, only handed to the OtpProvider for delivery and (in
+//     NODE_ENV=development only) echoed back in the API response.
+//   - customerId is nullable + resolved at request time on a best-effort
+//     basis: a phone number can have a live OTP row before any Customer
+//     record exists for it (verify() rejects that case with 404 rather than
+//     silently auto-registering — see CustomerAuthService.verifyOtp).
+//   - expiresAt + attemptCount implement expiry and lockout; consumedAt
+//     makes a row single-use (set on successful verify, or once attemptCount
+//     hits the lockout threshold).
+model CustomerOtp {
+  id           String    @id @default(cuid())
+  phone        String
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  customerId   String?
+  codeHash     String
+  expiresAt    DateTime
+  attemptCount Int       @default(0)
+  consumedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([phone, createdAt])
 }
 
 // Section 6.1/6.7 — monotonic sequence behind Customer.qrMemberId.
