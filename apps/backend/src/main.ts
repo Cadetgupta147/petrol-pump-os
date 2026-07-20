@@ -21,7 +21,13 @@ function resolveAllowedOrigins(): string[] {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // Section 8A.3 — the PhonePe/Paytm UPI webhook needs the exact raw request
+  // bytes to verify the provider's signature (re-serialized JSON won't
+  // byte-match what the provider signed). `rawBody: true` makes Nest expose
+  // the original body Buffer as `req.rawBody` IN ADDITION TO the normal
+  // parsed `req.body` — every other route's JSON parsing is unaffected, only
+  // upi-webhook.controller.ts reads req.rawBody.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true, // strip properties not declared on the DTO
