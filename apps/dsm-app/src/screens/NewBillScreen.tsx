@@ -23,6 +23,7 @@ import { calculatePointsPreview, type PointsPreview } from '../api/loyaltyApi';
 import { generateAndSaveReceiptPdf, ReceiptError, shareReceiptPdf, type SavedReceipt } from '../receipts/billReceipt';
 import { AddPaymentModal } from './AddPaymentModal';
 import { CreditCustomerPicker } from './CreditCustomerPicker';
+import { hasCreditCustomerConflict } from './creditCustomerConflict';
 import { ScanCustomerModal } from './ScanCustomerModal';
 
 interface Props {
@@ -97,6 +98,13 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successBill, setSuccessBill] = useState<Bill | null>(null);
+
+  // Set when a QR scan resolves to a customer who is NOT the one already
+  // attached to an existing CREDIT payment line — see handleCustomerResolved.
+  // Blocking, inline error (mirrors submitError below), not a toast: the scan
+  // must not silently reattribute a CREDIT line's money to a different
+  // customer (the bug this guards against — Section 3.4A / Section 4).
+  const [scanConflictError, setScanConflictError] = useState<string | null>(null);
 
   const [savingReceipt, setSavingReceipt] = useState(false);
   const [savedReceipt, setSavedReceipt] = useState<SavedReceipt | null>(null);
@@ -186,7 +194,30 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   // attach the customer and auto-fill name + vehicle number. The scanned
   // customer replaces any credit-picker choice — one customerId slot per
   // bill — so any CREDIT lines now belong to the scanned customer too.
+  //
+  // EXCEPT: if a CREDIT line already exists and is attached to a *different*
+  // customer than the one just scanned, that would silently re-attribute
+  // already-owed money — block instead of overwrite (bug fix, see
+  // hasCreditCustomerConflict above). The DSM must remove the existing
+  // CREDIT line first before a different customer can be attached.
   const handleCustomerResolved = (customer: CustomerLookup) => {
+    if (
+      hasCreditCustomerConflict({
+        hasCreditLine,
+        creditCustomerId,
+        creditQuickAdd,
+        scannedCustomerId: customer.customerId,
+      })
+    ) {
+      setScanConflictError(
+        `This bill already has a CREDIT payment for ${creditCustomerLabel ?? 'another customer'}. ` +
+          'Remove that credit line before attaching a different customer.',
+      );
+      setScanVisible(false);
+      return;
+    }
+
+    setScanConflictError(null);
     setScannedCustomer(customer);
     setCustomerName(customer.name);
     if (customer.vehicleNumber) {
@@ -256,6 +287,9 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
       setCreditCustomerId(undefined);
       setCreditQuickAdd(undefined);
       setCreditCustomerLabel(undefined);
+      // Removing the CREDIT line is exactly the fix a scanConflictError asks
+      // the DSM to make — clear the (now stale) message once they've done it.
+      setScanConflictError(null);
     }
   };
 
@@ -274,6 +308,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     setPointsPreview(null);
     setSuccessBill(null);
     setSubmitError(null);
+    setScanConflictError(null);
     setSavingReceipt(false);
     setSavedReceipt(null);
     setReceiptError(null);
@@ -460,13 +495,25 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
         ) : (
           <Pressable
             style={styles.scanButton}
-            onPress={() => setScanVisible(true)}
+            onPress={() => {
+              setScanConflictError(null);
+              setScanVisible(true);
+            }}
             disabled={submitting}
             testID="scan-qr-button"
           >
             <Text style={styles.buttonText}>Scan Customer QR</Text>
           </Pressable>
         )}
+
+        {scanConflictError ? (
+          // Blocking inline error — mirrors submitError's pattern. This is
+          // NOT a toast: it stays on screen until the DSM either removes the
+          // existing CREDIT line or explicitly re-attempts the scan.
+          <Text style={styles.error} testID="scan-conflict-error">
+            {scanConflictError}
+          </Text>
+        ) : null}
 
         <Text style={styles.label}>Vehicle Number</Text>
         <TextInput
