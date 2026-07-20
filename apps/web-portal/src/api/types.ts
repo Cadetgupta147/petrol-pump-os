@@ -248,6 +248,116 @@ export interface CustomerQrCard {
   svg: string;
 }
 
+// GET /tanks — Section 7.1. Full standalone shape for the dedicated Tank
+// Stock page, deliberately separate from the dashboard's compact TankStock
+// widget above (that one omits calibrationChartRef, which this page shows).
+export interface Tank {
+  id: string;
+  productType: string;
+  capacityLitres: number;
+  currentStockLitres: number;
+  lastDipReading: number | null;
+  lastDipAt: string | null;
+  calibrationChartRef: string | null;
+}
+
+// One physical DIP stick reading, as embedded in a VarianceReportRow (GET
+// /tanks/variance-report) — see TanksService.varianceReport(). Not the same
+// shape as a standalone DipReading row from GET /tanks/:id/dip-readings
+// (that history endpoint isn't used by any of these four pages).
+export interface DipReading {
+  id: string;
+  reading: number;
+  systemStockAtReading: number;
+  variance: number;
+  flagged: boolean;
+  recordedAt: string;
+}
+
+// GET /tanks/variance-report — Section 7.2 step 3. One row per tank,
+// including tanks that have never been dipped (latestDipReading: null).
+export interface VarianceReportRow {
+  tankId: string;
+  productType: string;
+  currentStockLitres: number;
+  latestDipReading: DipReading | null;
+  toleranceLitres: number;
+}
+
+// Mirrors prisma PurchaseEntry — Section 7.1/7.2/7.4. densityValue/ppmValue
+// (Section 7.3) live on a separate DensityLog row linked by
+// purchaseEntryId, not on PurchaseEntry itself, so they're deliberately not
+// fields here.
+export interface PurchaseEntry {
+  id: string;
+  supplierName: string;
+  productType: string;
+  quantityLitres: number;
+  amount: number;
+  ratePerLitre: number;
+  invoiceNo: string | null;
+  tankerNo: string | null;
+  invoiceImageUrl: string | null;
+  ocrExtracted: boolean;
+  createdAt: string;
+}
+
+// Mirrors apps/backend/src/purchases/dto/create-purchase-entry.dto.ts. The
+// densityValue/ppmValue/recordedById trio (Section 7.3) is omitted here —
+// see the judgment-call note at the top of PurchaseEntryPage.tsx.
+export interface CreatePurchaseEntryRequest {
+  supplierName: string;
+  productType: string;
+  quantityLitres: number;
+  amount: number;
+  ratePerLitre: number;
+  invoiceNo?: string;
+  tankerNo?: string;
+  invoiceImageUrl?: string;
+  ocrExtracted?: boolean;
+}
+
+// Mirrors apps/backend/src/ocr/invoice-text-parser.util.ts's
+// ExtractedInvoiceFields — every field is nullable, best-effort OCR
+// (Section 9, Google Cloud Vision DOCUMENT_TEXT_DETECTION). invoiceDate is
+// informational only: there's no `date` field on PurchaseEntry to map it
+// to, so the form displays it but never submits it anywhere.
+export interface OcrExtractedFields {
+  supplierName: string | null;
+  productType: string | null;
+  quantityLitres: number | null;
+  ratePerLitre: number | null;
+  amount: number | null;
+  invoiceNo: string | null;
+  tankerNo: string | null;
+  invoiceDate: string | null;
+}
+
+// POST /purchase-entries/ocr-extract response. This is pure pre-fill data —
+// see PurchaseEntryPage.tsx for the human-review step that always sits
+// between this call and the actual POST /purchase-entries.
+export interface OcrExtractionResult {
+  extractedFields: OcrExtractedFields;
+  rawText: string;
+}
+
+// Mirrors prisma RateHistory — Section 7.4. Append-only price history per
+// product; no update/delete request type exists on purpose (see
+// RateMasterService — a correction is a new dated row, not an edit).
+export interface RateHistory {
+  id: string;
+  productType: string;
+  rate: number;
+  effectiveFrom: string;
+}
+
+// Mirrors apps/backend/src/rate-master/dto/create-rate-history.dto.ts.
+export interface CreateRateHistoryRequest {
+  productType: string;
+  rate: number;
+  effectiveFrom: string;
+}
+
 export interface LedgerEntry {
   type: 'BILL' | 'PAYMENT';
   id: string;

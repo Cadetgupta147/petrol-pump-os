@@ -9,6 +9,10 @@ import { CustomerLedgerPage } from './pages/CustomerLedgerPage';
 import { BillDetailPage } from './pages/BillDetailPage';
 import { LoyaltySettingsPage } from './pages/LoyaltySettingsPage';
 import { CreditSettingsPage } from './pages/CreditSettingsPage';
+import { TanksPage } from './pages/TanksPage';
+import { PurchaseEntryPage } from './pages/PurchaseEntryPage';
+import { VarianceReportPage } from './pages/VarianceReportPage';
+import { RateMasterPage } from './pages/RateMasterPage';
 
 // Root path just forwards to whichever of /dashboard or /login is correct
 // for the current auth state, rather than being its own page.
@@ -67,6 +71,38 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <BillDetailPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/tanks"
+        element={
+          <RequireAuth>
+            <TanksPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/purchases"
+        element={
+          <RequireAuth>
+            <PurchaseEntryPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/variance-report"
+        element={
+          <RequireAuth>
+            <VarianceReportPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/rate-master"
+        element={
+          <RequireAuth>
+            <RateMasterPage />
           </RequireAuth>
         }
       />
