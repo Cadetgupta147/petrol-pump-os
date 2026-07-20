@@ -18,6 +18,9 @@ import { TanksModule } from './tanks/tanks.module';
 import { PurchasesModule } from './purchases/purchases.module';
 import { RateMasterModule } from './rate-master/rate-master.module';
 import { DensityLogsModule } from './density-logs/density-logs.module';
+import { CashCustodyModule } from './cash-custody/cash-custody.module';
+import { ShiftSalesModule } from './shift-sales/shift-sales.module';
+import { UpiWebhookModule } from './upi-webhook/upi-webhook.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -65,6 +68,9 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     PurchasesModule,
     RateMasterModule,
     DensityLogsModule,
+    CashCustodyModule,
+    ShiftSalesModule,
+    UpiWebhookModule,
   ],
   controllers: [HealthController],
   providers: [

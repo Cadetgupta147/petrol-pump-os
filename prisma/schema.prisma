@@ -493,14 +493,37 @@ model RedemptionTransaction {
 
 // ---------- Cash Custody ----------
 
+// Section 8 — day-end 3-way cash split (bank / locker / taken home) plus
+// running per-person carry-forward outstanding balance. One row per
+// handledBy staff member per day-end entry (both the "close out today" and
+// "bring back what I owe from before" steps are captured on the SAME row —
+// see CashCustodyService for why broughtBackToday/cumulativeOutstandingBeforeToday
+// live together with today's totals rather than as a separate entity).
+//
+// Replaces the pre-Section-8 stub (amountHeld/handedOverAt/reconciled) which
+// didn't match the spec's 3-way-split + carry-forward model at all — dropped
+// outright rather than kept alongside, since none of those three fields map
+// cleanly onto the new shape and keeping them would just be dead columns.
 model CashCustodyLog {
-  id           String    @id @default(cuid())
-  staff        Staff     @relation(fields: [staffId], references: [id])
-  staffId      String
-  amountHeld   Float
-  handedOverAt DateTime?
-  reconciled   Boolean   @default(false)
-  createdAt    DateTime  @default(now())
+  id                                String   @id @default(cuid())
+  date                              DateTime
+  totalCashCollected                Float
+  depositedToBank                   Float
+  keptInLocker                      Float
+  takenHome                         Float
+  // Carry-forward chain (see CashCustodyService.create() for the resolution
+  // + math): cumulativeOutstandingBeforeToday is resolved server-side from
+  // this same staff member's most recent prior row's newOutstanding (0 if
+  // none yet) — never client-supplied, so it can't be spoofed to erase a
+  // debt. Named "cumulative", not "previous day", because it's the running
+  // carried-through balance from the whole chain, not literally yesterday's
+  // figure (a staff member's entries can be days apart, not just daily).
+  cumulativeOutstandingBeforeToday  Float
+  broughtBackToday                  Float
+  newOutstanding                    Float
+  handledBy                         Staff    @relation(fields: [handledById], references: [id])
+  handledById                       String
+  createdAt                         DateTime @default(now())
 }
 
 // ---------- Payments (bills + credit dues) ----------
