@@ -646,9 +646,10 @@ Stop before committing.
 ### 5.4 Web Portal UI: Inventory & Purchase Screens *(interleaved — don't defer this)*
 ```
 Use the backend-agent (owns apps/web-portal). Build the Web Portal screens for
-5.1-5.3: tank stock view, purchase entry form (with the OCR pre-fill/confirm flow
-from Section 9 — never auto-save OCR output), variance report view, and Rate
-Master editor. Wired to the real APIs, no mock data. Stop before committing.
+docs/master-plan.md Sections 7.1-7.4 and 9: tank stock view, purchase entry form
+(with the OCR pre-fill/confirm flow from Section 9 — never auto-save OCR
+output), variance report view, and Rate Master editor. Wired to the real APIs,
+no mock data. Stop before committing.
 ```
 **Test:** enter a purchase through the UI (with a real invoice photo if you want to test OCR pre-fill), confirm tank stock updates on-screen without a manual refresh. Confirm the variance report actually renders your test mismatch from 5.1.
 
@@ -698,10 +699,10 @@ committing.
 ### 6.4 Web Portal UI: Cash Custody & Reports Screens *(interleaved — don't defer this)*
 ```
 Use the backend-agent (owns apps/web-portal). Build the Web Portal screens for
-6.1-6.3: day-end cash reconciliation form (with the three-way-split validation
-visible on-screen, not just enforced silently on submit), cash custody status
-view, and the full reports dashboard from Section 12. Wired to real APIs, no
-mock data. Stop before committing.
+docs/master-plan.md Sections 8, 8A: day-end cash reconciliation form (with the
+three-way-split validation visible on-screen, not just enforced silently on
+submit), cash custody status view, and the full reports dashboard from Section
+12. Wired to real APIs, no mock data. Stop before committing.
 ```
 **Test:** submit a day-end entry through the UI where the three-way split doesn't sum correctly — confirm the form itself blocks submission with a clear message, not just a backend 400 the user has to interpret. Cross-check at least 2 report screens against the manual calculations you already verified in 6.3.
 
