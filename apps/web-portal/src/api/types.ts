@@ -373,3 +373,182 @@ export interface CustomerLedger {
   outstandingBalance: number;
   creditLimit: number;
 }
+
+// GET /staff — StaffService.findAll(). Deliberately id+name only (no phone/
+// role/pinHash/passwordHash) — a minimal picker-list projection, not the
+// full Staff model. See StaffController's top comment.
+export interface StaffListItem {
+  id: string;
+  name: string;
+}
+
+// ---------- Section 8 — Cash Custody ----------
+
+// Mirrors prisma CashCustodyLog + CashCustodyService.create()'s return shape.
+// cumulativeOutstandingBeforeToday/broughtBackToday/newOutstanding are always
+// server-resolved (see CreateCashCustodyLogRequest below) — never trust a
+// client-supplied value for these three.
+export interface CashCustodyLog {
+  id: string;
+  date: string;
+  totalCashCollected: number;
+  depositedToBank: number;
+  keptInLocker: number;
+  takenHome: number;
+  cumulativeOutstandingBeforeToday: number;
+  broughtBackToday: number;
+  newOutstanding: number;
+  handledById: string;
+  handledBy?: { id: string; name: string };
+  createdAt: string;
+}
+
+// Mirrors apps/backend/src/cash-custody/dto/create-cash-custody-log.dto.ts.
+// cumulativeOutstandingBeforeToday/newOutstanding are deliberately absent —
+// CashCustodyService resolves both server-side so a caller can't spoof away
+// an outstanding balance (see that DTO's own top comment).
+export interface CreateCashCustodyLogRequest {
+  date: string;
+  totalCashCollected: number;
+  depositedToBank: number;
+  keptInLocker: number;
+  takenHome: number;
+  handledById: string;
+  broughtBackToday?: number;
+}
+
+// GET /cash-custody/report — CashCustodyService.getReport(). Already sorted
+// server-side (outstanding-first, then biggest balance) — don't re-sort.
+export interface CashCustodyReportRow {
+  staffId: string;
+  staffName: string;
+  currentOutstanding: number;
+  isCurrentlyOutstanding: boolean;
+  outstandingSinceDate: string | null;
+  daysHeld: number;
+  lastEntryDate: string;
+}
+
+// ---------- Section 8A — Walk-in Shift Sales ----------
+
+// Mirrors prisma ShiftSalesSummary. Read-only view in this app (no create/
+// update form wired up here) — see CashCustodyStatusPage's secondary section.
+export interface ShiftSalesSummary {
+  id: string;
+  shiftId: string;
+  dsmId: string;
+  nozzleId: string;
+  walkInLitres: number;
+  walkInCashCollected: number;
+  walkInUpiCollected: number;
+  walkInCardCollected: number;
+  expectedValue: number;
+  variance: number;
+  createdAt: string;
+}
+
+// ---------- Section 12 — Reports ----------
+
+// GET /credit-aging/report — CreditAgingService.getReport(). Already sorted
+// server-side (outstanding-first, biggest balance first) — don't re-sort.
+export interface CreditAgingRow {
+  customerId: string;
+  customerName: string;
+  phone: string | null;
+  creditLimit: number;
+  oldestUnpaidBillDate: string | null;
+  bucket0to15: number;
+  bucket15to30: number;
+  bucket30Plus: number;
+  totalOutstanding: number;
+  hasOutstandingBalance: boolean;
+}
+
+export interface CreditAgingReport {
+  asOf: string;
+  customers: CreditAgingRow[];
+  totals: {
+    bucket0to15: number;
+    bucket15to30: number;
+    bucket30Plus: number;
+    total: number;
+  };
+}
+
+// GET /loyalty/cost-report — LoyaltyService.getCostReport(). All-time
+// balance-sheet-style snapshot, no date filter (see that method's comment).
+export interface LoyaltyCostReport {
+  pointsIssued: number;
+  pointsRedeemed: number;
+  pointsOutstanding: number;
+  redemptionBreakdown: {
+    cash: { redemptionCount: number; pointsRedeemed: number; cashValuePaidOut: number };
+    gift: { redemptionCount: number; pointsRedeemed: number };
+  };
+  cashRedemptionRatio: number | null;
+  outstandingLiabilityValue: number | null;
+}
+
+// GET /gift-catalog/redemption-report — GiftCatalogService.getRedemptionReport().
+// Every catalog item, including never-redeemed and retired ones. Already
+// sorted most-redeemed-first server-side — don't re-sort.
+export interface GiftRedemptionReportRow {
+  giftItemId: string;
+  giftName: string;
+  pointsRequired: number;
+  stockQuantity: number | null;
+  activeFlag: boolean;
+  timesRedeemed: number;
+  totalPointsSpent: number;
+}
+
+// GET /sales-purchase-register?from=&to= — SalesPurchaseRegisterService.
+// getRegister(). Plain register, NOT a tax-rate breakup — see taxModelingGap,
+// which must be surfaced prominently in the UI (Section 12 handback note).
+export interface SalesRegisterRow {
+  date: string;
+  partyName: string;
+  billNo: string;
+  product: string;
+  quantityLitres: number;
+  rate: number;
+  amount: number;
+}
+
+export interface PurchaseRegisterRow {
+  date: string;
+  partyName: string;
+  invoiceNo: string | null;
+  product: string;
+  quantityLitres: number;
+  rate: number;
+  amount: number;
+}
+
+export interface SalesPurchaseRegister {
+  from: string;
+  to: string;
+  salesRegister: SalesRegisterRow[];
+  salesTotals: { quantityLitres: number; amount: number };
+  purchaseRegister: PurchaseRegisterRow[];
+  purchaseTotals: { quantityLitres: number; amount: number };
+  taxModelingGap: string;
+}
+
+// GET /attendance/summary?from=&to= — AttendanceService.getSummary().
+// Hours-worked half only — salaryAndAdvancesNote must be surfaced prominently
+// in the UI, not silently omitted (Section 12 handback note).
+export interface AttendanceStaffRow {
+  staffId: string;
+  staffName: string;
+  totalHoursWorked: number;
+  sessionCount: number;
+  stillClockedIn: boolean;
+}
+
+export interface AttendanceSummary {
+  from: string;
+  to: string;
+  staff: AttendanceStaffRow[];
+  salaryAndAdvancesNote: string;
+}

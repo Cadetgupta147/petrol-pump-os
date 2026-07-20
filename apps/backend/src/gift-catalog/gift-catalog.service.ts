@@ -74,4 +74,47 @@ export class GiftCatalogService {
       data: { activeFlag: false },
     });
   }
+
+  // Section 12 — Gift Redemption Report ("which gifts are redeemed most,
+  // current gift stock levels"). Returns EVERY catalog item (including ones
+  // never redeemed and retired ones), each annotated with its redemption
+  // stats — a report that only listed ever-redeemed gifts couldn't answer
+  // "which gifts have zero redemptions" or show current stock for
+  // never-touched items, both of which are exactly what "current stock
+  // levels" implies reading this report for.
+  async getRedemptionReport() {
+    const [items, redemptionGroups] = await Promise.all([
+      this.prisma.giftCatalogItem.findMany({ orderBy: { giftName: 'asc' } }),
+      this.prisma.redemptionTransaction.groupBy({
+        by: ['giftItemId'],
+        where: { redemptionType: 'GIFT', giftItemId: { not: null } },
+        _count: { _all: true },
+        _sum: { pointsSpent: true },
+      }),
+    ]);
+
+    const statsByGiftId = new Map(
+      redemptionGroups
+        .filter((group) => group.giftItemId !== null)
+        .map((group) => [group.giftItemId as string, group]),
+    );
+
+    const rows = items.map((item) => {
+      const stats = statsByGiftId.get(item.id);
+      return {
+        giftItemId: item.id,
+        giftName: item.giftName,
+        pointsRequired: item.pointsRequired,
+        stockQuantity: item.stockQuantity,
+        activeFlag: item.activeFlag,
+        timesRedeemed: stats?._count._all ?? 0,
+        totalPointsSpent: stats?._sum.pointsSpent ?? 0,
+      };
+    });
+
+    // Most-redeemed first — this report exists to answer "which gifts are
+    // popular" (Section 12's own wording), so that's the natural default
+    // read order; ties keep the alphabetical order already applied above.
+    return rows.sort((a, b) => b.timesRedeemed - a.timesRedeemed);
+  }
 }

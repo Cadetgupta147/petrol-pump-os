@@ -36,6 +36,16 @@ export function formatDateTime(iso: string): string {
   });
 }
 
+// Today's date as YYYY-MM-DD — same `toISOString().slice(0, 10)` shape
+// DashboardPage.handleExport() already uses for its Tally export range. Note
+// this reads the UTC calendar date, not the browser's local one (a real gap
+// near midnight in non-UTC timezones — not fixed here, just kept consistent
+// with the one existing usage rather than introducing a second, diverging
+// "today" convention).
+export function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 // "Today" per the browser's local calendar date — matches how
 // dashboard.service.ts computes getStartAndEndOfToday() using server-local
 // time. If the backend and browser sit in different timezones these two

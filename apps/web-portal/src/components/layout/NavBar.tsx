@@ -16,14 +16,14 @@ const BUILT: { label: string; to: string }[] = [
   { label: 'Purchase entry', to: '/purchases' },
   { label: 'Variance report', to: '/variance-report' },
   { label: 'Rate master', to: '/rate-master' },
+  { label: 'Cash custody', to: '/cash-custody' },
+  { label: 'Reports', to: '/reports' },
 ];
 
 const NOT_BUILT = [
   'Billing',
   'Meter readings',
   'Staff',
-  'Reports',
-  'Cash custody',
   'Settings',
 ];
 

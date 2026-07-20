@@ -40,6 +40,17 @@ export class GiftCatalogController {
     return this.giftCatalogService.findAll();
   }
 
+  // Section 12 — Gift Redemption Report. Placed before ':id' so the literal
+  // segment 'redemption-report' is never captured as a gift item id (same
+  // pattern as CustomersController's 'by-member-id/:qrMemberId' route).
+  // Owner-only per Section 12's table for this report; Read-only also
+  // allowed ("view dashboards and reports only" — Section 2).
+  @Roles(Role.OWNER, Role.READ_ONLY)
+  @Get('redemption-report')
+  getRedemptionReport() {
+    return this.giftCatalogService.getRedemptionReport();
+  }
+
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Get(':id')
   findOne(@Param('id') id: string) {

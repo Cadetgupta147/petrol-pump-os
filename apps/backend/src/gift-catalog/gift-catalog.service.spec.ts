@@ -24,6 +24,7 @@ describe('GiftCatalogService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
+    redemptionTransaction: { groupBy: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -34,6 +35,7 @@ describe('GiftCatalogService', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      redemptionTransaction: { groupBy: jest.fn() },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -133,6 +135,67 @@ describe('GiftCatalogService', () => {
 
       await expect(service.remove('nope')).rejects.toBeInstanceOf(
         NotFoundException,
+      );
+    });
+  });
+
+  // Section 12 — Gift Redemption Report.
+  describe('getRedemptionReport', () => {
+    it('includes every catalog item, even ones never redeemed, and sorts most-redeemed first', async () => {
+      prisma.giftCatalogItem.findMany.mockResolvedValue([
+        {
+          id: 'gift-cap',
+          giftName: 'Branded Cap',
+          pointsRequired: 50,
+          stockQuantity: 10,
+          activeFlag: true,
+        },
+        {
+          id: 'gift-mug',
+          giftName: 'Travel Mug',
+          pointsRequired: 75,
+          stockQuantity: 5,
+          activeFlag: true,
+        },
+      ]);
+      prisma.redemptionTransaction.groupBy.mockResolvedValue([
+        { giftItemId: 'gift-mug', _count: { _all: 3 }, _sum: { pointsSpent: 225 } },
+      ]);
+
+      const report = await service.getRedemptionReport();
+
+      expect(report).toEqual([
+        {
+          giftItemId: 'gift-mug',
+          giftName: 'Travel Mug',
+          pointsRequired: 75,
+          stockQuantity: 5,
+          activeFlag: true,
+          timesRedeemed: 3,
+          totalPointsSpent: 225,
+        },
+        {
+          giftItemId: 'gift-cap',
+          giftName: 'Branded Cap',
+          pointsRequired: 50,
+          stockQuantity: 10,
+          activeFlag: true,
+          timesRedeemed: 0,
+          totalPointsSpent: 0,
+        },
+      ]);
+    });
+
+    it('queries groupBy scoped to GIFT redemptions only', async () => {
+      prisma.giftCatalogItem.findMany.mockResolvedValue([]);
+      prisma.redemptionTransaction.groupBy.mockResolvedValue([]);
+
+      await service.getRedemptionReport();
+
+      expect(prisma.redemptionTransaction.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { redemptionType: 'GIFT', giftItemId: { not: null } },
+        }),
       );
     });
   });

@@ -21,6 +21,10 @@ import { DensityLogsModule } from './density-logs/density-logs.module';
 import { CashCustodyModule } from './cash-custody/cash-custody.module';
 import { ShiftSalesModule } from './shift-sales/shift-sales.module';
 import { UpiWebhookModule } from './upi-webhook/upi-webhook.module';
+import { CreditAgingModule } from './credit-aging/credit-aging.module';
+import { SalesPurchaseRegisterModule } from './sales-purchase-register/sales-purchase-register.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { StaffModule } from './staff/staff.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -71,6 +75,10 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     CashCustodyModule,
     ShiftSalesModule,
     UpiWebhookModule,
+    CreditAgingModule,
+    SalesPurchaseRegisterModule,
+    AttendanceModule,
+    StaffModule,
   ],
   controllers: [HealthController],
   providers: [

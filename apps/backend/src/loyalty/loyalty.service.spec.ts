@@ -19,6 +19,7 @@ describe('LoyaltyService', () => {
     customer: { findUnique: jest.Mock };
     bill: { findUnique: jest.Mock };
     loyaltyTransaction: { aggregate: jest.Mock };
+    redemptionTransaction: { findMany: jest.Mock };
   };
 
   const rupeeConfig = {
@@ -38,6 +39,7 @@ describe('LoyaltyService', () => {
       customer: { findUnique: jest.fn() },
       bill: { findUnique: jest.fn() },
       loyaltyTransaction: { aggregate: jest.fn() },
+      redemptionTransaction: { findMany: jest.fn() },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -327,6 +329,95 @@ describe('LoyaltyService', () => {
       const result = await service.getBalance('cust-1');
 
       expect(result).toBe(0);
+    });
+  });
+
+  // Section 12 — Loyalty Program Cost Report ("a real liability, track it
+  // like one"). Rule-heavy money/points logic (CLAUDE.md: write tests for
+  // this category) — covers issued-vs-redeemed netting, the cash/gift
+  // redemption split, and the outstanding-liability valuation judgment call
+  // (points-only when no cashRedemptionRatio is configured).
+  describe('getCostReport', () => {
+    it('nets issued (positive deltas) against redeemed (negative deltas)', async () => {
+      prisma.loyaltyTransaction.aggregate
+        .mockResolvedValueOnce({ _sum: { pointsDelta: 1000 } }) // issued (>0 filter)
+        .mockResolvedValueOnce({ _sum: { pointsDelta: -300 } }); // redeemed (<0 filter)
+      prisma.redemptionTransaction.findMany.mockResolvedValue([]);
+      prisma.loyaltyConfig.findUnique.mockResolvedValue(null);
+
+      const result = await service.getCostReport();
+
+      expect(result.pointsIssued).toBe(1000);
+      expect(result.pointsRedeemed).toBe(300); // sign flipped to positive
+      expect(result.pointsOutstanding).toBe(700);
+    });
+
+    it('splits redemptions into cash vs. gift buckets', async () => {
+      prisma.loyaltyTransaction.aggregate
+        .mockResolvedValueOnce({ _sum: { pointsDelta: 1000 } })
+        .mockResolvedValueOnce({ _sum: { pointsDelta: -500 } });
+      prisma.redemptionTransaction.findMany.mockResolvedValue([
+        { redemptionType: 'CASH', pointsSpent: 200, cashValue: 20 },
+        { redemptionType: 'CASH', pointsSpent: 100, cashValue: 10 },
+        { redemptionType: 'GIFT', pointsSpent: 200, cashValue: null },
+      ]);
+      prisma.loyaltyConfig.findUnique.mockResolvedValue(null);
+
+      const result = await service.getCostReport();
+
+      expect(result.redemptionBreakdown.cash).toEqual({
+        redemptionCount: 2,
+        pointsRedeemed: 300,
+        cashValuePaidOut: 30,
+      });
+      expect(result.redemptionBreakdown.gift).toEqual({
+        redemptionCount: 1,
+        pointsRedeemed: 200,
+      });
+    });
+
+    it('values the outstanding liability at cashRedemptionRatio when configured', async () => {
+      prisma.loyaltyTransaction.aggregate
+        .mockResolvedValueOnce({ _sum: { pointsDelta: 1000 } })
+        .mockResolvedValueOnce({ _sum: { pointsDelta: -400 } });
+      prisma.redemptionTransaction.findMany.mockResolvedValue([]);
+      prisma.loyaltyConfig.findUnique.mockResolvedValue({
+        id: 'singleton',
+        cashRedemptionRatio: 0.1, // 1 point = 0.1 rupee
+      });
+
+      const result = await service.getCostReport();
+
+      expect(result.pointsOutstanding).toBe(600);
+      expect(result.cashRedemptionRatio).toBe(0.1);
+      expect(result.outstandingLiabilityValue).toBe(60); // 600 × 0.1
+    });
+
+    it('returns null liability value (not a fabricated rate) when no ratio is configured', async () => {
+      prisma.loyaltyTransaction.aggregate
+        .mockResolvedValueOnce({ _sum: { pointsDelta: 500 } })
+        .mockResolvedValueOnce({ _sum: { pointsDelta: null } });
+      prisma.redemptionTransaction.findMany.mockResolvedValue([]);
+      prisma.loyaltyConfig.findUnique.mockResolvedValue(null);
+
+      const result = await service.getCostReport();
+
+      expect(result.cashRedemptionRatio).toBeNull();
+      expect(result.outstandingLiabilityValue).toBeNull();
+    });
+
+    it('handles zero issued/redeemed (no loyalty activity yet) without error', async () => {
+      prisma.loyaltyTransaction.aggregate
+        .mockResolvedValueOnce({ _sum: { pointsDelta: null } })
+        .mockResolvedValueOnce({ _sum: { pointsDelta: null } });
+      prisma.redemptionTransaction.findMany.mockResolvedValue([]);
+      prisma.loyaltyConfig.findUnique.mockResolvedValue(null);
+
+      const result = await service.getCostReport();
+
+      expect(result.pointsIssued).toBe(0);
+      expect(result.pointsRedeemed).toBe(0);
+      expect(result.pointsOutstanding).toBe(0);
     });
   });
 });

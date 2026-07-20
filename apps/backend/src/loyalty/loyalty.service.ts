@@ -188,6 +188,99 @@ export class LoyaltyService {
     };
   }
 
+  // Section 12 — Loyalty Program Cost Report ("Points issued vs. redeemed
+  // (cash + gifts) — this is a real liability, track it like one").
+  //
+  // JUDGMENT CALL: GiftCatalogItem has no cost-price field anywhere in
+  // schema.prisma (giftName/imageUrl/pointsRequired/stockQuantity/
+  // activeFlag only) — there is nowhere to read what a gift actually cost
+  // the dealer to source/stock. Rather than invent a rupee figure, gift
+  // redemption liability is valued the same way cash redemption liability
+  // already is: in POINTS (the actual unit the dealer owes), with an
+  // OPTIONAL secondary rupee-equivalent computed at the dealer's own
+  // configured LoyaltyConfig.cashRedemptionRatio — that ratio is the only
+  // points -> currency conversion this system has a real number for, so
+  // it's reused here as a rough proxy for "what this liability is roughly
+  // worth", NOT a claim that a gift's true sourcing cost equals what its
+  // points would be worth if cashed out instead.
+  //
+  // SCOPE: this is a running BALANCE-SHEET-style snapshot (points ever
+  // issued vs. ever redeemed, all-time as of now), not a period income
+  // statement — no date filter, matching how
+  // CashCustodyService.getReport() and TanksService.varianceReport() are
+  // both point-in-time snapshots rather than range-scoped reports. A
+  // period view (e.g. "points issued this month") would be a reasonable
+  // follow-up but wasn't asked for here and isn't what "track it like a
+  // liability" implies (a liability is a balance, not a period figure).
+  async getCostReport() {
+    const [issuedAgg, redeemedAgg, redemptions, config] = await Promise.all([
+      this.prisma.loyaltyTransaction.aggregate({
+        where: { pointsDelta: { gt: 0 } },
+        _sum: { pointsDelta: true },
+      }),
+      this.prisma.loyaltyTransaction.aggregate({
+        where: { pointsDelta: { lt: 0 } },
+        _sum: { pointsDelta: true },
+      }),
+      this.prisma.redemptionTransaction.findMany({
+        select: { redemptionType: true, pointsSpent: true, cashValue: true },
+      }),
+      this.getConfig(),
+    ]);
+
+    const pointsIssued = issuedAgg._sum.pointsDelta ?? 0;
+    // stored negative, report positive — the `|| 0` normalizes JS's -0
+    // (from -(0)) back to a plain 0 so a "no redemptions yet" pump reports
+    // exactly 0, not a technically-equal-but-surprising -0.
+    const pointsRedeemed = -(redeemedAgg._sum.pointsDelta ?? 0) || 0;
+    const pointsOutstanding = pointsIssued - pointsRedeemed;
+
+    const cashRedemptions = redemptions.filter(
+      (r) => r.redemptionType === 'CASH',
+    );
+    const giftRedemptions = redemptions.filter(
+      (r) => r.redemptionType === 'GIFT',
+    );
+
+    const cashRedemptionRatio = config?.cashRedemptionRatio ?? null;
+
+    return {
+      pointsIssued,
+      pointsRedeemed,
+      pointsOutstanding,
+      redemptionBreakdown: {
+        cash: {
+          redemptionCount: cashRedemptions.length,
+          pointsRedeemed: cashRedemptions.reduce(
+            (sum, r) => sum + r.pointsSpent,
+            0,
+          ),
+          cashValuePaidOut: cashRedemptions.reduce(
+            (sum, r) => sum + (r.cashValue ?? 0),
+            0,
+          ),
+        },
+        gift: {
+          redemptionCount: giftRedemptions.length,
+          pointsRedeemed: giftRedemptions.reduce(
+            (sum, r) => sum + r.pointsSpent,
+            0,
+          ),
+          // Deliberately no rupee cost figure here — see the judgment-call
+          // comment above (GiftCatalogItem has no cost-price field).
+        },
+      },
+      // Valuation of the OUTSTANDING (not-yet-redeemed) points liability, at
+      // the dealer's configured cash-redemption ratio — null when the
+      // dealer hasn't set one, rather than a fabricated default rate.
+      cashRedemptionRatio,
+      outstandingLiabilityValue:
+        cashRedemptionRatio !== null
+          ? pointsOutstanding * cashRedemptionRatio
+          : null,
+    };
+  }
+
   // Section 6.4/6.6 — a customer's current points balance: sum of
   // LoyaltyTransaction.pointsDelta for that customer (positive = earned,
   // negative = redeemed — see the schema comment on pointsDelta). This used

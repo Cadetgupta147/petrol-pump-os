@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { LoyaltyService } from './loyalty.service';
@@ -23,5 +23,19 @@ export class LoyaltyController {
   @Post('calculate-points')
   calculatePoints(@Body() dto: CalculatePointsDto) {
     return this.loyaltyService.calculatePoints(dto);
+  }
+
+  // Section 12 — Loyalty Program Cost Report. Per that section's table this
+  // report is Owner-only (not Accountant — unlike most other reports here,
+  // this one is scoped narrower, matching how loyalty-rate/redemption
+  // config writes are already Owner-only per Section 2 "Accountant cannot
+  // change loyalty rates"). Read-only is also allowed, same "view
+  // dashboards and reports only" reasoning as CashCustodyController's
+  // report route. This is a read-only reporting endpoint — no
+  // money/points are written here.
+  @Roles(Role.OWNER, Role.READ_ONLY)
+  @Get('cost-report')
+  getCostReport() {
+    return this.loyaltyService.getCostReport();
   }
 }

@@ -1,5 +1,5 @@
 import { ApiError, apiFetch } from './client';
-import type { LoyaltyConfig, UpsertLoyaltyConfigRequest } from './types';
+import type { LoyaltyConfig, LoyaltyCostReport, UpsertLoyaltyConfigRequest } from './types';
 
 // GET /loyalty-config — Section 6.2. Owner/Accountant server-side. The
 // backend answers 404 until the Owner has configured loyalty (no hardcoded
@@ -24,4 +24,11 @@ export function upsertLoyaltyConfig(
     method: 'PUT',
     body: JSON.stringify(dto),
   });
+}
+
+// GET /loyalty/cost-report — Section 12. Owner/Read-only server-side (not
+// Accountant — narrower than most other reports, matching how loyalty-rate/
+// redemption config writes are already Owner-only — see LoyaltyController).
+export function getLoyaltyCostReport(): Promise<LoyaltyCostReport> {
+  return apiFetch<LoyaltyCostReport>('/loyalty/cost-report');
 }
