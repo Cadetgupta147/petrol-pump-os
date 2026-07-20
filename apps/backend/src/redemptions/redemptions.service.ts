@@ -58,7 +58,10 @@ export class RedemptionsService {
     // Section 6.6 — balance is derived (sum of LoyaltyTransaction.pointsDelta
     // for this customer), same pattern as the earn side (BillsService /
     // LoyaltyService); it is never stored on Customer directly.
-    const balance = await this.getBalance(dto.customerId);
+    // LoyaltyService.getBalance() is the single shared implementation (also
+    // used by CustomerPortalService) — see its comment for why this used to
+    // be a private method here.
+    const balance = await this.loyaltyService.getBalance(dto.customerId);
 
     if (
       config.minRedeemablePoints !== null &&
@@ -128,14 +131,6 @@ export class RedemptionsService {
       );
     }
     return config.defaultRedemptionMode;
-  }
-
-  private async getBalance(customerId: string): Promise<number> {
-    const agg = await this.prisma.loyaltyTransaction.aggregate({
-      where: { customerId },
-      _sum: { pointsDelta: true },
-    });
-    return agg._sum.pointsDelta ?? 0;
   }
 
   private async redeemGift(dto: CreateRedemptionDto, balance: number) {

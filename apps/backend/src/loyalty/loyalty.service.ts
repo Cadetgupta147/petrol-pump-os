@@ -187,4 +187,22 @@ export class LoyaltyService {
       ...computeLoyaltyPoints({ config, loyaltyRateOverride, amount, litres }),
     };
   }
+
+  // Section 6.4/6.6 — a customer's current points balance: sum of
+  // LoyaltyTransaction.pointsDelta for that customer (positive = earned,
+  // negative = redeemed — see the schema comment on pointsDelta). This used
+  // to be a private method duplicated inside RedemptionsService; pulled up
+  // here as the single shared implementation (same "one pure function"
+  // pattern as computeLoyaltyPoints above) so RedemptionsService's
+  // redemption-eligibility checks and CustomerPortalService's home-screen
+  // balance / gift-catalog affordability math can never drift apart. Never
+  // stored directly on Customer — always derived on read, same reasoning as
+  // CustomersService.ledger()'s outstandingBalance.
+  async getBalance(customerId: string): Promise<number> {
+    const agg = await this.prisma.loyaltyTransaction.aggregate({
+      where: { customerId },
+      _sum: { pointsDelta: true },
+    });
+    return agg._sum.pointsDelta ?? 0;
+  }
 }

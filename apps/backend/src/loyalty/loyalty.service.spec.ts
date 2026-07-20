@@ -18,6 +18,7 @@ describe('LoyaltyService', () => {
     loyaltyConfig: { findUnique: jest.Mock; upsert: jest.Mock };
     customer: { findUnique: jest.Mock };
     bill: { findUnique: jest.Mock };
+    loyaltyTransaction: { aggregate: jest.Mock };
   };
 
   const rupeeConfig = {
@@ -36,6 +37,7 @@ describe('LoyaltyService', () => {
       loyaltyConfig: { findUnique: jest.fn(), upsert: jest.fn() },
       customer: { findUnique: jest.fn() },
       bill: { findUnique: jest.fn() },
+      loyaltyTransaction: { aggregate: jest.fn() },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -295,6 +297,36 @@ describe('LoyaltyService', () => {
       expect(result.rateSource).toBe('DEALER_DEFAULT');
       expect(result.points).toBe(6);
       expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  // Pulled up out of RedemptionsService (was a private duplicate there) so
+  // there's exactly one place that computes a customer's points balance —
+  // see this method's own comment in loyalty.service.ts. Used by
+  // RedemptionsService and CustomerPortalService.
+  describe('getBalance', () => {
+    it('sums LoyaltyTransaction.pointsDelta for the customer', async () => {
+      prisma.loyaltyTransaction.aggregate.mockResolvedValue({
+        _sum: { pointsDelta: 175 },
+      });
+
+      const result = await service.getBalance('cust-1');
+
+      expect(prisma.loyaltyTransaction.aggregate).toHaveBeenCalledWith({
+        where: { customerId: 'cust-1' },
+        _sum: { pointsDelta: true },
+      });
+      expect(result).toBe(175);
+    });
+
+    it('returns 0 when the customer has no loyalty transactions at all', async () => {
+      prisma.loyaltyTransaction.aggregate.mockResolvedValue({
+        _sum: { pointsDelta: null },
+      });
+
+      const result = await service.getBalance('cust-1');
+
+      expect(result).toBe(0);
     });
   });
 });

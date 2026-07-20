@@ -30,7 +30,7 @@ describe('RedemptionsService', () => {
     loyaltyTransaction: { aggregate: jest.Mock };
     $transaction: jest.Mock;
   };
-  let loyaltyService: { getConfig: jest.Mock };
+  let loyaltyService: { getConfig: jest.Mock; getBalance: jest.Mock };
   let giftCatalogService: { findOne: jest.Mock };
   let tx: {
     loyaltyTransaction: { aggregate: jest.Mock; create: jest.Mock };
@@ -91,7 +91,7 @@ describe('RedemptionsService', () => {
       $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(tx)),
     };
 
-    loyaltyService = { getConfig: jest.fn() };
+    loyaltyService = { getConfig: jest.fn(), getBalance: jest.fn() };
     giftCatalogService = { findOne: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -107,6 +107,11 @@ describe('RedemptionsService', () => {
   });
 
   function mockBalance(points: number) {
+    // Pre-check balance now goes through LoyaltyService.getBalance() (see
+    // the refactor pulling getBalance() up out of RedemptionsService); the
+    // in-transaction re-check still hits tx.loyaltyTransaction.aggregate
+    // directly, unchanged.
+    loyaltyService.getBalance.mockResolvedValue(points);
     prisma.loyaltyTransaction.aggregate.mockResolvedValue({
       _sum: { pointsDelta: points },
     });
@@ -333,9 +338,7 @@ describe('RedemptionsService', () => {
     it('re-checks balance inside the transaction and rejects a race (409)', async () => {
       loyaltyService.getConfig.mockResolvedValue(cashOnlyConfig);
       // Pre-check sees enough points...
-      prisma.loyaltyTransaction.aggregate.mockResolvedValue({
-        _sum: { pointsDelta: 500 },
-      });
+      loyaltyService.getBalance.mockResolvedValue(500);
       // ...but by the time the transaction runs, a concurrent redemption
       // already spent them.
       tx.loyaltyTransaction.aggregate.mockResolvedValue({

@@ -8,9 +8,14 @@ import { GiftCatalogModule } from '../gift-catalog/gift-catalog.module';
 // LoyaltyService (config lookup); GiftCatalogModule imported for
 // GiftCatalogService (gift lookup for GIFT redemptions) so this module
 // doesn't duplicate GiftCatalogItem query/404 logic.
+// RedemptionsService is exported so CustomerPortalModule can delegate
+// POST /customer-portal/redemptions to the exact same money/points logic
+// (balance checks, stock decrement, transaction) instead of reimplementing
+// any of it — see CustomerPortalService.createRedemption().
 @Module({
   imports: [LoyaltyModule, GiftCatalogModule],
   controllers: [RedemptionsController],
   providers: [RedemptionsService],
+  exports: [RedemptionsService],
 })
 export class RedemptionsModule {}
