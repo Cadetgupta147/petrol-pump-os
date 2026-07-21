@@ -135,9 +135,32 @@ export interface MeterReading {
   staffId: string;
   openingReading: number;
   closingReading: number | null;
+  // Section 7.2 — product dispensed by this nozzle for this shift, captured
+  // at open-shift time (closeShift() uses it to resolve which Tank to
+  // auto-deduct). Nullable only for legacy pre-Section-7 rows — every shift
+  // opened through this page's form sends it.
+  productType: string | null;
   shiftStart: string;
   shiftEnd: string | null;
   litresSold: number | null;
+  // Present only on the PATCH /meter-readings/:id/close response, mirroring
+  // Bill.loyaltyWarning's pattern: the shift still closes successfully, but
+  // if productType is missing or no Tank matches it, tank stock wasn't
+  // auto-deducted and this says so loudly instead of silently.
+  tankWarning?: string;
+}
+
+// Mirrors apps/backend/src/meter-readings/dto/open-shift.dto.ts.
+export interface OpenShiftRequest {
+  nozzleId: string;
+  staffId: string;
+  openingReading: number;
+  productType: string;
+}
+
+// Mirrors apps/backend/src/meter-readings/dto/close-shift.dto.ts.
+export interface CloseShiftRequest {
+  closingReading: number;
 }
 
 export interface MeterVariance {

@@ -1,5 +1,26 @@
 import { apiFetch } from './client';
-import type { MeterReading, MeterVariance } from './types';
+import type { CloseShiftRequest, MeterReading, MeterVariance, OpenShiftRequest } from './types';
+
+// POST /meter-readings — Section 3.3/4 shift-start opening reading entry.
+// This page's manual-entry fallback (the same call the DSM app's shift-start
+// flow makes) — Owner/Accountant/DSM server-side, but only Owner/Accountant
+// reach this page (Section 2: DSM has no web portal access).
+export function openShift(dto: OpenShiftRequest): Promise<MeterReading> {
+  return apiFetch<MeterReading>('/meter-readings', {
+    method: 'POST',
+    body: JSON.stringify(dto),
+  });
+}
+
+// PATCH /meter-readings/:id/close — shift-end closing reading entry. Section
+// 7.2's auto tank-deduct happens server-side; a non-blocking tankWarning may
+// come back on the response (see MeterReading.tankWarning).
+export function closeShift(id: string, dto: CloseShiftRequest): Promise<MeterReading> {
+  return apiFetch<MeterReading>(`/meter-readings/${id}/close`, {
+    method: 'PATCH',
+    body: JSON.stringify(dto),
+  });
+}
 
 // GET /meter-readings — every shift (open and closed), newest shiftStart
 // first. No date filter server-side; the dashboard filters to "today" (by
