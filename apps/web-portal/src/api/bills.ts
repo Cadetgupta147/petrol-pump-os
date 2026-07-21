@@ -1,15 +1,24 @@
 import { apiFetch } from './client';
-import type { Bill, UpdateBillRequest } from './types';
+import type { Bill, BillsListResponse, ListBillsFilters, UpdateBillRequest } from './types';
 
-// GET /bills — every non-deleted bill, no date filter and no pagination
-// (BillsService.findAll()). The dashboard uses this to split today's sales
-// into petrol vs diesel, since /dashboard/sales-summary only returns a
-// combined total across product types. On a pump with years of history this
-// will get slow — flagging that as a real gap rather than working around it
-// silently; the proper fix is a backend endpoint that does this filtering
-// and grouping server-side.
-export function getAllBills(): Promise<Bill[]> {
-  return apiFetch<Bill[]>('/bills');
+// GET /bills?... — Section 3.2 bill register: filters (date range, customer,
+// DSM/staff, payment type, vehicle number) + opt-in pagination
+// (BillsService.findAll()). Calling with no filters preserves the old
+// behavior (every non-deleted bill, unbounded) — DashboardPage still relies
+// on that for its client-side today/all-time split, since
+// /dashboard/sales-summary only returns a combined total across product
+// types. On a pump with years of history that unfiltered call will get
+// slow; the proper long-term fix is a dedicated server-aggregated dashboard
+// endpoint, not something this filtering slice changes.
+export function getAllBills(filters: ListBillsFilters = {}): Promise<BillsListResponse> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      params.set(key, String(value));
+    }
+  }
+  const qs = params.toString();
+  return apiFetch<BillsListResponse>(`/bills${qs ? `?${qs}` : ''}`);
 }
 
 export function getBill(id: string): Promise<Bill> {

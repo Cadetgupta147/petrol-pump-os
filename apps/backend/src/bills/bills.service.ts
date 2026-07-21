@@ -20,9 +20,11 @@ import {
 } from '../loyalty/loyalty.service';
 import { allocateQrMemberId } from '../customers/member-id';
 import { RateMasterService } from '../rate-master/rate-master.service';
+import { parseDateRangeStrings } from '../common/date-range.util';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { DeleteBillDto } from './dto/delete-bill.dto';
+import { ListBillsQueryDto } from './dto/list-bills-query.dto';
 
 // Manual bill entry — Section 3.2 (add/edit/delete parity with the DSM app),
 // Section 5A (split payments), and Section 3.4A (informal quick-add
@@ -282,12 +284,59 @@ export class BillsService {
     }
   }
 
-  findAll() {
-    return this.prisma.bill.findMany({
-      where: { deletedAt: null },
-      orderBy: { timestamp: 'desc' },
-      include: { paymentLines: true },
-    });
+  // Section 3.2 — bill register filters (date range, customer, DSM/staff,
+  // payment type, vehicle number) + opt-in pagination. A request with no
+  // query params at all preserves the historical behavior (every
+  // non-deleted bill, unbounded) — the dashboard's own client-side
+  // today/all-time split (DashboardPage.tsx) still relies on that, and
+  // fixing that unbounded-payload risk properly means giving the dashboard
+  // dedicated server-aggregated endpoints, not silently truncating this
+  // one's default response out from under an existing caller. limit/offset
+  // are what the new Billing Register screen uses to actually page through
+  // results.
+  async findAll(query: ListBillsQueryDto = {}) {
+    const { from, to, customerId, staffId, paymentType, vehicleNumber, limit, offset } = query;
+
+    if (from && to) {
+      const { start } = parseDateRangeStrings(from, from);
+      const { end } = parseDateRangeStrings(to, to);
+      if (end < start) {
+        throw new BadRequestException('"to" must be on or after "from"');
+      }
+    }
+
+    const where: Prisma.BillWhereInput = { deletedAt: null };
+
+    if (from || to) {
+      where.timestamp = {
+        ...(from ? { gte: parseDateRangeStrings(from, from).start } : {}),
+        ...(to ? { lte: parseDateRangeStrings(to, to).end } : {}),
+      };
+    }
+    if (customerId) {
+      where.customerId = customerId;
+    }
+    if (staffId) {
+      where.enteredById = staffId;
+    }
+    if (vehicleNumber) {
+      where.vehicleNumber = { contains: vehicleNumber, mode: 'insensitive' };
+    }
+    if (paymentType) {
+      where.paymentLines = { some: { paymentType, direction: 'IN' } };
+    }
+
+    const [bills, total] = await this.prisma.$transaction([
+      this.prisma.bill.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        include: { paymentLines: true },
+        ...(limit ? { take: limit, skip: offset ?? 0 } : {}),
+      }),
+      this.prisma.bill.count({ where }),
+    ]);
+
+    return { bills, total };
   }
 
   async findOne(id: string) {

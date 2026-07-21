@@ -7,6 +7,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { CustomerLedgerPage } from './pages/CustomerLedgerPage';
 import { BillDetailPage } from './pages/BillDetailPage';
+import { BillingRegisterPage } from './pages/BillingRegisterPage';
 import { LoyaltySettingsPage } from './pages/LoyaltySettingsPage';
 import { CreditSettingsPage } from './pages/CreditSettingsPage';
 import { TanksPage } from './pages/TanksPage';
@@ -66,6 +67,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <CreditSettingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/billing"
+        element={
+          <RequireAuth>
+            <BillingRegisterPage />
           </RequireAuth>
         }
       />

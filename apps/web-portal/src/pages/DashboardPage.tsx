@@ -110,7 +110,7 @@ export function DashboardPage() {
     let cancelled = false;
     async function load() {
       try {
-        const [salesSummary, tankStock, recentBills, creditAlerts, allMeterReadings, allBills] =
+        const [salesSummary, tankStock, recentBills, creditAlerts, allMeterReadings, allBillsResult] =
           await Promise.all([
             getSalesSummary(),
             getTankStock(),
@@ -120,6 +120,7 @@ export function DashboardPage() {
             getAllBills(),
           ]);
         if (cancelled) return;
+        const allBills = allBillsResult.bills;
         setData({
           salesSummary,
           tankStock,

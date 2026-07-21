@@ -89,6 +89,27 @@ export interface Bill {
   customer?: { id: string; name: string; verificationStatus: string } | null;
 }
 
+// GET /bills?... query params — Section 3.2 bill register filters, mirrors
+// apps/backend/src/bills/dto/list-bills-query.dto.ts. Every field is
+// optional/independently combinable; limit/offset are opt-in pagination —
+// omitting both preserves the old "every non-deleted bill" behavior (still
+// used by DashboardPage's unfiltered call).
+export interface ListBillsFilters {
+  from?: string;
+  to?: string;
+  customerId?: string;
+  staffId?: string;
+  paymentType?: PaymentType;
+  vehicleNumber?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface BillsListResponse {
+  bills: Bill[];
+  total: number;
+}
+
 // Mirrors apps/backend/src/bills/dto/update-bill.dto.ts — any subset of
 // vehicleNumber/customerName/amount/litres/productType/rateApplied/
 // customerId/paymentLines (PartialType of CreateBillDto minus enteredById/

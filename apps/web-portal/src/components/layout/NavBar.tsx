@@ -2,13 +2,16 @@ import { NavLink } from 'react-router-dom';
 
 // "Inventory" used to be a single inert NOT_BUILT placeholder covering
 // Section 7's whole module — now split into its four real built pages
-// (Tank Stock, Purchase Entry, Variance Report, Rate Master). Every other
-// tab still listed in docs/master-plan.md's nav (Section 3) but without a
-// page built yet stays an inert label rather than a dead link, so the nav
-// communicates the intended shape of the product without pretending
-// unbuilt sections work.
+// (Tank Stock, Purchase Entry, Variance Report, Rate Master). "Billing" was
+// the same kind of placeholder for Section 3.2's bill register — now built
+// (BillingRegisterPage, filters + pagination against GET /bills). Every
+// other tab still listed in docs/master-plan.md's nav (Section 3) but
+// without a page built yet stays an inert label rather than a dead link, so
+// the nav communicates the intended shape of the product without
+// pretending unbuilt sections work.
 const BUILT: { label: string; to: string }[] = [
   { label: 'Dashboard', to: '/dashboard' },
+  { label: 'Billing', to: '/billing' },
   { label: 'Credit customers', to: '/customers' },
   { label: 'Loyalty', to: '/loyalty' },
   { label: 'Credit settings', to: '/credit-settings' },
@@ -21,7 +24,6 @@ const BUILT: { label: string; to: string }[] = [
 ];
 
 const NOT_BUILT = [
-  'Billing',
   'Meter readings',
   'Staff',
   'Settings',

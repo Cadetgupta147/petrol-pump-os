@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -13,6 +14,7 @@ import { BillsService } from './bills.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { DeleteBillDto } from './dto/delete-bill.dto';
+import { ListBillsQueryDto } from './dto/list-bills-query.dto';
 
 // Section 3.2 — manual bill entry / bill register (create, read, edit,
 // soft-delete).
@@ -37,8 +39,8 @@ export class BillsController {
   }
 
   @Get()
-  findAll() {
-    return this.billsService.findAll();
+  findAll(@Query() query: ListBillsQueryDto) {
+    return this.billsService.findAll(query);
   }
 
   @Get(':id')
