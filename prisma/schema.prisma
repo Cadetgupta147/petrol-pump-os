@@ -68,6 +68,52 @@ enum CreditEnforcementMode {
   BLOCK
 }
 
+// ---------- Multi-tenancy (docs/multi-tenancy-plan.md) ----------
+
+// The tenant root — one row per petrol pump business using this system.
+// Phase 0.1 (see docs/multi-tenancy-plan.md progress log): every tenant
+// table below gets a NULLABLE pumpId in this pass, backfilled to a single
+// seeded "default" Pump — purely additive, no application code reads/filters
+// on it yet. Phase 0.2 splits Staff/Customer into StaffAccount/
+// StaffMembership and CustomerAccount/CustomerMembership (not done here).
+// Phase 0.3 flips pumpId to required once the Phase 2 Prisma Client
+// Extension guarantees every create path supplies it.
+model Pump {
+  id        String   @id @default(cuid())
+  name      String
+  // Human-readable prefix used in Customer.qrMemberId (e.g. "PUMP001-CUST-04521-6")
+  // — replaces the old single-tenant PUMP_CODE env var (customers/member-id.ts).
+  pumpCode  String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bills                  Bill[]
+  billAuditLogs          BillAuditLog[]
+  billPaymentLines       BillPaymentLine[]
+  creditConfigs          CreditConfig[]
+  businessProfiles       BusinessProfile[]
+  creditLimitAlerts      CreditLimitAlert[]
+  meterReadings          MeterReading[]
+  tanks                  Tank[]
+  dipReadings            DipReading[]
+  densityLogs            DensityLog[]
+  shiftSalesSummaries    ShiftSalesSummary[]
+  upiWebhookEvents       UpiWebhookEvent[]
+  purchaseEntries        PurchaseEntry[]
+  lubricantItems         LubricantItem[]
+  rateHistories          RateHistory[]
+  loyaltyConfigs         LoyaltyConfig[]
+  loyaltyTransactions    LoyaltyTransaction[]
+  giftCatalogItems       GiftCatalogItem[]
+  redemptionTransactions RedemptionTransaction[]
+  cashCustodyLogs        CashCustodyLog[]
+  payments               Payment[]
+  tallyExportLogs        TallyExportLog[]
+  customerOtps           CustomerOtp[]
+  memberIdCounters       MemberIdCounter[]
+}
+
 // ---------- Staff / Users / Roles ----------
 
 model Staff {
@@ -157,8 +203,14 @@ model Customer {
 //   - expiresAt + attemptCount implement expiry and lockout; consumedAt
 //     makes a row single-use (set on successful verify, or once attemptCount
 //     hits the lockout threshold).
+//   - pumpId (Phase 0.1, nullable): customerId can't always resolve tenancy
+//     (it's nullable), so this OTP row carries pumpId directly, resolved
+//     from request context at send-time once that context exists (Phase 1/2)
+//     — not yet wired up in this pass.
 model CustomerOtp {
   id           String    @id @default(cuid())
+  pump         Pump?     @relation(fields: [pumpId], references: [id])
+  pumpId       String?
   phone        String
   customer     Customer? @relation(fields: [customerId], references: [id])
   customerId   String?
@@ -177,13 +229,20 @@ model CustomerOtp {
 // transaction (see customers/member-id.ts), so two concurrent creates can
 // never mint the same member number. Seeded by the
 // human_friendly_member_ids migration at count(existing customers).
+// pumpId (Phase 0.1, nullable + unique): becomes the real per-pump singleton
+// key once required (Phase 0.3) — one counter row per pump, not one global
+// counter, so member-id sequences don't collide across pumps.
 model MemberIdCounter {
   id      String @id
+  pump    Pump?  @relation(fields: [pumpId], references: [id])
+  pumpId  String? @unique
   lastSeq Int
 }
 
 model Bill {
   id                 String        @id @default(cuid())
+  pump               Pump?         @relation(fields: [pumpId], references: [id])
+  pumpId             String?
   customer           Customer?     @relation(fields: [customerId], references: [id])
   customerId         String?
   vehicleNumber      String?
@@ -219,6 +278,8 @@ model Bill {
 // removed, so the original entry's history survives every later edit.
 model BillAuditLog {
   id            String           @id @default(cuid())
+  pump          Pump?            @relation(fields: [pumpId], references: [id])
+  pumpId        String?
   bill          Bill             @relation(fields: [billId], references: [id])
   billId        String
   action        BillAuditAction
@@ -234,6 +295,8 @@ model BillAuditLog {
 //   sum(amount where direction = IN) - sum(amount where direction = OUT) = bill.amount
 model BillPaymentLine {
   id          String            @id @default(cuid())
+  pump        Pump?             @relation(fields: [pumpId], references: [id])
+  pumpId      String?
   bill        Bill              @relation(fields: [billId], references: [id])
   billId      String
   paymentType PaymentType
@@ -245,9 +308,12 @@ model BillPaymentLine {
 // Section 3.4A — dealer-configurable credit limit enforcement mode + the
 // default credit limit auto-applied to quick-added (informal) customers.
 // Singleton pattern: only one row is ever really meant to matter — see
-// CreditConfigService.getOrCreate().
+// CreditConfigService.getOrCreate(). pumpId (Phase 0.1, nullable + unique):
+// becomes the real per-pump singleton key once required (Phase 0.3).
 model CreditConfig {
   id                         String                @id @default(cuid())
+  pump                       Pump?                 @relation(fields: [pumpId], references: [id])
+  pumpId                     String?               @unique
   enforcementMode            CreditEnforcementMode  @default(NOTIFY)
   defaultInformalCreditLimit Float                  @default(5000)
   updatedAt                  DateTime               @updatedAt
@@ -258,9 +324,13 @@ model CreditConfig {
 // BusinessProfileService.getOrCreate(). Every field is nullable/blank by
 // default (unlike CreditConfig's defaults, there's no sane default for a
 // business's own name or GSTIN) so a freshly-seeded pump doesn't show fake
-// placeholder data before the Owner fills this in.
+// placeholder data before the Owner fills this in. pumpId (Phase 0.1,
+// nullable + unique): becomes the real per-pump singleton key once required
+// (Phase 0.3).
 model BusinessProfile {
   id            String   @id @default(cuid())
+  pump          Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId        String?  @unique
   businessName  String?
   gstin         String?
   pumpLicenseNo String?
@@ -275,6 +345,8 @@ model BusinessProfile {
 // actually sending the reminder is Section 11, out of scope here.
 model CreditLimitAlert {
   id                  String    @id @default(cuid())
+  pump                Pump?     @relation(fields: [pumpId], references: [id])
+  pumpId              String?
   bill                Bill      @relation(fields: [billId], references: [id])
   billId              String
   customer            Customer  @relation(fields: [customerId], references: [id])
@@ -292,6 +364,8 @@ model CreditLimitAlert {
 
 model MeterReading {
   id         String   @id @default(cuid())
+  pump       Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId     String?
   nozzleId   String
   staff      Staff    @relation(fields: [staffId], references: [id])
   staffId    String
@@ -309,6 +383,8 @@ model MeterReading {
 
 model Tank {
   id            String   @id @default(cuid())
+  pump          Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId        String?
   productType   String
   capacityLitres Float
   currentStockLitres Float
@@ -330,6 +406,8 @@ model Tank {
 // re-aggregated from PurchaseEntry/MeterReading history.
 model DipReading {
   id                   String   @id @default(cuid())
+  pump                 Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId               String?
   tank                 Tank     @relation(fields: [tankId], references: [id])
   tankId               String
   recordedBy           Staff    @relation(fields: [recordedById], references: [id])
@@ -352,6 +430,8 @@ model DipReading {
 // a DIP reading (see DipReadingsService/TanksService.recordDipReading()).
 model DensityLog {
   id              String         @id @default(cuid())
+  pump            Pump?          @relation(fields: [pumpId], references: [id])
+  pumpId          String?
   tank            Tank           @relation(fields: [tankId], references: [id])
   tankId          String
   densityValue    Float
@@ -375,6 +455,8 @@ model DensityLog {
 
 model ShiftSalesSummary {
   id                    String   @id @default(cuid())
+  pump                  Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId                String?
   shiftId               String // ties back to the DSM's shift / MeterReading
   dsmId                 String
   nozzleId              String
@@ -390,9 +472,13 @@ model ShiftSalesSummary {
 // Section 8A.3 — PhonePe/Paytm Business merchant webhook events, used to
 // auto-populate ShiftSalesSummary.walkInUpiCollected without manual DSM entry.
 // Handler MUST be idempotent (dedupe on providerEventId) and verify the
-// webhook signature before trusting the payload — see CLAUDE.md.
+// webhook signature before trusting the payload — see CLAUDE.md. pumpId
+// (Phase 0.1, nullable): not yet resolvable at webhook-receive time — Phase 3
+// adds a pump-scoped webhook URL (/upi-webhook/:pumpId) that will set this.
 model UpiWebhookEvent {
   id               String   @id @default(cuid())
+  pump             Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId           String?
   provider         String // "phonepe" | "paytm"
   providerEventId  String   @unique // for idempotency — reject duplicates
   amount           Float
@@ -407,6 +493,8 @@ model UpiWebhookEvent {
 
 model PurchaseEntry {
   id           String   @id @default(cuid())
+  pump         Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId       String?
   supplierName String
   productType  String
   quantityLitres Float
@@ -426,7 +514,9 @@ model PurchaseEntry {
 }
 
 model LubricantItem {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
+  pump      Pump?   @relation(fields: [pumpId], references: [id])
+  pumpId    String?
   name      String
   stockQty  Int
   reorderAt Int
@@ -435,16 +525,19 @@ model LubricantItem {
 // Section 7.4 — Rate Master. Append-only history: corrections are new dated
 // rows, not edits — there is deliberately no PATCH/DELETE (same philosophy
 // as BillAuditLog's immutability). The unique constraint on
-// (productType, effectiveFrom) prevents two rows from claiming the same
-// effective date for the same product, which would make "the current rate"
-// ambiguous at that date. See RateMasterService.getCurrentRate().
+// (pumpId, productType, effectiveFrom) prevents two rows from claiming the
+// same effective date for the same product AT THE SAME PUMP, which would
+// make "the current rate" ambiguous at that date. See
+// RateMasterService.getCurrentRate().
 model RateHistory {
   id          String   @id @default(cuid())
+  pump        Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId      String?
   productType String
   rate        Float
   effectiveFrom DateTime
 
-  @@unique([productType, effectiveFrom])
+  @@unique([pumpId, productType, effectiveFrom])
 }
 
 // ---------- Loyalty Program ----------
@@ -453,9 +546,12 @@ model RateHistory {
 // Section 6.2 — earning side. earningBasis/defaultRate have NO schema
 // defaults on purpose: the launch default basis and rate are open decisions
 // (Section 17), so the dealer must set them explicitly via the API before
-// any points can be calculated.
+// any points can be calculated. pumpId (Phase 0.1, nullable + unique):
+// becomes the real per-pump singleton key once required (Phase 0.3).
 model LoyaltyConfig {
   id                     String         @id @default(cuid())
+  pump                   Pump?          @relation(fields: [pumpId], references: [id])
+  pumpId                 String?        @unique
   earningBasis           EarningBasis
   defaultRate            Float
   // Section 6.4 — redemption side. Nullable because redemption policy at
@@ -474,6 +570,8 @@ model LoyaltyConfig {
 
 model LoyaltyTransaction {
   id         String   @id @default(cuid())
+  pump       Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId     String?
   customer   Customer @relation(fields: [customerId], references: [id])
   customerId String
   bill       Bill?    @relation(fields: [billId], references: [id])
@@ -485,6 +583,8 @@ model LoyaltyTransaction {
 
 model GiftCatalogItem {
   id             String  @id @default(cuid())
+  pump           Pump?   @relation(fields: [pumpId], references: [id])
+  pumpId         String?
   giftName       String
   imageUrl       String?
   pointsRequired Int
@@ -496,6 +596,8 @@ model GiftCatalogItem {
 
 model RedemptionTransaction {
   id          String           @id @default(cuid())
+  pump        Pump?            @relation(fields: [pumpId], references: [id])
+  pumpId      String?
   customer    Customer         @relation(fields: [customerId], references: [id])
   customerId  String
   giftItem    GiftCatalogItem? @relation(fields: [giftItemId], references: [id])
@@ -521,6 +623,8 @@ model RedemptionTransaction {
 // cleanly onto the new shape and keeping them would just be dead columns.
 model CashCustodyLog {
   id                                String   @id @default(cuid())
+  pump                              Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId                            String?
   date                              DateTime
   totalCashCollected                Float
   depositedToBank                   Float
@@ -545,6 +649,8 @@ model CashCustodyLog {
 
 model Payment {
   id         String      @id @default(cuid())
+  pump       Pump?       @relation(fields: [pumpId], references: [id])
+  pumpId     String?
   customer   Customer    @relation(fields: [customerId], references: [id])
   customerId String
   amount     Float
@@ -557,6 +663,8 @@ model Payment {
 
 model TallyExportLog {
   id            String   @id @default(cuid())
+  pump          Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId        String?
   exportedAt    DateTime @default(now())
   format        String // "xml" | "api"
   recordCount   Int

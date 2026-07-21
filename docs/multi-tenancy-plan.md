@@ -211,7 +211,26 @@ required for isolation itself.
 
 ## Progress log
 
-- [ ] Phase 0.1 — Pump model + nullable pumpId on straightforward tenant models, backfilled
+- [x] Phase 0.1 — Pump model + nullable pumpId on straightforward tenant models, backfilled
+  (2026-07-21). Added `Pump`; added nullable `pumpId` to `Bill`, `BillAuditLog`,
+  `BillPaymentLine`, `CreditConfig`, `BusinessProfile`, `CreditLimitAlert`, `MeterReading`,
+  `Tank`, `DipReading`, `DensityLog`, `ShiftSalesSummary`, `UpiWebhookEvent`, `PurchaseEntry`,
+  `LubricantItem`, `RateHistory`, `LoyaltyConfig`, `LoyaltyTransaction`, `GiftCatalogItem`,
+  `RedemptionTransaction`, `CashCustodyLog`, `Payment`, `TallyExportLog`, `CustomerOtp`,
+  `MemberIdCounter`; `RateHistory`'s unique constraint now includes `pumpId`;
+  `CreditConfig`/`BusinessProfile`/`LoyaltyConfig`/`MemberIdCounter` got `@@unique([pumpId])`
+  ahead of time (safe while nullable/single-row). Bootstrapped one `default_pump`
+  (`pumpCode: PUMP001`) and backfilled every existing row to it — migration
+  `20260721210000_multi_tenancy_phase_0_1_add_pump_and_nullable_pumpid`. `migrate dev` doesn't
+  run non-interactively in this environment (the new unique constraints trigger a confirmation
+  prompt) — used `prisma migrate diff` to generate the SQL, hand-placed it into a migration
+  folder with the backfill DML appended, applied via `prisma db execute`, then
+  `prisma migrate resolve --applied` to keep migration history in sync. Verified: full backend
+  build + test suite green (41/41 suites, 371/371 tests — one flaky unrelated failure on first
+  run, passed on re-run), live smoke test against the real Supabase dev DB confirmed existing
+  rows show `pumpId: "default_pump"` and new creates still succeed unaffected (`pumpId: null`,
+  expected until Phase 2). Zero application code changed — no service reads/filters on `pumpId`
+  yet.
 - [ ] Phase 0.2 — Staff/Customer → Account/Membership split
 - [ ] Phase 0.3 — flip pumpId to required
 - [ ] Phase 1 — Auth JWT/membership resolution
