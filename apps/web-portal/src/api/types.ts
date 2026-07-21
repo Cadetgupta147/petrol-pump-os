@@ -426,6 +426,53 @@ export interface StaffListItem {
   name: string;
 }
 
+// ---------- Section 3.7 — Staff Management ----------
+
+// GET /staff-management — StaffManagementService's safe projection (never
+// pinHash/passwordHash). Mirrors apps/backend/src/staff-management.
+export interface Staff {
+  id: string;
+  name: string;
+  phone: string;
+  role: Role;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Mirrors apps/backend/src/staff-management/dto/create-staff.dto.ts. Exactly
+// one of pin/password is expected, matching `role` (pin for DSM, password
+// for everyone else) — StaffManagementService rejects the wrong one for the
+// role rather than silently ignoring it.
+export interface CreateStaffRequest {
+  name: string;
+  phone: string;
+  role: Role;
+  pin?: string;
+  password?: string;
+}
+
+// Mirrors apps/backend/src/staff-management/dto/update-staff.dto.ts. Role is
+// not editable (see that DTO's comment for why). pin/password are only sent
+// to reset a credential — omit both to leave the existing one unchanged.
+export interface UpdateStaffRequest {
+  name?: string;
+  phone?: string;
+  active?: boolean;
+  pin?: string;
+  password?: string;
+}
+
+// GET /attendance — AttendanceService.findAll(). Every clock-in/out session,
+// newest first, with the staff name already joined in.
+export interface AttendanceLogRow {
+  id: string;
+  staffId: string;
+  clockIn: string;
+  clockOut: string | null;
+  staff: { id: string; name: string };
+}
+
 // ---------- Section 8 — Cash Custody ----------
 
 // Mirrors prisma CashCustodyLog + CashCustodyService.create()'s return shape.

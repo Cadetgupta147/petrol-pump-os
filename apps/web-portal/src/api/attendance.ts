@@ -1,5 +1,12 @@
 import { apiFetch } from './client';
-import type { AttendanceSummary } from './types';
+import type { AttendanceLogRow, AttendanceSummary } from './types';
+
+// GET /attendance — Section 3.7's attendance log: every clock-in/out
+// session, newest first, staff name already joined in. Owner/Accountant/
+// Manager server-side.
+export function getAttendanceLog(): Promise<AttendanceLogRow[]> {
+  return apiFetch<AttendanceLogRow[]>('/attendance');
+}
 
 // GET /attendance/summary?from=&to= — Section 12. Owner/Accountant/Read-only
 // server-side. from/to are YYYY-MM-DD strings (DateRangeQueryDto). Hours-

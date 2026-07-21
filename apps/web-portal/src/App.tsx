@@ -9,6 +9,7 @@ import { CustomerLedgerPage } from './pages/CustomerLedgerPage';
 import { BillDetailPage } from './pages/BillDetailPage';
 import { BillingRegisterPage } from './pages/BillingRegisterPage';
 import { MeterReadingsPage } from './pages/MeterReadingsPage';
+import { StaffPage } from './pages/StaffPage';
 import { LoyaltySettingsPage } from './pages/LoyaltySettingsPage';
 import { CreditSettingsPage } from './pages/CreditSettingsPage';
 import { TanksPage } from './pages/TanksPage';
@@ -84,6 +85,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <MeterReadingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/staff"
+        element={
+          <RequireAuth>
+            <StaffPage />
           </RequireAuth>
         }
       />
