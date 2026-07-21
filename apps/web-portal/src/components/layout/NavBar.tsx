@@ -1,16 +1,12 @@
 import { NavLink } from 'react-router-dom';
 
-// "Inventory" used to be a single inert NOT_BUILT placeholder covering
-// Section 7's whole module — now split into its four real built pages
-// (Tank Stock, Purchase Entry, Variance Report, Rate Master). "Billing",
-// "Meter readings", and "Staff" were the same kind of placeholder, for
-// Section 3.2's bill register, Section 3.3's shift management, and Section
-// 3.7's staff master + attendance log — all now built. Every other tab
-// still listed in docs/master-plan.md's nav (Section 3) but without a page
-// built yet stays an inert label rather than a dead link, so the nav
-// communicates the intended shape of the product without pretending
-// unbuilt sections work.
-const BUILT: { label: string; to: string }[] = [
+// Every Section 3 web-portal module now has a real page — this list used to
+// carry a second, inert NOT_BUILT set of labels (Inventory, then Billing/
+// Meter readings/Staff, then finally Settings) for nav items that existed
+// in docs/master-plan.md's spec but had no page built yet. "Settings" was
+// the last one; if a future section gets added to the spec before it's
+// built, reintroduce that pattern rather than adding a dead link here.
+const NAV_ITEMS: { label: string; to: string }[] = [
   { label: 'Dashboard', to: '/dashboard' },
   { label: 'Billing', to: '/billing' },
   { label: 'Meter readings', to: '/meter-readings' },
@@ -24,16 +20,13 @@ const BUILT: { label: string; to: string }[] = [
   { label: 'Rate master', to: '/rate-master' },
   { label: 'Cash custody', to: '/cash-custody' },
   { label: 'Reports', to: '/reports' },
-];
-
-const NOT_BUILT = [
-  'Settings',
+  { label: 'Settings', to: '/settings' },
 ];
 
 export function NavBar() {
   return (
     <div className="navbar">
-      {BUILT.map((item) => (
+      {NAV_ITEMS.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -43,11 +36,6 @@ export function NavBar() {
         >
           {item.label}
         </NavLink>
-      ))}
-      {NOT_BUILT.map((label) => (
-        <span key={label} className="navlink" title="Not built yet" style={{ cursor: 'default' }}>
-          {label}
-        </span>
       ))}
     </div>
   );

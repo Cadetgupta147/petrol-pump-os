@@ -253,6 +253,21 @@ model CreditConfig {
   updatedAt                  DateTime               @updatedAt
 }
 
+// Section 3.9 — Settings: business profile, GSTIN, pump license details.
+// Same singleton pattern as CreditConfig — see
+// BusinessProfileService.getOrCreate(). Every field is nullable/blank by
+// default (unlike CreditConfig's defaults, there's no sane default for a
+// business's own name or GSTIN) so a freshly-seeded pump doesn't show fake
+// placeholder data before the Owner fills this in.
+model BusinessProfile {
+  id            String   @id @default(cuid())
+  businessName  String?
+  gstin         String?
+  pumpLicenseNo String?
+  address       String?
+  updatedAt     DateTime @updatedAt
+}
+
 // Section 3.4A — one alert per bill that exceeded the customer's credit
 // limit while CreditConfig.enforcementMode = NOTIFY (the bill still
 // succeeds; this is the "dealer gets notified" side-effect). reminderRequested

@@ -26,6 +26,7 @@ import { SalesPurchaseRegisterModule } from './sales-purchase-register/sales-pur
 import { AttendanceModule } from './attendance/attendance.module';
 import { StaffModule } from './staff/staff.module';
 import { StaffManagementModule } from './staff-management/staff-management.module';
+import { BusinessProfileModule } from './business-profile/business-profile.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -81,6 +82,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     AttendanceModule,
     StaffModule,
     StaffManagementModule,
+    BusinessProfileModule,
   ],
   controllers: [HealthController],
   providers: [

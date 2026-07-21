@@ -10,6 +10,7 @@ import { BillDetailPage } from './pages/BillDetailPage';
 import { BillingRegisterPage } from './pages/BillingRegisterPage';
 import { MeterReadingsPage } from './pages/MeterReadingsPage';
 import { StaffPage } from './pages/StaffPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { LoyaltySettingsPage } from './pages/LoyaltySettingsPage';
 import { CreditSettingsPage } from './pages/CreditSettingsPage';
 import { TanksPage } from './pages/TanksPage';
@@ -93,6 +94,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <StaffPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <SettingsPage />
           </RequireAuth>
         }
       />

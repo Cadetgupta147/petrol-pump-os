@@ -473,6 +473,27 @@ export interface AttendanceLogRow {
   staff: { id: string; name: string };
 }
 
+// ---------- Section 3.9 — Settings ----------
+
+// GET /business-profile — BusinessProfileService.getOrCreate(). Every field
+// is null until the Owner fills it in (no placeholder defaults server-side).
+export interface BusinessProfile {
+  id: string;
+  businessName: string | null;
+  gstin: string | null;
+  pumpLicenseNo: string | null;
+  address: string | null;
+  updatedAt: string;
+}
+
+// Mirrors apps/backend/src/business-profile/dto/update-business-profile.dto.ts.
+export interface UpdateBusinessProfileRequest {
+  businessName?: string;
+  gstin?: string;
+  pumpLicenseNo?: string;
+  address?: string;
+}
+
 // ---------- Section 8 — Cash Custody ----------
 
 // Mirrors prisma CashCustodyLog + CashCustodyService.create()'s return shape.
