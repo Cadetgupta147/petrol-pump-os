@@ -2,6 +2,7 @@ import {
   Controller,
   HttpCode,
   Headers,
+  Param,
   Post,
   RawBodyRequest,
   Req,
@@ -17,6 +18,14 @@ import { UpiWebhookService } from './upi-webhook.service';
 // not JwtAuthGuard. This is the intended, narrow use of @Public(); every
 // other route in the app still requires a JWT (see app.module.ts).
 //
+// Multi-tenancy Phase 3 (docs/multi-tenancy-plan.md): this route has no JWT,
+// so TenantContextInterceptor never runs for it — there is no req.user to
+// derive a pumpId from. Instead pumpId travels in the URL path itself
+// (each pump's merchant dashboard is configured with its own webhook URL,
+// e.g. https://.../upi-webhook/<pumpId>), and the service sets the
+// AsyncLocalStorage tenant context explicitly from that path param before
+// touching any tenant-scoped table.
+//
 // No DTO/@Body() here on purpose: the exact payload shape depends on
 // whichever provider (PhonePe vs Paytm Business) is eventually chosen (see
 // CLAUDE.md/Section 17 — still open), and the global ValidationPipe's
@@ -29,9 +38,10 @@ import { UpiWebhookService } from './upi-webhook.service';
 export class UpiWebhookController {
   constructor(private readonly upiWebhookService: UpiWebhookService) {}
 
-  @Post()
+  @Post(':pumpId')
   @HttpCode(200)
   handle(
+    @Param('pumpId') pumpId: string,
     @Req() req: RawBodyRequest<Request>,
     // Header name is a placeholder — see verify-webhook-signature.util.ts's
     // top comment for why this will need adjusting once a provider is
@@ -39,6 +49,7 @@ export class UpiWebhookController {
     @Headers('x-webhook-signature') signature?: string,
   ) {
     return this.upiWebhookService.handleWebhook(
+      pumpId,
       req.rawBody,
       signature,
       req.body,

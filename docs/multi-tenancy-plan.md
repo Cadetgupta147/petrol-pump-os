@@ -331,7 +331,43 @@ required for isolation itself.
   vice versa), including inside a `$transaction` interactive callback and
   through the real `TenantContextInterceptor`/`lastValueFrom` path (not
   just direct `PrismaService` calls). All test data cleaned up afterward.
-- [ ] Phase 3 — UPI webhook pump resolution
+- [x] Phase 3 — UPI webhook pump resolution (2026-07-22). Route changed to
+  `POST /upi-webhook/:pumpId` — this remains the one `@Public()` route with
+  no JWT (PhonePe/Paytm can't send our staff token), so
+  `TenantContextInterceptor` never runs for it; each pump's merchant
+  dashboard would be configured with its own webhook URL carrying its own
+  pumpId. `UpiWebhookService.handleWebhook()` now: (1) verifies the HMAC
+  signature first, unchanged; (2) does a plain, deliberately UNscoped
+  `prisma.pump.findUnique({ where: { id: pumpId } })` existence+active
+  check — the one legitimate unscoped lookup, since it's what establishes
+  the tenant for everything downstream (`NotFoundException` if missing/
+  inactive, checked live); (3) wraps the existing idempotency-transaction
+  in `runInTenantContext({ pumpId }, ...)` so
+  `tenant-scoping.extension.ts` auto-scopes/auto-stamps `UpiWebhookEvent`,
+  `MeterReading`, `ShiftSalesSummary` inside `tx` exactly as it would for a
+  normal JWT-authenticated request — no per-model manual pumpId stamping
+  needed here (unlike bills.service.ts's nested-write case in Phase 2),
+  since every write here is a direct top-level `tx.<model>.create/update`.
+
+  Added 2 new spec cases (unknown pumpId → 404, inactive pump → 404, both
+  asserting `$transaction` is never reached) and updated all existing
+  `handleWebhook()` call sites for the new `pumpId` first argument. Full
+  suite: 42 suites / 399 tests green.
+
+  **Live verification note**: found `.env`'s `UPI_WEBHOOK_SIGNING_SECRET`
+  is corrupted (starts with a stray `""` and no closing quote, which
+  `dotenv` parses as an empty string) — a pre-existing issue, not caused by
+  this phase, but it means the webhook currently fails closed
+  (`verifyWebhookSignature`'s `!secret` guard) on literally every request
+  regardless of Phase 3. Confirmed live: unsigned/garbage-signature
+  requests correctly 401 and the `:pumpId` route param binds correctly
+  (no Express-level 404) for both a real and a made-up pumpId, proving the
+  routing wiring is sound; the signature-valid path, pump-404 path, and
+  idempotency path are all covered by the (now 42/42 green) unit suite
+  instead, since fixing the real secret requires the actual provider
+  credential, which only the user has — **flagged to the user, not
+  guessed/fixed**. A working `.env` value is needed before this endpoint
+  can process a real webhook delivery.
 - [ ] Phase 4 — Audit-trail actor fix (finding A1)
 - [ ] Phase 5 — Pump provisioning script
 - [ ] Phase 6 — Frontend verification pass

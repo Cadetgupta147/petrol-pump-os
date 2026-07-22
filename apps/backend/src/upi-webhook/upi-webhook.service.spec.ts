@@ -1,5 +1,9 @@
 import { createHmac } from 'crypto';
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import { UpiWebhookService } from './upi-webhook.service';
@@ -8,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { ShiftSalesService } from '../shift-sales/shift-sales.service';
 
 const SECRET = 'test-secret';
+const PUMP_ID = 'pump-1';
 
 function sign(body: object): { rawBody: Buffer; signature: string } {
   const rawBody = Buffer.from(JSON.stringify(body), 'utf8');
@@ -24,6 +29,7 @@ describe('UpiWebhookService', () => {
 
   let prisma: {
     $transaction: jest.Mock;
+    pump: { findUnique: jest.Mock };
     upiWebhookEvent: { create: jest.Mock; update: jest.Mock };
     meterReading: { findFirst: jest.Mock; findMany: jest.Mock };
   };
@@ -33,6 +39,9 @@ describe('UpiWebhookService', () => {
   beforeEach(async () => {
     prisma = {
       $transaction: jest.fn(),
+      pump: {
+        findUnique: jest.fn().mockResolvedValue({ id: PUMP_ID, active: true }),
+      },
       upiWebhookEvent: { create: jest.fn(), update: jest.fn() },
       meterReading: { findFirst: jest.fn(), findMany: jest.fn() },
     };
@@ -63,7 +72,7 @@ describe('UpiWebhookService', () => {
       const { rawBody } = sign(payload);
 
       await expect(
-        service.handleWebhook(rawBody, undefined, payload),
+        service.handleWebhook(PUMP_ID, rawBody, undefined, payload),
       ).rejects.toBeInstanceOf(UnauthorizedException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -73,7 +82,7 @@ describe('UpiWebhookService', () => {
       const { rawBody } = sign(payload);
 
       await expect(
-        service.handleWebhook(rawBody, 'not-the-real-signature', payload),
+        service.handleWebhook(PUMP_ID, rawBody, 'not-the-real-signature', payload),
       ).rejects.toBeInstanceOf(UnauthorizedException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -84,7 +93,7 @@ describe('UpiWebhookService', () => {
       const { rawBody, signature } = sign(payload);
 
       await expect(
-        service.handleWebhook(rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
       ).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
@@ -101,8 +110,32 @@ describe('UpiWebhookService', () => {
         }),
       );
 
-      const result = await service.handleWebhook(rawBody, signature, payload);
+      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
       expect(result.status).toBe('processed');
+    });
+  });
+
+  describe('pump resolution (Phase 3, docs/multi-tenancy-plan.md)', () => {
+    it('rejects with 404 when the :pumpId path param does not match a real Pump', async () => {
+      prisma.pump.findUnique.mockResolvedValue(null);
+      const payload = { providerEventId: 'evt-1', amount: 500 };
+      const { rawBody, signature } = sign(payload);
+
+      await expect(
+        service.handleWebhook('no-such-pump', rawBody, signature, payload),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 404 when the pump exists but is inactive', async () => {
+      prisma.pump.findUnique.mockResolvedValue({ id: PUMP_ID, active: false });
+      const payload = { providerEventId: 'evt-1', amount: 500 };
+      const { rawBody, signature } = sign(payload);
+
+      await expect(
+        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 
@@ -112,7 +145,7 @@ describe('UpiWebhookService', () => {
       const { rawBody, signature } = sign(payload);
 
       await expect(
-        service.handleWebhook(rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -121,7 +154,7 @@ describe('UpiWebhookService', () => {
       const { rawBody, signature } = sign(payload);
 
       await expect(
-        service.handleWebhook(rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
@@ -138,7 +171,7 @@ describe('UpiWebhookService', () => {
         }),
       );
 
-      const result = await service.handleWebhook(rawBody, signature, payload);
+      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
 
       expect(result).toEqual({ status: 'duplicate', providerEventId: 'evt-dup' });
       // Never reaches ShiftSalesService — the whole transaction (including
@@ -152,7 +185,7 @@ describe('UpiWebhookService', () => {
       prisma.$transaction.mockRejectedValue(new Error('unexpected db error'));
 
       await expect(
-        service.handleWebhook(rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
       ).rejects.toThrow('unexpected db error');
     });
   });
@@ -185,7 +218,7 @@ describe('UpiWebhookService', () => {
         variance: 3500,
       });
 
-      const result = await service.handleWebhook(rawBody, signature, payload);
+      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
 
       expect(txMeterReading.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ nozzleId: 'n1' }) }),
@@ -226,7 +259,7 @@ describe('UpiWebhookService', () => {
         }),
       );
 
-      const result = await service.handleWebhook(rawBody, signature, payload);
+      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
 
       expect(txUpiWebhookEvent.update).not.toHaveBeenCalled();
       expect(shiftSalesService.incrementUpiForShift).not.toHaveBeenCalled();

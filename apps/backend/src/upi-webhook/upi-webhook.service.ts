@@ -1,12 +1,14 @@
 import {
   BadRequestException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ShiftSalesService } from '../shift-sales/shift-sales.service';
+import { runInTenantContext } from '../common/tenant-context';
 import { verifyWebhookSignature } from './verify-webhook-signature.util';
 
 // Section 8A.3 — PhonePe/Paytm Business merchant webhook handler. This is
@@ -39,6 +41,7 @@ export class UpiWebhookService {
   ) {}
 
   async handleWebhook(
+    pumpId: string,
     rawBody: Buffer | undefined,
     signatureHeader: string | undefined,
     payload: RawUpiWebhookPayload,
@@ -47,6 +50,17 @@ export class UpiWebhookService {
     const secret = this.config.get<string>('UPI_WEBHOOK_SIGNING_SECRET');
     if (!verifyWebhookSignature(rawBody, signatureHeader, secret)) {
       throw new UnauthorizedException('Invalid or missing webhook signature');
+    }
+
+    // Multi-tenancy Phase 3: pumpId comes from the URL path (no JWT on this
+    // route — see the controller's comment). Pump is deliberately NOT a
+    // tenant-scoped model (see tenant-scoping.extension.ts), so this lookup
+    // is a plain, unscoped existence check — the one place it's safe/correct
+    // for that to be unscoped, since it's what ESTABLISHES the tenant for
+    // everything that follows.
+    const pump = await this.prisma.pump.findUnique({ where: { id: pumpId } });
+    if (!pump || !pump.active) {
+      throw new NotFoundException('Unknown pump');
     }
 
     // --- Minimal payload shape validation (not a class-validator DTO on
@@ -76,47 +90,56 @@ export class UpiWebhookService {
     // deliveries of the same providerEventId can never both "win" a
     // find-missing check and double-insert — the DB's unique constraint on
     // UpiWebhookEvent.providerEventId is the actual race-proof guard.
+    //
+    // The whole transaction runs inside runInTenantContext so
+    // tenant-scoping.extension.ts auto-scopes/auto-stamps pumpId on every
+    // tenant-scoped table it touches (UpiWebhookEvent, MeterReading,
+    // ShiftSalesSummary) exactly as it would for a normal JWT-authenticated
+    // request — see tenant-context.ts's comment on why the callback must be
+    // async and internally await (a bare arrow silently loses context here).
     try {
-      const result = await this.prisma.$transaction(async (tx) => {
-        const event = await tx.upiWebhookEvent.create({
-          data: {
-            provider,
-            providerEventId,
-            amount,
-            receivedAt,
-            rawPayload: payload as Prisma.InputJsonValue,
-          },
-        });
-
-        const matchedShift = await this.findMatchingShift(
-          tx,
-          receivedAt,
-          nozzleId,
-        );
-
-        if (matchedShift) {
-          await tx.upiWebhookEvent.update({
-            where: { id: event.id },
+      const result = await runInTenantContext({ pumpId }, async () => {
+        return this.prisma.$transaction(async (tx) => {
+          const event = await tx.upiWebhookEvent.create({
             data: {
-              matchedShiftId: matchedShift.id,
-              matchedNozzleId: matchedShift.nozzleId,
+              provider,
+              providerEventId,
+              amount,
+              receivedAt,
+              rawPayload: payload as Prisma.InputJsonValue,
             },
           });
-          // Fallback documented on incrementUpiForShift(): if no
-          // ShiftSalesSummary row exists yet for this shift, this is a
-          // deliberate no-op (event stays recorded with matchedShiftId set,
-          // for later reconciliation) rather than an error.
-          await this.shiftSalesService.incrementUpiForShift(
-            tx,
-            matchedShift.id,
-            amount,
-          );
-        }
 
-        return {
-          eventId: event.id,
-          matchedShiftId: matchedShift?.id ?? null,
-        };
+          const matchedShift = await this.findMatchingShift(
+            tx,
+            receivedAt,
+            nozzleId,
+          );
+
+          if (matchedShift) {
+            await tx.upiWebhookEvent.update({
+              where: { id: event.id },
+              data: {
+                matchedShiftId: matchedShift.id,
+                matchedNozzleId: matchedShift.nozzleId,
+              },
+            });
+            // Fallback documented on incrementUpiForShift(): if no
+            // ShiftSalesSummary row exists yet for this shift, this is a
+            // deliberate no-op (event stays recorded with matchedShiftId
+            // set, for later reconciliation) rather than an error.
+            await this.shiftSalesService.incrementUpiForShift(
+              tx,
+              matchedShift.id,
+              amount,
+            );
+          }
+
+          return {
+            eventId: event.id,
+            matchedShiftId: matchedShift?.id ?? null,
+          };
+        });
       });
 
       return { status: 'processed', ...result };

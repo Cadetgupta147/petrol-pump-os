@@ -64,6 +64,8 @@ failed logins get throttled and a legitimate login still succeeds after a wait/r
 
 Confirmed by reading the code: it's a plain HMAC-SHA256-hex check over the raw body, explicitly a stand-in for PhonePe's real `X-VERIFY: SHA256(payload+saltKey)###saltIndex` scheme or Paytm's equivalent. The good news, also verified: idempotency (dedupe via `UpiWebhookEvent.providerEventId` unique constraint, transactional create-then-catch-P2002) is correctly implemented and production-ready — only the signature algorithm needs swapping once a provider is chosen.
 
+**Also found live while verifying multi-tenancy Phase 3 (docs/multi-tenancy-plan.md) on 2026-07-22:** root `.env`'s `UPI_WEBHOOK_SIGNING_SECRET` value is itself corrupted — it starts with a stray `""` and has no closing quote, which `dotenv` silently parses as an empty string rather than erroring. `verifyWebhookSignature`'s `!secret` guard correctly fails closed on this (every webhook request currently gets rejected with 401, not silently accepted), so this hasn't caused a security hole — but it does mean the endpoint cannot process a real delivery right now. Not fixed here: I don't know the intended real secret value, and editing `.env` is outside what I should do unattended. **Action needed: open `.env`, find the `UPI_WEBHOOK_SIGNING_SECRET=` line, and replace it with a real properly-quoted (or unquoted) secret value.**
+
 ```
 This depends on a business decision first: pick PhonePe for Business or Paytm Business as the merchant 
 webhook provider (docs/master-plan.md §17.8 lists this as still undecided — decide it, don't guess). 
