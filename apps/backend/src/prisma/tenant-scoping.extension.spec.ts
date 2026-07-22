@@ -109,6 +109,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'CreditConfig',
       'BusinessProfile',
       'CreditLimitAlert',
+      'Item',
       'Nozzle',
       'MeterReading',
       'Tank',

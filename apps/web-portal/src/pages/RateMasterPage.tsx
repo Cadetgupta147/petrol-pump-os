@@ -2,10 +2,11 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { getRateHistory, createRateHistory } from '../api/rateMaster';
+import { getItems } from '../api/items';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { formatRatePerLitre, formatDateTime } from '../utils/format';
-import type { RateHistory } from '../api/types';
+import type { Item, RateHistory } from '../api/types';
 
 // Section 7.4 — Rate Master: append-only, date-wise fuel pricing per
 // product. Same settings-editor shape as CreditSettingsPage/
@@ -43,6 +44,10 @@ export function RateMasterPage() {
 
   const [history, setHistory] = useState<RateHistory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Item Master (Settings) — populates the Product type field's datalist
+  // below (still a plain string on RateHistory, see prisma/schema.prisma's
+  // Item comment).
+  const [items, setItems] = useState<Item[]>([]);
 
   const [productType, setProductType] = useState('');
   const [rate, setRate] = useState('');
@@ -62,6 +67,11 @@ export function RateMasterPage() {
         setError(err instanceof ApiError ? err.message : "Can't reach the backend.");
       }
     });
+    getItems()
+      .then((result) => {
+        if (!cancelled) setItems(result);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -166,11 +176,17 @@ export function RateMasterPage() {
                   <label htmlFor="rm-product">Product type</label>
                   <input
                     id="rm-product"
+                    list="rm-item-master"
                     value={productType}
                     onChange={(e) => setProductType(e.target.value)}
                     placeholder="e.g. Petrol, Diesel"
                     required
                   />
+                  <datalist id="rm-item-master">
+                    {items.map((item) => (
+                      <option key={item.id} value={item.name} />
+                    ))}
+                  </datalist>
                 </div>
                 <div className="form-field">
                   <label htmlFor="rm-rate">Rate (Rs./L)</label>

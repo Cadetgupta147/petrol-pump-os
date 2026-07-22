@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { getPurchaseEntries, createPurchaseEntry, ocrExtractInvoice } from '../api/purchases';
+import { getItems } from '../api/items';
 import { ApiError } from '../api/client';
 import { formatLitres, formatRupees, formatRatePerLitre, formatDateTime } from '../utils/format';
-import type { CreatePurchaseEntryRequest, PurchaseEntry } from '../api/types';
+import type { CreatePurchaseEntryRequest, Item, PurchaseEntry } from '../api/types';
 
 // Section 7.1/7.2 (manual purchase entry -> tank stock increment) + Section
 // 9 (OCR pre-fill). Owner/Accountant only server-side
@@ -36,6 +37,13 @@ import type { CreatePurchaseEntryRequest, PurchaseEntry } from '../api/types';
 export function PurchaseEntryPage() {
   const [entries, setEntries] = useState<PurchaseEntry[] | null>(null);
   const [entriesError, setEntriesError] = useState<string | null>(null);
+  // Item Master (Settings) — populates the Product type field's datalist
+  // below so this free-text field autocompletes toward a registered item
+  // instead of a hand-typed string prone to a typo that'd break Section
+  // 7.2's tank-matching (still a plain string on PurchaseEntry — see
+  // prisma/schema.prisma's Item comment for why this isn't a full itemId FK
+  // migration).
+  const [items, setItems] = useState<Item[]>([]);
 
   const [supplierName, setSupplierName] = useState('');
   const [productType, setProductType] = useState('');
@@ -68,6 +76,11 @@ export function PurchaseEntryPage() {
           setEntriesError(err instanceof ApiError ? err.message : "Can't reach the backend.");
         }
       });
+    getItems()
+      .then((result) => {
+        if (!cancelled) setItems(result);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -230,11 +243,17 @@ export function PurchaseEntryPage() {
                 <label htmlFor="pe-product">Product type</label>
                 <input
                   id="pe-product"
+                  list="pe-item-master"
                   value={productType}
                   onChange={(e) => setProductType(e.target.value)}
                   placeholder="e.g. Petrol, Diesel"
                   required
                 />
+                <datalist id="pe-item-master">
+                  {items.map((item) => (
+                    <option key={item.id} value={item.name} />
+                  ))}
+                </datalist>
               </div>
               <div className="form-field">
                 <label htmlFor="pe-quantity">Quantity (litres)</label>

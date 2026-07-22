@@ -1,5 +1,11 @@
 import { apiFetch } from './client';
-import type { CloseShiftRequest, MeterReading, MeterVariance, OpenShiftRequest } from './types';
+import type {
+  CloseShiftRequest,
+  CorrectMeterReadingRequest,
+  MeterReading,
+  MeterVariance,
+  OpenShiftRequest,
+} from './types';
 
 // POST /meter-readings — Section 3.3/4 shift-start entry: pick a nozzleId
 // (from GET /nozzles); openingReading/productType are server-derived (the
@@ -24,14 +30,23 @@ export function closeShift(id: string, dto: CloseShiftRequest): Promise<MeterRea
   });
 }
 
+// PATCH /meter-readings/:id/correct — Owner/Accountant only. Corrects a
+// reading's opening/closing value after the fact — see
+// CorrectMeterReadingRequest's comment for the exact rules (bounded
+// one-shift cascade, tank stock delta adjustment).
+export function correctMeterReading(
+  id: string,
+  dto: CorrectMeterReadingRequest,
+): Promise<MeterReading> {
+  return apiFetch<MeterReading>(`/meter-readings/${id}/correct`, {
+    method: 'PATCH',
+    body: JSON.stringify(dto),
+  });
+}
+
 // GET /meter-readings — every shift (open and closed), newest shiftStart
 // first. No date filter server-side; the dashboard filters to "today" (by
 // shiftStart's local calendar date) client-side.
-//
-// Note on scope: nozzleId is a free-text string on MeterReading (see
-// prisma/schema.prisma) — there is no Nozzle model, so nothing in the API
-// maps a nozzle to a fuel type (petrol/diesel). The dashboard shows nozzleId
-// as-is rather than guessing a fuel type from it.
 export function getAllMeterReadings(): Promise<MeterReading[]> {
   return apiFetch<MeterReading[]>('/meter-readings');
 }

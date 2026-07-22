@@ -62,6 +62,16 @@ export class CreateBillDto {
   @IsString()
   productType!: string;
 
+  // Optional: which nozzle this bill was rung up against, if known. Not
+  // required — most entry points don't send this yet (schema/backend
+  // groundwork, see prisma/schema.prisma's comment on Bill.nozzleId) — but
+  // when present, MeterReadingsService.checkVariance() matches bills to a
+  // shift by this instead of the older staffId+time-window approximation,
+  // which is exact instead of approximate.
+  @IsOptional()
+  @IsString()
+  nozzleId?: string;
+
   @IsEnum(EntryChannel)
   entryChannel!: EntryChannel;
 

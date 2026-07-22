@@ -6,6 +6,7 @@ import { downloadTallyExport } from '../api/tallyExport';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { todayIsoDate } from '../utils/format';
+import { ItemSettings } from '../components/settings/ItemSettings';
 import { NozzleSettings } from '../components/settings/NozzleSettings';
 import type { BusinessProfile } from '../api/types';
 
@@ -25,6 +26,8 @@ export function SettingsPage() {
   const { staff } = useAuth();
   const isOwner = staff?.role === 'OWNER';
   const canManageNozzles = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT';
+  const canManageItems =
+    staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT' || staff?.role === 'MANAGER';
 
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -169,6 +172,8 @@ export function SettingsPage() {
             )
           )}
         </div>
+
+        <ItemSettings canManage={canManageItems} />
 
         <NozzleSettings canManage={canManageNozzles} />
 

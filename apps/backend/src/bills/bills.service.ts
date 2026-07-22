@@ -243,6 +243,7 @@ export class BillsService {
             amount: dto.amount,
             litres: dto.litres,
             productType: dto.productType,
+            nozzleId: dto.nozzleId,
             rateApplied: resolvedRate.rate,
             enteredById,
             entryChannel: dto.entryChannel,
@@ -753,9 +754,16 @@ export class BillsService {
   private handlePrismaError(error: unknown, actorId: string): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === 'P2003') {
-        // Foreign key violation — most likely the actor id (enteredById /
+        // Foreign key violation. Usually the actor id (enteredById /
         // editedById / deletedById) doesn't reference a real Staff record
-        // (customerId is already checked explicitly above).
+        // (customerId is already checked explicitly above) — but as of the
+        // optional nozzleId field, it can also be a bad nozzleId, so check
+        // the violated constraint's field name rather than always blaming
+        // the actor.
+        const fieldName = (error.meta as { field_name?: string } | undefined)?.field_name ?? '';
+        if (fieldName.includes('nozzleId')) {
+          throw new BadRequestException('nozzleId does not reference an existing Nozzle record');
+        }
         throw new BadRequestException(
           `${actorId} does not reference an existing Staff record`,
         );

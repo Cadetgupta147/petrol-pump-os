@@ -74,7 +74,7 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
             return (
               <tr key={reading.id}>
                 <td>
-                  {reading.nozzle.label} <span className="section-note">({reading.nozzle.productType})</span>
+                  {reading.nozzle.label} <span className="section-note">({reading.nozzle.item.name})</span>
                 </td>
                 <td title={reading.staffId}>{reading.staffId.slice(0, 8)}&hellip;</td>
                 <td>{formatTime(reading.shiftStart)}</td>

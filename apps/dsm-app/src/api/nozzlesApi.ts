@@ -6,12 +6,17 @@ import { API_BASE_URL } from '../config';
 // nextOpeningReading is server-computed on every read (the carry-forward
 // rule's result: the nozzle's last closed shift's closingReading, or its
 // configured startingReading if it's never had one) — shown as a read-only
-// preview, never an editable field anywhere in this app.
+// preview, never an editable field anywhere in this app. rolloverAt is null
+// unless this nozzle's physical meter is configured (Settings, web portal)
+// to roll over to zero at a fixed digit count — see meterReadingsApi.ts's
+// CloseShiftParams.meterRolledOver.
 export interface Nozzle {
   id: string;
   label: string;
-  productType: string;
+  itemId: string;
+  item: { id: string; name: string; category: string; unit: string };
   startingReading: number;
+  rolloverAt: number | null;
   isActive: boolean;
   nextOpeningReading: number;
 }

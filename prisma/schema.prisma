@@ -96,6 +96,7 @@ model Pump {
   creditConfigs          CreditConfig[]
   businessProfiles       BusinessProfile[]
   creditLimitAlerts      CreditLimitAlert[]
+  items                  Item[]
   nozzles                Nozzle[]
   meterReadings          MeterReading[]
   tanks                  Tank[]
@@ -162,15 +163,16 @@ model Staff {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  billsEntered    Bill[]           @relation("BillEnteredBy")
-  billsLastEdited Bill[]           @relation("BillLastEditedBy")
-  billsDeleted    Bill[]           @relation("BillDeletedBy")
-  billAuditLogs   BillAuditLog[]
-  meterReadings   MeterReading[]
-  attendanceLogs  AttendanceLog[]
-  cashCustodyLogs CashCustodyLog[]
-  dipReadings     DipReading[]
-  densityLogs     DensityLog[]
+  billsEntered           Bill[]           @relation("BillEnteredBy")
+  billsLastEdited        Bill[]           @relation("BillLastEditedBy")
+  billsDeleted           Bill[]           @relation("BillDeletedBy")
+  billAuditLogs          BillAuditLog[]
+  meterReadings          MeterReading[]   @relation("MeterReadingStaff")
+  meterReadingsCorrected MeterReading[]   @relation("MeterReadingCorrectedBy")
+  attendanceLogs         AttendanceLog[]
+  cashCustodyLogs        CashCustodyLog[]
+  dipReadings            DipReading[]
+  densityLogs            DensityLog[]
 
   @@unique([accountId, pumpId])
 }
@@ -327,6 +329,14 @@ model Bill {
   amount              Float
   litres              Float
   productType         String
+  // Section 3.3.1 — which nozzle this bill was rung up against, if known.
+  // Nullable: every historical bill and most current entry points don't
+  // set it yet (this is schema/backend groundwork, not a completed UI
+  // wire-up — see MeterReadingsService.checkVariance()'s comment for how it
+  // improves the meter-vs-billed variance match once populated, and
+  // CreateBillDto's comment for which entry points actually send it today).
+  nozzle              Nozzle?       @relation(fields: [nozzleId], references: [id])
+  nozzleId            String?
   rateApplied         Float
   // payment_type is no longer a single field — see Section 5A. A bill's payment
   // breakdown is derived from its BillPaymentLine rows (supports split payments).
@@ -437,6 +447,48 @@ model CreditLimitAlert {
   createdAt           DateTime  @default(now())
 }
 
+// ---------- Item Master ----------
+
+enum ItemCategory {
+  FUEL
+  LUBRICANT
+  OTHER
+}
+
+enum ItemUnit {
+  LITRE
+  KG
+  PIECE
+}
+
+// Item Master — the single place an Owner/Manager/Accountant registers
+// everything this pump sells (Petrol, Diesel, Speed, Urea/AdBlue, lubricant
+// SKUs, and anything else), so every other module that needs "which
+// product" stops relying on free-typed strings. Nozzle.itemId references
+// this directly (Section 3.3.1). Tank/PurchaseEntry/RateHistory/Bill still
+// store their own productType as a plain string rather than an itemId FK —
+// deliberately NOT migrated in this slice, since those are already-stable,
+// heavily-tested modules and a full migration is a larger, separate piece
+// of work. Their web portal forms instead read GET /items to populate that
+// same free-text field's dropdown/datalist, so in practice nobody types a
+// product name by hand anywhere once it exists here — see each of those
+// forms' own comments for the "reads from Item Master, writes a string"
+// pattern.
+model Item {
+  id        String       @id @default(cuid())
+  pump      Pump         @relation(fields: [pumpId], references: [id])
+  pumpId    String
+  name      String // e.g. "Petrol", "Diesel", "Speed 97", "Urea/AdBlue"
+  category  ItemCategory
+  unit      ItemUnit
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  nozzles Nozzle[]
+
+  @@unique([pumpId, name])
+}
+
 // ---------- Meter Readings / Tanks ----------
 
 // Section 3.3/4 — Nozzle master entity. Closes the gap this schema used to
@@ -457,43 +509,82 @@ model CreditLimitAlert {
 // MeterReadingsService.openShift()'s resolveOpeningReading() — which is
 // also why startingReading must not be edited once any MeterReading exists
 // against this nozzle (NozzlesService.update() enforces that).
+//
+// rolloverAt is nullable and opt-in: most modern electronic totalizers
+// never roll over, so leaving it unset preserves closeShift()'s existing
+// hard block on closingReading < openingReading. Dealers running older
+// mechanical/electronic meters that DO physically reset to zero at a fixed
+// digit count (e.g. 99999.99) set this once, and can then close a shift
+// across that rollover via CloseShiftDto.meterRolledOver (see
+// meter-readings.service.ts).
 model Nozzle {
   id              String   @id @default(cuid())
   pump            Pump     @relation(fields: [pumpId], references: [id])
   pumpId          String
   label           String // dealer-defined display label shown in every dropdown, e.g. "N1", "P3"
-  productType     String // e.g. PETROL/DIESEL/SPEED — ties this nozzle to a Tank.productType
+  item            Item     @relation(fields: [itemId], references: [id])
+  itemId          String
   startingReading Float // one-time baseline; superseded by carry-forward after the first shift
+  rolloverAt      Float? // physical rollover point for meters that reset to 0; null = never rolls over
   isActive        Boolean  @default(true) // soft-disable instead of delete once a nozzle has reading history
   createdAt       DateTime @default(now())
 
   meterReadings MeterReading[]
+  bills         Bill[]
 
   @@unique([pumpId, label])
 }
 
 model MeterReading {
-  id             String    @id @default(cuid())
-  pump           Pump      @relation(fields: [pumpId], references: [id])
-  pumpId         String
-  nozzle         Nozzle    @relation(fields: [nozzleId], references: [id])
-  nozzleId       String
-  staff          Staff     @relation(fields: [staffId], references: [id])
-  staffId        String
+  id               String    @id @default(cuid())
+  pump             Pump      @relation(fields: [pumpId], references: [id])
+  pumpId           String
+  nozzle           Nozzle    @relation(fields: [nozzleId], references: [id])
+  nozzleId         String
+  // DB-level guarantee that a nozzle has at most one open shift at a time.
+  // Set to nozzleId while the shift is open (closingReading null); set back
+  // to null on close (see closeShift()). Postgres unique indexes allow
+  // unlimited NULLs but at most one occurrence of any given non-null value,
+  // so this closes the TOCTOU race a plain findFirst-then-create check
+  // alone doesn't: of two near-simultaneous openShift() calls on the same
+  // nozzle, at most one create() can succeed — the other hits a P2002
+  // unique violation, translated to the same 409 ConflictException.
+  openLockNozzleId String?   @unique
+  staff            Staff     @relation("MeterReadingStaff", fields: [staffId], references: [id])
+  staffId          String
   // Server-derived, never client-supplied — see openShift()'s
   // resolveOpeningReading(): carried forward from this nozzle's last closed
   // shift, or Nozzle.startingReading for its first-ever shift. A DSM (or any
   // caller) cannot set or edit this value directly.
-  openingReading Float
-  closingReading Float?
-  shiftStart     DateTime  @default(now())
-  shiftEnd       DateTime?
+  openingReading   Float
+  closingReading   Float?
+  // Both default to now() but are overridable by a non-DSM caller (Owner/
+  // Accountant/Manager) for the "DSM app was down, entering this after the
+  // fact" manual-entry fallback (Section 3.3) — see OpenShiftDto/
+  // CloseShiftDto's shiftStart/shiftEnd fields and resolveAssignableActorId-
+  // style role gating in MeterReadingsService. A DSM can never backdate
+  // their own shift.
+  shiftStart       DateTime  @default(now())
+  shiftEnd         DateTime?
+  // True when closeShift() was told this nozzle's meter physically rolled
+  // over to zero mid-shift (CloseShiftDto.meterRolledOver). litresSold is
+  // then computed as (nozzle.rolloverAt - openingReading) + closingReading
+  // instead of the plain difference — see withComputedLitresSold().
+  meterRolledOver  Boolean   @default(false)
+  // Minimal audit trail for PATCH /meter-readings/:id/correct (Owner/
+  // Accountant only) — not a full audit log table (contrast BillAuditLog):
+  // a single before/after actor+timestamp pair is enough for "did someone
+  // touch this after the fact", matching how other simpler entities here
+  // (Tank) don't get a dedicated log table either.
+  correctedBy      Staff?    @relation("MeterReadingCorrectedBy", fields: [correctedById], references: [id])
+  correctedById    String?
+  correctedAt      DateTime?
   // Section 7.2 — product dispensed by this nozzle for this shift, captured
-  // at open-shift time from Nozzle.productType (also server-derived, not
+  // at open-shift time from Nozzle's linked Item (also server-derived, not
   // client-supplied — see openShift()). This is how closeShift() resolves
   // which Tank to auto-deduct. Still nullable only because pre-Nozzle-master
   // legacy rows may have it null; every shift opened from here on always has it.
-  productType    String?
+  productType      String?
 }
 
 model Tank {

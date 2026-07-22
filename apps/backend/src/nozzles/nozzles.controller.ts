@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { NozzlesService } from './nozzles.service';
@@ -24,10 +24,13 @@ export class NozzlesController {
     return this.nozzlesService.create(dto);
   }
 
+  // ?includeInactive=true — Settings screen only (see
+  // NozzlesService.findAll()'s comment); every other caller (DSM app/web
+  // portal shift-open pickers) omits it and gets active nozzles only.
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Get()
-  findAll() {
-    return this.nozzlesService.findAll();
+  findAll(@Query('includeInactive') includeInactive?: string) {
+    return this.nozzlesService.findAll(includeInactive === 'true');
   }
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)

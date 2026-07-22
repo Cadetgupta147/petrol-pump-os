@@ -4,9 +4,10 @@ import { NozzlesService } from './nozzles.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runInTenantContext } from '../common/tenant-context';
 
-// Section 3.3/4 — Nozzle master. Covers the two rule-heavy behaviors this
-// slice adds: the carry-forward "next opening reading" calculation, and the
-// startingReading-is-immutable-once-history-exists guard (CLAUDE.md's "write
+// Section 3.3/4 — Nozzle master. Covers the rule-heavy behaviors this
+// module owns: the carry-forward "next opening reading" calculation, the
+// startingReading-is-immutable-once-history-exists guard, and the
+// disable-blocked-while-an-open-shift-exists guard (CLAUDE.md's "write
 // tests for rule-heavy logic" applies here the same way it does to loyalty/
 // cash-reconciliation/variance logic).
 describe('NozzlesService', () => {
@@ -40,29 +41,49 @@ describe('NozzlesService', () => {
   }
 
   describe('create', () => {
-    it('stamps pumpId from the tenant context and returns nextOpeningReading = startingReading (no history yet)', async () => {
+    it('stamps pumpId from the tenant context, references itemId, and returns nextOpeningReading = startingReading (no history yet)', async () => {
       prisma.nozzle.create.mockResolvedValue({
         id: 'n1',
         pumpId: 'pump-1',
         label: 'N1',
-        productType: 'PETROL',
+        itemId: 'item-1',
         startingReading: 1000,
+        rolloverAt: null,
         isActive: true,
         createdAt: new Date(),
       });
 
       const result = await inTenant(() =>
-        service.create({ label: 'N1', productType: 'PETROL', startingReading: 1000 }),
+        service.create({ label: 'N1', itemId: 'item-1', startingReading: 1000 }),
       );
 
       expect(prisma.nozzle.create).toHaveBeenCalledWith({
-        data: { pumpId: 'pump-1', label: 'N1', productType: 'PETROL', startingReading: 1000 },
-      });
-      expect(prisma.meterReading.findFirst).toHaveBeenCalledWith({
-        where: { nozzleId: 'n1', closingReading: { not: null } },
-        orderBy: { shiftEnd: 'desc' },
+        data: {
+          pumpId: 'pump-1',
+          label: 'N1',
+          itemId: 'item-1',
+          startingReading: 1000,
+          rolloverAt: undefined,
+        },
+        include: { item: true },
       });
       expect(result.nextOpeningReading).toBe(1000);
+    });
+  });
+
+  describe('findAll — includeInactive', () => {
+    it('defaults to active-only (feeds real shift-open pickers)', async () => {
+      await service.findAll();
+      expect(prisma.nozzle.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { isActive: true } }),
+      );
+    });
+
+    it('includeInactive=true drops the isActive filter (Settings re-enable flow)', async () => {
+      await service.findAll(true);
+      expect(prisma.nozzle.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: undefined }),
+      );
     });
   });
 
@@ -118,31 +139,47 @@ describe('NozzlesService', () => {
 
       await service.update('n1', { startingReading: 999 });
 
-      expect(prisma.nozzle.update).toHaveBeenCalledWith({
-        where: { id: 'n1' },
-        data: { startingReading: 999 },
-      });
+      expect(prisma.nozzle.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'n1' }, data: { startingReading: 999 } }),
+      );
+    });
+  });
+
+  describe('update — disable-while-open-shift guard', () => {
+    it('blocks isActive:false while this nozzle has an open shift', async () => {
+      prisma.nozzle.findUnique.mockResolvedValue({ id: 'n1', label: 'N1', startingReading: 500 });
+      prisma.meterReading.findFirst.mockResolvedValue({ id: 'open-shift-1' });
+
+      await expect(
+        service.update('n1', { isActive: false }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.nozzle.update).not.toHaveBeenCalled();
     });
 
-    it('allows label/isActive changes without running the startingReading-history guard', async () => {
+    it('allows isActive:false when no shift is currently open', async () => {
       prisma.nozzle.findUnique.mockResolvedValue({ id: 'n1', label: 'N1', startingReading: 500 });
-      prisma.nozzle.update.mockResolvedValue({ id: 'n1', label: 'N1-renamed', startingReading: 500 });
+      prisma.meterReading.findFirst.mockResolvedValue(null);
+      prisma.nozzle.update.mockResolvedValue({ id: 'n1', isActive: false });
 
-      await service.update('n1', { label: 'N1-renamed' });
+      await service.update('n1', { isActive: false });
 
-      // findFirst is still called once here — not by the immutability guard
-      // (dto.startingReading is undefined, so that check is skipped
-      // entirely), but by withNextOpeningReading() computing the response's
-      // nextOpeningReading field, which every update() call returns.
-      expect(prisma.meterReading.findFirst).toHaveBeenCalledTimes(1);
-      expect(prisma.meterReading.findFirst).toHaveBeenCalledWith({
-        where: { nozzleId: 'n1', closingReading: { not: null } },
-        orderBy: { shiftEnd: 'desc' },
-      });
-      expect(prisma.nozzle.update).toHaveBeenCalledWith({
-        where: { id: 'n1' },
-        data: { label: 'N1-renamed' },
-      });
+      expect(prisma.nozzle.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'n1' }, data: { isActive: false } }),
+      );
+    });
+
+    it('allows isActive:true (re-enabling) without running the open-shift guard', async () => {
+      prisma.nozzle.findUnique.mockResolvedValue({ id: 'n1', label: 'N1', startingReading: 500 });
+      prisma.nozzle.update.mockResolvedValue({ id: 'n1', isActive: true });
+
+      await service.update('n1', { isActive: true });
+
+      // The open-shift guard only runs for isActive === false — re-enabling
+      // never needs to check for an open shift.
+      expect(prisma.meterReading.findFirst).toHaveBeenCalledTimes(1); // just withNextOpeningReading's own lookup
+      expect(prisma.nozzle.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'n1' }, data: { isActive: true } }),
+      );
     });
   });
 });

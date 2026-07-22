@@ -59,6 +59,7 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
   const [openError, setOpenError] = useState<string | null>(null);
 
   const [closingReadingInput, setClosingReadingInput] = useState('');
+  const [meterRolledOver, setMeterRolledOver] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closedResult, setClosedResult] = useState<MeterReading | null>(null);
@@ -91,6 +92,7 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
     setCloseError(null);
     setClosedResult(null);
     setClosingReadingInput('');
+    setMeterRolledOver(false);
 
     setChecking(true);
     try {
@@ -138,19 +140,22 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
     }
     // Mirror the server's own rule client-side for immediate feedback — the
     // server remains the real authority (it re-checks this on the request).
-    if (closingReading < openShiftForNozzle.openingReading) {
+    // Skipped when meterRolledOver is checked — a lower closing reading is
+    // exactly what a physical meter rollover looks like.
+    if (!meterRolledOver && closingReading < openShiftForNozzle.openingReading) {
       setCloseError(
-        `Closing reading (${closingReading}) cannot be less than opening reading (${openShiftForNozzle.openingReading}).`,
+        `Closing reading (${closingReading}) cannot be less than opening reading (${openShiftForNozzle.openingReading}). If this nozzle's meter physically rolled over to zero, check "meter rolled over" below.`,
       );
       return;
     }
     setClosing(true);
     setCloseError(null);
     try {
-      const closed = await closeShift(openShiftForNozzle.id, closingReading, accessToken);
+      const closed = await closeShift(openShiftForNozzle.id, closingReading, accessToken, meterRolledOver);
       setClosedResult(closed);
       setOpenShiftForNozzle(null);
       setClosingReadingInput('');
+      setMeterRolledOver(false);
     } catch (error) {
       const message =
         error instanceof MeterReadingsApiError ? error.message : 'Something went wrong. Please try again.';
@@ -187,7 +192,7 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
             testID="nozzle-picker-button"
           >
             <Text style={selectedNozzle ? styles.pickerValue : styles.pickerPlaceholder}>
-              {selectedNozzle ? `${selectedNozzle.label} · ${selectedNozzle.productType}` : 'Select nozzle'}
+              {selectedNozzle ? `${selectedNozzle.label} · ${selectedNozzle.item.name}` : 'Select nozzle'}
             </Text>
           </Pressable>
         )}
@@ -198,17 +203,17 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
               <Text style={styles.modalTitle}>Select nozzle</Text>
               <FlatList
                 data={nozzles ?? []}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item }) => (
+                keyExtractor={(nozzle) => nozzle.id}
+                renderItem={({ item: nozzle }) => (
                   <Pressable
                     style={styles.modalOption}
                     onPress={() => {
-                      void handleSelectNozzle(item);
+                      void handleSelectNozzle(nozzle);
                     }}
-                    testID={`nozzle-option-${item.label}`}
+                    testID={`nozzle-option-${nozzle.label}`}
                   >
                     <Text style={styles.modalOptionText}>
-                      {item.label} · {item.productType}
+                      {nozzle.label} · {nozzle.item.name}
                     </Text>
                   </Pressable>
                 )}
@@ -279,6 +284,21 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
                   editable={!closing}
                   testID="closing-reading-input"
                 />
+                {openShiftForNozzle.nozzle.rolloverAt != null && (
+                  <Pressable
+                    style={styles.checkboxRow}
+                    onPress={() => setMeterRolledOver((prev) => !prev)}
+                    testID="meter-rolled-over-toggle"
+                  >
+                    <View style={[styles.checkbox, meterRolledOver && styles.checkboxChecked]}>
+                      {meterRolledOver ? <Text style={styles.checkboxMark}>✓</Text> : null}
+                    </View>
+                    <Text style={styles.checkboxLabel}>
+                      This meter physically rolled over to zero this shift (rollover point:{' '}
+                      {openShiftForNozzle.nozzle.rolloverAt.toFixed(2)})
+                    </Text>
+                  </Pressable>
+                )}
                 {closeError ? (
                   <Text style={styles.error} testID="close-error">
                     {closeError}
@@ -381,6 +401,34 @@ const styles = StyleSheet.create({
   error: {
     color: '#b00020',
     marginBottom: 12,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#1a73e8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  checkboxChecked: {
+    backgroundColor: '#1a73e8',
+  },
+  checkboxMark: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  checkboxLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: '#333',
   },
   hint: {
     fontSize: 12,

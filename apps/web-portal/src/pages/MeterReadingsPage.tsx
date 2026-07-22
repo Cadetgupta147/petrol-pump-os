@@ -3,6 +3,7 @@ import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { OpenShiftModal } from '../components/meterReadings/OpenShiftModal';
 import { CloseShiftModal } from '../components/meterReadings/CloseShiftModal';
+import { CorrectMeterReadingModal } from '../components/meterReadings/CorrectMeterReadingModal';
 import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
 import { getStaffList } from '../api/staff';
 import { getNozzles } from '../api/nozzles';
@@ -40,7 +41,10 @@ export function MeterReadingsPage() {
 
   const [openingShift, setOpeningShift] = useState(false);
   const [closingShift, setClosingShift] = useState<MeterReading | null>(null);
+  const [correctingShift, setCorrectingShift] = useState<MeterReading | null>(null);
   const [tankWarning, setTankWarning] = useState<string | null>(null);
+
+  const canCorrect = currentStaff?.role === 'OWNER' || currentStaff?.role === 'ACCOUNTANT';
 
   function load() {
     return getAllMeterReadings()
@@ -137,6 +141,7 @@ export function MeterReadingsPage() {
   function handleShiftSaved(saved: MeterReading) {
     setOpeningShift(false);
     setClosingShift(null);
+    setCorrectingShift(null);
     setTankWarning(saved.tankWarning ?? null);
     void load();
   }
@@ -175,7 +180,7 @@ export function MeterReadingsPage() {
                 <option value="">All nozzles</option>
                 {nozzles.map((nozzle) => (
                   <option key={nozzle.id} value={nozzle.id}>
-                    {nozzle.label} &middot; {nozzle.productType}
+                    {nozzle.label} &middot; {nozzle.item.name}
                   </option>
                 ))}
               </select>
@@ -230,7 +235,7 @@ export function MeterReadingsPage() {
                       <td>{formatDateTime(reading.shiftStart)}</td>
                       <td>{reading.shiftEnd ? formatDateTime(reading.shiftEnd) : '—'}</td>
                       <td>{reading.nozzle.label}</td>
-                      <td>{reading.productType ?? reading.nozzle.productType ?? '—'}</td>
+                      <td>{reading.productType ?? reading.nozzle.item.name}</td>
                       <td>{staffNameById.get(reading.staffId) ?? reading.staffId.slice(0, 8) + '…'}</td>
                       <td className="num">
                         {reading.openingReading.toFixed(1)}
@@ -272,6 +277,11 @@ export function MeterReadingsPage() {
                             Close shift
                           </button>
                         )}
+                        {!isOpen && canCorrect && (
+                          <button type="button" className="icon-btn" onClick={() => setCorrectingShift(reading)}>
+                            Correct
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -294,7 +304,19 @@ export function MeterReadingsPage() {
           />
         )}
         {closingShift && (
-          <CloseShiftModal reading={closingShift} onClose={() => setClosingShift(null)} onSaved={handleShiftSaved} />
+          <CloseShiftModal
+            reading={closingShift}
+            currentStaff={currentStaff}
+            onClose={() => setClosingShift(null)}
+            onSaved={handleShiftSaved}
+          />
+        )}
+        {correctingShift && (
+          <CorrectMeterReadingModal
+            reading={correctingShift}
+            onClose={() => setCorrectingShift(null)}
+            onSaved={handleShiftSaved}
+          />
         )}
       </div>
     </>

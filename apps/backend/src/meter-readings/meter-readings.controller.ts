@@ -6,6 +6,7 @@ import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { MeterReadingsService } from './meter-readings.service';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
+import { CorrectMeterReadingDto } from './dto/correct-meter-reading.dto';
 
 // Section 3.3 — Meter Reading Management (manual entry / fallback + web
 // corrections, per-shift/per-nozzle view, and the litres-sold-vs-billed
@@ -17,6 +18,8 @@ import { CloseShiftDto } from './dto/close-shift.dto';
 // access to meter reading management.
 // openShift() and closeShift() additionally allow Role.DSM — per Section 2,
 // DSM/Cashier opens and closes their own shift from the DSM app.
+// correctMeterReading() does NOT get a DSM override — corrections are an
+// Owner/Accountant-only action, matching the class-level default below.
 @Roles(Role.OWNER, Role.ACCOUNTANT)
 @Controller('meter-readings')
 export class MeterReadingsController {
@@ -30,8 +33,21 @@ export class MeterReadingsController {
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Patch(':id/close')
-  closeShift(@Param('id') id: string, @Body() dto: CloseShiftDto) {
-    return this.meterReadingsService.closeShift(id, dto);
+  closeShift(
+    @Param('id') id: string,
+    @Body() dto: CloseShiftDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.meterReadingsService.closeShift(id, dto, user);
+  }
+
+  @Patch(':id/correct')
+  correctMeterReading(
+    @Param('id') id: string,
+    @Body() dto: CorrectMeterReadingDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.meterReadingsService.correctMeterReading(id, dto, user.staffId);
   }
 
   @Get()

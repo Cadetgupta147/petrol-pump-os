@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { createNozzle, getNozzles, updateNozzle } from '../../api/nozzles';
-import { getTanks } from '../../api/tanks';
+import { getItems } from '../../api/items';
 import { ApiError } from '../../api/client';
-import type { Nozzle, Tank } from '../../api/types';
+import type { Item, Nozzle } from '../../api/types';
 
 interface NozzleSettingsProps {
   canManage: boolean;
@@ -22,34 +22,30 @@ interface NozzleSettingsProps {
 // Business profile section above this one.
 export function NozzleSettings({ canManage }: NozzleSettingsProps) {
   const [nozzles, setNozzles] = useState<Nozzle[] | null>(null);
-  const [tanks, setTanks] = useState<Tank[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [label, setLabel] = useState('');
-  const [productType, setProductType] = useState('');
+  const [itemId, setItemId] = useState('');
   const [startingReading, setStartingReading] = useState('');
+  const [rolloverAt, setRolloverAt] = useState('');
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
-  const [editProductType, setEditProductType] = useState('');
+  const [editItemId, setEditItemId] = useState('');
   const [editStartingReading, setEditStartingReading] = useState('');
+  const [editRolloverAt, setEditRolloverAt] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Distinct product types already configured as tanks (Section 7.1) — used
-  // as a datalist so the free-text productType field still autocompletes
-  // toward a value the shift-close tank auto-deduct can actually match,
-  // without forcing a hardcoded product enum here (see OpenShiftModal's
-  // older equivalent for the same reasoning).
-  const knownProductTypes = useMemo(
-    () => Array.from(new Set(tanks.map((t) => t.productType))),
-    [tanks],
-  );
-
   function loadNozzles() {
-    return getNozzles()
+    // includeInactive: true — this Settings screen must be able to find
+    // and re-enable a disabled nozzle. Every real shift-open picker
+    // elsewhere (DSM app, this page's own Open Shift modal) omits this and
+    // gets active nozzles only.
+    return getNozzles(true)
       .then((result) => {
         setNozzles(result);
         setLoadError(null);
@@ -63,16 +59,18 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
 
   useEffect(() => {
     let cancelled = false;
-    getNozzles()
+    getNozzles(true)
       .then((result) => {
         if (!cancelled) setNozzles(result);
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err instanceof ApiError ? err.message : "Can't reach the backend.");
       });
-    getTanks()
+    // includeInactive: true here too, so editing a nozzle whose item was
+    // later disabled still shows its current mapping in the dropdown.
+    getItems(true)
       .then((result) => {
-        if (!cancelled) setTanks(result);
+        if (!cancelled) setItems(result);
       })
       .catch(() => undefined);
     return () => {
@@ -87,12 +85,14 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
     try {
       await createNozzle({
         label: label.trim(),
-        productType: productType.trim(),
+        itemId,
         startingReading: Number(startingReading),
+        ...(rolloverAt.trim() && { rolloverAt: Number(rolloverAt) }),
       });
       setLabel('');
-      setProductType('');
+      setItemId('');
       setStartingReading('');
+      setRolloverAt('');
       await loadNozzles();
     } catch (err) {
       setAddError(err instanceof ApiError ? err.message : "Can't reach the backend.");
@@ -104,8 +104,9 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
   function startEdit(nozzle: Nozzle) {
     setEditingId(nozzle.id);
     setEditLabel(nozzle.label);
-    setEditProductType(nozzle.productType);
+    setEditItemId(nozzle.itemId);
     setEditStartingReading(String(nozzle.startingReading));
+    setEditRolloverAt(nozzle.rolloverAt != null ? String(nozzle.rolloverAt) : '');
     setEditError(null);
   }
 
@@ -120,8 +121,9 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
       // client-side (see UpdateNozzleRequest's comment).
       await updateNozzle(editingId, {
         label: editLabel.trim(),
-        productType: editProductType.trim(),
+        itemId: editItemId,
         startingReading: Number(editStartingReading),
+        rolloverAt: editRolloverAt.trim() ? Number(editRolloverAt) : undefined,
       });
       setEditingId(null);
       await loadNozzles();
@@ -134,6 +136,8 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
 
   async function handleToggleActive(nozzle: Nozzle) {
     try {
+      // Backend rejects (409) disabling a nozzle that currently has an open
+      // shift — surfaced as-is (see UpdateNozzleRequest's comment).
       await updateNozzle(nozzle.id, { isActive: !nozzle.isActive });
       await loadNozzles();
     } catch (err) {
@@ -149,7 +153,9 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
           Section 3.3/4 — add exactly as many nozzles/meters as this pump physically has. Each nozzle&rsquo;s
           starting reading is a ONE-TIME baseline: every shift after its first carries the previous
           shift&rsquo;s closing reading forward automatically — neither a DSM nor this form can edit that
-          carried-forward opening reading directly.
+          carried-forward opening reading directly. Set a rollover point only if this nozzle&rsquo;s physical
+          meter resets to zero at a fixed digit count (older mechanical/electronic totalizers) — leave it
+          blank otherwise.
         </span>
       </div>
 
@@ -165,8 +171,9 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
               <thead>
                 <tr>
                   <th>Label</th>
-                  <th>Product</th>
+                  <th>Item</th>
                   <th className="num">Starting reading</th>
+                  <th className="num">Rollover at</th>
                   <th className="num">Next opening reading</th>
                   <th>Status</th>
                   {canManage && <th></th>}
@@ -176,7 +183,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                 {nozzles.map((nozzle) =>
                   editingId === nozzle.id ? (
                     <tr key={nozzle.id}>
-                      <td colSpan={canManage ? 6 : 5}>
+                      <td colSpan={canManage ? 7 : 6}>
                         <form
                           onSubmit={(e) => {
                             void handleSaveEdit(e);
@@ -190,14 +197,16 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                             required
                             style={{ width: 90 }}
                           />
-                          <input
-                            list="nozzle-product-types"
-                            value={editProductType}
-                            onChange={(e) => setEditProductType(e.target.value)}
-                            placeholder="Product"
-                            required
-                            style={{ width: 120 }}
-                          />
+                          <select value={editItemId} onChange={(e) => setEditItemId(e.target.value)} required>
+                            <option value="" disabled>
+                              Select item
+                            </option>
+                            {items.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.name}
+                              </option>
+                            ))}
+                          </select>
                           <input
                             type="number"
                             min="0"
@@ -208,6 +217,15 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                             required
                             style={{ width: 140 }}
                             title="Only takes effect if this nozzle has no shift history yet — the backend rejects the change otherwise."
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={editRolloverAt}
+                            onChange={(e) => setEditRolloverAt(e.target.value)}
+                            placeholder="Rollover at (optional)"
+                            style={{ width: 150 }}
                           />
                           <button type="submit" className="export-btn" disabled={savingEdit}>
                             {savingEdit ? 'Saving…' : 'Save'}
@@ -227,8 +245,9 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                   ) : (
                     <tr key={nozzle.id}>
                       <td style={{ fontWeight: 700 }}>{nozzle.label}</td>
-                      <td>{nozzle.productType}</td>
+                      <td>{nozzle.item.name}</td>
                       <td className="num">{nozzle.startingReading.toFixed(1)}</td>
+                      <td className="num">{nozzle.rolloverAt != null ? nozzle.rolloverAt.toFixed(2) : '—'}</td>
                       <td className="num">{nozzle.nextOpeningReading.toFixed(1)}</td>
                       <td>
                         <span
@@ -265,17 +284,12 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
             <div className="footnote">
               &ldquo;Next opening reading&rdquo; is what this nozzle&rsquo;s NEXT shift will open with — the
               previous shift&rsquo;s closing reading, carried forward automatically. Disabling a nozzle hides
-              it from new shift-start pickers without deleting its reading history.
+              it from new shift-start pickers without deleting its reading history — blocked while a shift
+              is currently open on it.
             </div>
           </div>
         )
       )}
-
-      <datalist id="nozzle-product-types">
-        {knownProductTypes.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
 
       {canManage ? (
         <form
@@ -296,15 +310,20 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
               />
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>
-              <label htmlFor="nz-product">Product type</label>
-              <input
-                id="nz-product"
-                list="nozzle-product-types"
-                value={productType}
-                onChange={(e) => setProductType(e.target.value)}
-                placeholder="e.g. Petrol"
-                required
-              />
+              <label htmlFor="nz-item">Item</label>
+              <select id="nz-item" value={itemId} onChange={(e) => setItemId(e.target.value)} required>
+                <option value="" disabled>
+                  Select item
+                </option>
+                {items.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+              {items.length === 0 && (
+                <div className="card-sub">No items registered yet — add one above first.</div>
+              )}
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>
               <label htmlFor="nz-starting">Starting reading</label>
@@ -316,6 +335,18 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                 value={startingReading}
                 onChange={(e) => setStartingReading(e.target.value)}
                 required
+              />
+            </div>
+            <div className="form-field" style={{ marginBottom: 0 }}>
+              <label htmlFor="nz-rollover">Rollover at (optional)</label>
+              <input
+                id="nz-rollover"
+                type="number"
+                min="0"
+                step="0.01"
+                value={rolloverAt}
+                onChange={(e) => setRolloverAt(e.target.value)}
+                placeholder="e.g. 99999.99"
               />
             </div>
           </div>

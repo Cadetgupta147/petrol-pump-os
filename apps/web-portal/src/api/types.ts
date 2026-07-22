@@ -132,17 +132,54 @@ export interface UpdateBillRequest {
   rateApplied?: number;
 }
 
+// ---------- Item Master ----------
+
+export type ItemCategory = 'FUEL' | 'LUBRICANT' | 'OTHER';
+export type ItemUnit = 'LITRE' | 'KG' | 'PIECE';
+
+// GET /items — Item Master: everything this pump sells (Petrol, Diesel,
+// Speed, Urea/AdBlue, lubricant SKUs, and anything else an Owner/Manager/
+// Accountant registers). Nozzle.itemId references this directly.
+export interface Item {
+  id: string;
+  name: string;
+  category: ItemCategory;
+  unit: ItemUnit;
+  isActive: boolean;
+  createdAt: string;
+}
+
+// Mirrors apps/backend/src/items/dto/create-item.dto.ts.
+export interface CreateItemRequest {
+  name: string;
+  category: ItemCategory;
+  unit: ItemUnit;
+}
+
+// Mirrors apps/backend/src/items/dto/update-item.dto.ts — any subset.
+export interface UpdateItemRequest {
+  name?: string;
+  category?: ItemCategory;
+  unit?: ItemUnit;
+  isActive?: boolean;
+}
+
 // GET /nozzles — Section 3.3/4 Nozzle master (Settings: "how many nozzles/
 // meters does this pump have"). nextOpeningReading is server-computed on
 // every read (never persisted) — the carry-forward rule's result: this
 // nozzle's last closed shift's closingReading, or startingReading if it's
 // never had one. This is what the DSM app's/web portal's shift-open picker
 // shows as a READ-ONLY preview before submitting — never an editable field.
+// rolloverAt is null unless this nozzle's physical meter is configured to
+// roll over to zero at a fixed digit count (older mechanical/electronic
+// totalizers) — see CloseShiftRequest.meterRolledOver.
 export interface Nozzle {
   id: string;
   label: string;
-  productType: string;
+  itemId: string;
+  item: Item;
   startingReading: number;
+  rolloverAt: number | null;
   isActive: boolean;
   createdAt: string;
   nextOpeningReading: number;
@@ -151,18 +188,21 @@ export interface Nozzle {
 // Mirrors apps/backend/src/nozzles/dto/create-nozzle.dto.ts.
 export interface CreateNozzleRequest {
   label: string;
-  productType: string;
+  itemId: string;
   startingReading: number;
+  rolloverAt?: number;
 }
 
 // Mirrors apps/backend/src/nozzles/dto/update-nozzle.dto.ts — any subset.
 // NozzlesService.update() rejects a startingReading change once the nozzle
-// has any shift history (409) — surfaced as an ApiError, not re-validated
-// client-side.
+// has any shift history (409), and rejects isActive:false while an open
+// shift exists on this nozzle (409) — both surfaced as an ApiError, not
+// re-validated client-side.
 export interface UpdateNozzleRequest {
   label?: string;
-  productType?: string;
+  itemId?: string;
   startingReading?: number;
+  rolloverAt?: number;
   isActive?: boolean;
 }
 
@@ -179,11 +219,16 @@ export interface MeterReading {
   closingReading: number | null;
   // Section 7.2 — product dispensed by this nozzle for this shift, captured
   // at open-shift time. Nullable only for legacy pre-Nozzle-master rows —
-  // every shift opened from here on derives it from nozzle.productType.
+  // every shift opened from here on derives it from nozzle.item.name.
   productType: string | null;
   shiftStart: string;
   shiftEnd: string | null;
   litresSold: number | null;
+  // True when this shift's meter physically rolled over to zero — see
+  // CloseShiftRequest.meterRolledOver / Nozzle.rolloverAt.
+  meterRolledOver: boolean;
+  correctedById: string | null;
+  correctedAt: string | null;
   // Present only on the PATCH /meter-readings/:id/close response, mirroring
   // Bill.loyaltyWarning's pattern: the shift still closes successfully, but
   // if productType is missing or no Tank matches it, tank stock wasn't
@@ -194,22 +239,42 @@ export interface MeterReading {
 // Mirrors apps/backend/src/meter-readings/dto/open-shift.dto.ts.
 //
 // openingReading and productType are DELIBERATELY ABSENT — both are now
-// server-derived (the carry-forward rule + Nozzle.productType). A caller
-// picks a nozzleId from GET /nozzles and cannot set or edit the opening
-// reading at all; see OpenShiftDto's own comment for why.
+// server-derived (the carry-forward rule + the nozzle's linked Item). A
+// caller picks a nozzleId from GET /nozzles and cannot set or edit the
+// opening reading at all; see OpenShiftDto's own comment for why.
 //
 // Finding A1 (docs/production-readiness.md) — staffId is OPTIONAL and
 // defaults server-side to the authenticated caller when omitted; a non-DSM
 // caller may still set it to assign the shift to a different staff member
 // (resolveAssignableActorId()).
+//
+// shiftStart is OPTIONAL and, like staffId, rejected outright (403) if a
+// DSM caller sends it — the manual-entry backdating fallback is Owner/
+// Accountant/Manager only (see assertNonDsmOverride() on the backend).
 export interface OpenShiftRequest {
   nozzleId: string;
   staffId?: string;
+  shiftStart?: string;
 }
 
-// Mirrors apps/backend/src/meter-readings/dto/close-shift.dto.ts.
+// Mirrors apps/backend/src/meter-readings/dto/close-shift.dto.ts. shiftEnd
+// is the same non-DSM-only backdating override as OpenShiftRequest.shiftStart.
+// meterRolledOver is only valid when closingReading < openingReading AND
+// the nozzle has a configured rolloverAt — see CloseShiftModal's comment.
 export interface CloseShiftRequest {
   closingReading: number;
+  meterRolledOver?: boolean;
+  shiftEnd?: string;
+}
+
+// Mirrors apps/backend/src/meter-readings/dto/correct-meter-reading.dto.ts
+// — PATCH /meter-readings/:id/correct, Owner/Accountant only. See that
+// file's comment for the exact rules (openingReading only correctable on a
+// nozzle's first-ever shift; closingReading blocked if a later shift on the
+// same nozzle is already closed too).
+export interface CorrectMeterReadingRequest {
+  openingReading?: number;
+  closingReading?: number;
 }
 
 export interface MeterVariance {

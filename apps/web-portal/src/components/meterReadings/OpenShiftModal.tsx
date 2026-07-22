@@ -27,10 +27,18 @@ interface OpenShiftModalProps {
 // staffId (resolveAssignableActorId()); a DSM can only open a shift for
 // themselves, so the dropdown below is locked to self for that role instead
 // of letting them pick someone else and hit an avoidable error.
+//
+// The backdated shiftStart field is only shown for non-DSM roles — the
+// backend rejects (403) a DSM caller sending shiftStart at all
+// (assertNonDsmOverride()) — this is the "the DSM app was down, entering
+// yesterday's shift today" manual-entry fallback, an Owner/Accountant/
+// Manager-only action.
 export function OpenShiftModal({ staff, nozzles, currentStaff, onClose, onSaved }: OpenShiftModalProps) {
   const isDsm = currentStaff?.role === 'DSM';
   const [nozzleId, setNozzleId] = useState('');
   const [staffId, setStaffId] = useState(isDsm ? currentStaff.id : '');
+  const [backdateShiftStart, setBackdateShiftStart] = useState(false);
+  const [shiftStart, setShiftStart] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -44,7 +52,11 @@ export function OpenShiftModal({ staff, nozzles, currentStaff, onClose, onSaved 
     setError(null);
     setSubmitting(true);
     try {
-      const saved = await openShift({ nozzleId, staffId });
+      const saved = await openShift({
+        nozzleId,
+        staffId,
+        ...(!isDsm && backdateShiftStart && shiftStart && { shiftStart: new Date(shiftStart).toISOString() }),
+      });
       onSaved(saved);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Can't reach the backend.");
@@ -75,7 +87,7 @@ export function OpenShiftModal({ staff, nozzles, currentStaff, onClose, onSaved 
                 </option>
                 {nozzles.map((nozzle) => (
                   <option key={nozzle.id} value={nozzle.id}>
-                    {nozzle.label} &middot; {nozzle.productType}
+                    {nozzle.label} &middot; {nozzle.item.name}
                   </option>
                 ))}
               </select>
@@ -108,9 +120,33 @@ export function OpenShiftModal({ staff, nozzles, currentStaff, onClose, onSaved 
                   {selectedNozzle.nextOpeningReading.toFixed(1)}
                 </div>
                 <div className="card-sub">
-                  Product: {selectedNozzle.productType}. This is the previous shift's closing reading
+                  Item: {selectedNozzle.item.name}. This is the previous shift's closing reading
                   (or this nozzle's configured starting reading if it's never had a shift).
                 </div>
+              </div>
+            )}
+
+            {!isDsm && (
+              <div className="form-field">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={backdateShiftStart}
+                    onChange={(e) => setBackdateShiftStart(e.target.checked)}
+                    style={{ marginRight: 6 }}
+                  />
+                  Backdate this shift's start (the DSM app was down — entering this after the fact)
+                </label>
+                {backdateShiftStart && (
+                  <input
+                    type="datetime-local"
+                    value={shiftStart}
+                    onChange={(e) => setShiftStart(e.target.value)}
+                    max={new Date().toISOString().slice(0, 16)}
+                    required
+                    style={{ marginTop: 8 }}
+                  />
+                )}
               </div>
             )}
           </>

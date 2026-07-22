@@ -32,9 +32,11 @@ export class NozzlesService {
         data: {
           pumpId: requireTenantContext().pumpId,
           label: dto.label.trim(),
-          productType: dto.productType.trim(),
+          itemId: dto.itemId,
           startingReading: dto.startingReading,
+          rolloverAt: dto.rolloverAt,
         },
+        include: { item: true },
       });
       return this.withNextOpeningReading(created);
     } catch (error) {
@@ -42,20 +44,26 @@ export class NozzlesService {
     }
   }
 
-  // Every active nozzle for this pump, each carrying the reading its NEXT
-  // shift will open with (see withNextOpeningReading()) — this is exactly
-  // what populates the DSM app's/web portal's nozzle dropdown, so a DSM never
-  // types a nozzle id or an opening reading, only picks from this list.
-  async findAll() {
+  // includeInactive is false by default — that's what every real nozzle
+  // PICKER (DSM app shift start, web portal meter-reading forms) should get.
+  // The Nozzle Settings screen passes true so a disabled nozzle can still be
+  // found and re-enabled — otherwise disabling a nozzle would make it
+  // permanently unreachable through the UI (there'd be no way to ever list
+  // it again to flip isActive back to true).
+  async findAll(includeInactive = false) {
     const nozzles = await this.prisma.nozzle.findMany({
-      where: { isActive: true },
+      where: includeInactive ? undefined : { isActive: true },
       orderBy: { label: 'asc' },
+      include: { item: true },
     });
     return Promise.all(nozzles.map((nozzle) => this.withNextOpeningReading(nozzle)));
   }
 
   async findOne(id: string) {
-    const nozzle = await this.prisma.nozzle.findUnique({ where: { id } });
+    const nozzle = await this.prisma.nozzle.findUnique({
+      where: { id },
+      include: { item: true },
+    });
     if (!nozzle) {
       throw new NotFoundException(`Nozzle ${id} not found`);
     }
@@ -84,15 +92,35 @@ export class NozzlesService {
       }
     }
 
+    // A disabled nozzle drops out of findAll()'s default (active-only)
+    // result, which is exactly what feeds the DSM app's/web portal's shift
+    // picker. Disabling one mid-shift would strand whoever has it open —
+    // they'd lose the ability to find it in the picker to close it out (the
+    // web portal's meter-readings table can still close it directly since
+    // that doesn't depend on the nozzle being active, but the DSM app's flow
+    // does). Block it outright instead.
+    if (dto.isActive === false) {
+      const openShift = await this.prisma.meterReading.findFirst({
+        where: { nozzleId: id, closingReading: null },
+      });
+      if (openShift) {
+        throw new ConflictException(
+          `Nozzle ${id} has an open shift (meterReadingId: ${openShift.id}) — close it before disabling this nozzle.`,
+        );
+      }
+    }
+
     try {
       const updated = await this.prisma.nozzle.update({
         where: { id },
         data: {
           ...(dto.label !== undefined && { label: dto.label.trim() }),
-          ...(dto.productType !== undefined && { productType: dto.productType.trim() }),
+          ...(dto.itemId !== undefined && { itemId: dto.itemId }),
           ...(dto.startingReading !== undefined && { startingReading: dto.startingReading }),
+          ...(dto.rolloverAt !== undefined && { rolloverAt: dto.rolloverAt }),
           ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         },
+        include: { item: true },
       });
       return this.withNextOpeningReading(updated);
     } catch (error) {
@@ -108,7 +136,7 @@ export class NozzlesService {
   // one is fine to compute even while a shift is currently open on this
   // nozzle (it's just a display value), whereas openShift() itself blocks
   // outright on an open shift before it would ever reach this calculation.
-  private async withNextOpeningReading(nozzle: Nozzle) {
+  private async withNextOpeningReading<T extends Nozzle>(nozzle: T) {
     const lastClosed = await this.prisma.meterReading.findFirst({
       where: { nozzleId: nozzle.id, closingReading: { not: null } },
       orderBy: { shiftEnd: 'desc' },
@@ -125,6 +153,9 @@ export class NozzlesService {
         throw new BadRequestException(
           `A nozzle labeled "${label}" already exists for this pump — labels must be unique per pump.`,
         );
+      }
+      if (error.code === 'P2003') {
+        throw new BadRequestException('itemId does not reference an existing Item record');
       }
     }
     throw error;

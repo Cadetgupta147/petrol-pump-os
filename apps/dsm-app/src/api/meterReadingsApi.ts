@@ -20,6 +20,9 @@ export interface MeterReading {
   shiftEnd: string | null;
   // Computed server-side, not persisted: null while the shift is still open.
   litresSold: number | null;
+  // True when this shift's meter physically rolled over to zero — see
+  // closeShift()'s meterRolledOver param / Nozzle.rolloverAt.
+  meterRolledOver: boolean;
 }
 
 // Thrown for both "server reachable but rejected the request" (e.g. 409 —
@@ -93,9 +96,9 @@ async function request<T>(
 }
 
 // Section 3.3/4 — openingReading and productType are DELIBERATELY ABSENT
-// from params: both are now server-derived (the carry-forward rule +
-// Nozzle.productType). A DSM picks a nozzleId from GET /nozzles and cannot
-// set or edit the opening reading at all.
+// from params: both are now server-derived (the carry-forward rule + the
+// nozzle's linked Item). A DSM picks a nozzleId from GET /nozzles and
+// cannot set or edit the opening reading at all.
 export async function openShift(
   params: { nozzleId: string; staffId: string },
   accessToken: string,
@@ -107,14 +110,19 @@ export async function openShift(
   });
 }
 
+// meterRolledOver: set true when this nozzle's meter physically reset to
+// zero mid-shift — only valid when closingReading < openingReading AND the
+// nozzle has a configured rolloverAt (see MeterReadingScreen's checkbox,
+// shown only when the open shift's nozzle.rolloverAt is set).
 export async function closeShift(
   id: string,
   closingReading: number,
   accessToken: string,
+  meterRolledOver?: boolean,
 ): Promise<MeterReading> {
   return request<MeterReading>(`/meter-readings/${id}/close`, {
     method: 'PATCH',
-    body: { closingReading },
+    body: { closingReading, ...(meterRolledOver && { meterRolledOver: true }) },
     accessToken,
   });
 }
