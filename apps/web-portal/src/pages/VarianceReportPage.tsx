@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { getVarianceReport } from '../api/tanks';
+import { StatusBadge } from '../components/common/StatusBadge';
 import { ApiError } from '../api/client';
 import { formatLitres, formatSignedLitres, formatDateTime } from '../utils/format';
 import type { VarianceReportRow } from '../api/types';
@@ -74,24 +75,16 @@ export function VarianceReportPage() {
                       <td className="num">{dip ? formatSignedLitres(dip.variance) : '—'}</td>
                       <td>
                         {dip ? (
-                          <span
-                            className="badge"
-                            style={{
-                              background: dip.flagged ? 'var(--red-bg)' : 'var(--green-bg)',
-                              color: dip.flagged ? 'var(--red)' : 'var(--green)',
-                            }}
-                          >
-                            {dip.flagged
-                              ? `Flagged — outside ±${row.toleranceLitres} L tolerance`
-                              : 'OK — within tolerance'}
-                          </span>
+                          <StatusBadge
+                            tone={dip.flagged ? 'critical' : 'good'}
+                            label={
+                              dip.flagged
+                                ? `Flagged — outside ±${row.toleranceLitres} L tolerance`
+                                : 'OK — within tolerance'
+                            }
+                          />
                         ) : (
-                          <span
-                            className="badge"
-                            style={{ background: 'var(--amber-bg)', color: 'var(--amber)' }}
-                          >
-                            No DIP reading yet
-                          </span>
+                          <StatusBadge tone="warning" label="No DIP reading yet" />
                         )}
                       </td>
                       <td>{dip ? formatDateTime(dip.recordedAt) : '—'}</td>

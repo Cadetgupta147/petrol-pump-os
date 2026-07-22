@@ -4,6 +4,7 @@ import { NavBar } from '../components/layout/NavBar';
 import { OpenShiftModal } from '../components/meterReadings/OpenShiftModal';
 import { CloseShiftModal } from '../components/meterReadings/CloseShiftModal';
 import { CorrectMeterReadingModal } from '../components/meterReadings/CorrectMeterReadingModal';
+import { StatusBadge } from '../components/common/StatusBadge';
 import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
 import { getStaffList } from '../api/staff';
 import { getNozzles } from '../api/nozzles';
@@ -252,23 +253,14 @@ export function MeterReadingsPage() {
                       </td>
                       <td>
                         {isOpen ? (
-                          <span className="badge" style={{ background: 'var(--amber-bg)', color: 'var(--amber)' }}>
-                            Shift open
-                          </span>
+                          <StatusBadge tone="warning" label="Shift open" />
                         ) : variance ? (
-                          <span
-                            className="badge"
-                            style={{
-                              background: variance.flagged ? 'var(--red-bg)' : 'var(--green-bg)',
-                              color: variance.flagged ? 'var(--red)' : 'var(--green)',
-                            }}
-                          >
-                            {variance.flagged ? 'Flagged' : 'Within tolerance'}
-                          </span>
+                          <StatusBadge
+                            tone={variance.flagged ? 'critical' : 'good'}
+                            label={variance.flagged ? 'Flagged' : 'Within tolerance'}
+                          />
                         ) : (
-                          <span className="badge" style={{ background: 'var(--page-bg)', color: 'var(--gray)' }}>
-                            Loading…
-                          </span>
+                          <StatusBadge tone="neutral" label="Loading…" />
                         )}
                       </td>
                       <td className="chevron">

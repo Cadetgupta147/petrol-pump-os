@@ -20,11 +20,42 @@
   --white: #ffffff;
   --page-bg: #f7f5ef;
 
-  --dot-teal: #1d9e75;
-  --dot-blue: #378add;
-  --dot-purple: #7f77dd;
-  --dot-amber: #ef9f27;
+  --dot-teal: #1baf7a;
+  --dot-blue: #2a78d6;
+  --dot-purple: #4a3aa7;
+  --dot-amber: #eb6834;
   --dot-gray: #9aa5bd;
+
+  /* Chart palette — validated with the dataviz skill's validator
+     (node scripts/validate_palette.js) against a white chart surface.
+     The original --dot-* values above failed CVD separation (purple vs
+     blue were near-indistinguishable) and a chroma floor check, so they
+     were replaced in place with these; --chart-cat-* is the same
+     categorical set exposed under names new chart code should reach for. */
+  --chart-cat-1: #2a78d6; /* blue */
+  --chart-cat-2: #eb6834; /* orange */
+  --chart-cat-3: #1baf7a; /* aqua */
+  --chart-cat-4: #eda100; /* yellow */
+  --chart-cat-5: #e87ba4; /* magenta */
+
+  /* Payment-mix donut — a fixed category->color mapping (not swappable
+     series), separately validated as its own 4-set. */
+  --chart-cash: #1baf7a;
+  --chart-card: #2a78d6;
+  --chart-upi: #4a3aa7;
+  --chart-credit: #eb6834;
+
+  /* Diverging pair for signed magnitude (e.g. meter-vs-billed variance) —
+     blue/orange rather than the reference skill's default blue/red, since
+     --red is already reserved app-wide for the "flagged/critical" status
+     meaning; reusing it as a directional pole here would conflate sign
+     with severity. */
+  --chart-diverging-neg: #2a78d6;
+  --chart-diverging-pos: #eb6834;
+  --chart-neutral: #c3c2b7;
+
+  --chart-grid: #e7e3d8;
+  --chart-axis: #9aa5bd;
 
   --radius: 12px;
   --radius-sm: 8px;

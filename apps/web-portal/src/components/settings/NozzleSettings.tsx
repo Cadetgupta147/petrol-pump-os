@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { createNozzle, getNozzles, updateNozzle } from '../../api/nozzles';
 import { getItems } from '../../api/items';
+import { StatusBadge } from '../common/StatusBadge';
 import { ApiError } from '../../api/client';
 import type { Item, Nozzle } from '../../api/types';
 
@@ -250,15 +251,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                       <td className="num">{nozzle.rolloverAt != null ? nozzle.rolloverAt.toFixed(2) : '—'}</td>
                       <td className="num">{nozzle.nextOpeningReading.toFixed(1)}</td>
                       <td>
-                        <span
-                          className="badge"
-                          style={{
-                            background: nozzle.isActive ? 'var(--green-bg)' : 'var(--page-bg)',
-                            color: nozzle.isActive ? 'var(--green)' : 'var(--gray)',
-                          }}
-                        >
-                          {nozzle.isActive ? 'Active' : 'Disabled'}
-                        </span>
+                        <StatusBadge tone={nozzle.isActive ? 'good' : 'neutral'} label={nozzle.isActive ? 'Active' : 'Disabled'} />
                       </td>
                       {canManage && (
                         <td className="chevron">

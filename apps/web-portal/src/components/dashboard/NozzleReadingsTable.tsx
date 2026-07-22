@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { StatusBadge } from '../common/StatusBadge';
 import type { MeterReading, MeterVariance } from '../../api/types';
 import { formatLitres, formatSignedLitres, formatTime } from '../../utils/format';
 
@@ -40,12 +42,45 @@ function VarianceSummaryBanner({ readings, varianceByReadingId }: NozzleReadings
   );
 }
 
+// Small diverging bar, direct-labeled by the numeric variance cell right
+// beside it (per the dataviz skill's "selective direct labels" rule — the
+// bar carries magnitude+direction at a glance, the number stays the
+// authoritative value). Blue = under (shortage), orange = over (excess) —
+// deliberately not red/green, since --red is already reserved for the
+// separate "flagged" status meaning (see StatusBadge) and reusing it here
+// would conflate direction with severity.
+function VarianceBar({ variance, maxAbs }: { variance: number; maxAbs: number }) {
+  const magnitudePct = maxAbs > 0 ? Math.min(100, (Math.abs(variance) / maxAbs) * 100) : 0;
+  const isPositive = variance >= 0;
+  return (
+    <div className="variance-bar-track" title={`${formatSignedLitres(variance)} vs billed`}>
+      <div className="variance-bar-zero" />
+      <div
+        className="variance-bar-fill"
+        style={{
+          width: `${magnitudePct / 2}%`,
+          background: isPositive ? 'var(--chart-diverging-pos)' : 'var(--chart-diverging-neg)',
+          ...(isPositive ? { left: '50%' } : { right: '50%' }),
+        }}
+      />
+    </div>
+  );
+}
+
 // Real data note: the schema's MeterReading is one row per open/close shift
 // per nozzle, at whatever times staff actually opened/closed it — there is
 // no fixed "6am-6pm / 6pm-6am" split anywhere server-side (that was a
 // mockup convention, not a real constraint). Showing actual shift start/end
 // times here instead of forcing them into two artificial buckets.
 export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleReadingsTableProps) {
+  const maxAbsVariance = useMemo(() => {
+    let max = 0;
+    for (const variance of varianceByReadingId.values()) {
+      max = Math.max(max, Math.abs(variance.variance));
+    }
+    return max;
+  }, [varianceByReadingId]);
+
   if (readings.length === 0) {
     return <div className="empty-box">No meter reading shifts recorded today.</div>;
   }
@@ -90,27 +125,25 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
                   {variance ? formatLitres(variance.litresBilled) : isOpen ? '—' : 'loading…'}
                 </td>
                 <td className="num" style={{ fontWeight: 700, color: variance?.flagged ? 'var(--red)' : 'var(--text-dark)' }}>
-                  {variance ? formatSignedLitres(variance.variance) : '—'}
+                  {variance ? (
+                    <>
+                      {formatSignedLitres(variance.variance)}
+                      <VarianceBar variance={variance.variance} maxAbs={maxAbsVariance} />
+                    </>
+                  ) : (
+                    '—'
+                  )}
                 </td>
                 <td>
                   {isOpen ? (
-                    <span className="badge" style={{ background: 'var(--amber-bg)', color: 'var(--amber)' }}>
-                      Shift open
-                    </span>
+                    <StatusBadge tone="warning" label="Shift open" />
                   ) : variance ? (
-                    <span
-                      className="badge"
-                      style={{
-                        background: variance.flagged ? 'var(--red-bg)' : 'var(--green-bg)',
-                        color: variance.flagged ? 'var(--red)' : 'var(--green)',
-                      }}
-                    >
-                      {variance.flagged ? 'Flagged' : 'Within tolerance'}
-                    </span>
+                    <StatusBadge
+                      tone={variance.flagged ? 'critical' : 'good'}
+                      label={variance.flagged ? 'Flagged' : 'Within tolerance'}
+                    />
                   ) : (
-                    <span className="badge" style={{ background: 'var(--page-bg)', color: 'var(--gray)' }}>
-                      Loading…
-                    </span>
+                    <StatusBadge tone="neutral" label="Loading…" />
                   )}
                 </td>
               </tr>

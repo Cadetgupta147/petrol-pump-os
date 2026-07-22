@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Banknote, Fuel, Wallet } from 'lucide-react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { DateRangeTabs } from '../components/dashboard/DateRangeTabs';
@@ -335,14 +336,22 @@ export function DashboardPage() {
                 value={formatLitres(p.litres)}
                 sub={formatRupees(p.amount)}
                 dotColor={DOT.teal}
+                icon={Fuel}
               />
             ))}
-            <KpiCard label="Total collection" value={formatRupees(salesSummary.totalAmount)} sub={`${formatLitres(salesSummary.totalLitres)} combined`} dotColor={DOT.blue} />
+            <KpiCard
+              label="Total collection"
+              value={formatRupees(salesSummary.totalAmount)}
+              sub={`${formatLitres(salesSummary.totalLitres)} combined`}
+              dotColor={DOT.blue}
+              icon={Banknote}
+            />
             <KpiCard
               label="Credit given today"
               value={formatRupees(creditToday)}
               sub={`${creditCustomersToday} customer${creditCustomersToday === 1 ? '' : 's'}`}
               dotColor={DOT.amber}
+              icon={Wallet}
               background="var(--amber-bg)"
               borderColor="#f3d9be"
               valueColor="var(--amber)"

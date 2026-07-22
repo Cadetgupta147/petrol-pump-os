@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { createItem, getItems, updateItem } from '../../api/items';
+import { StatusBadge } from '../common/StatusBadge';
 import { ApiError } from '../../api/client';
 import type { Item, ItemCategory, ItemUnit } from '../../api/types';
 
@@ -197,15 +198,7 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
                       <td>{item.category}</td>
                       <td>{item.unit}</td>
                       <td>
-                        <span
-                          className="badge"
-                          style={{
-                            background: item.isActive ? 'var(--green-bg)' : 'var(--page-bg)',
-                            color: item.isActive ? 'var(--green)' : 'var(--gray)',
-                          }}
-                        >
-                          {item.isActive ? 'Active' : 'Disabled'}
-                        </span>
+                        <StatusBadge tone={item.isActive ? 'good' : 'neutral'} label={item.isActive ? 'Active' : 'Disabled'} />
                       </td>
                       {canManage && (
                         <td className="chevron">

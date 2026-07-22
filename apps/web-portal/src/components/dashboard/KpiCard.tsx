@@ -1,8 +1,11 @@
+import type { LucideIcon } from 'lucide-react';
+
 interface KpiCardProps {
   label: string;
   value: string;
   sub?: string;
   dotColor?: string;
+  icon?: LucideIcon;
   valueColor?: string;
   background?: string;
   borderColor?: string;
@@ -14,6 +17,7 @@ export function KpiCard({
   value,
   sub,
   dotColor,
+  icon: Icon,
   valueColor,
   background,
   borderColor,
@@ -28,7 +32,11 @@ export function KpiCard({
       }}
     >
       <div className="card-label">
-        {dotColor && <span className="dot" style={{ background: dotColor }} />}
+        {Icon ? (
+          <Icon size={13} strokeWidth={2.25} style={{ color: dotColor ?? 'var(--gray)', flexShrink: 0 }} />
+        ) : (
+          dotColor && <span className="dot" style={{ background: dotColor }} />
+        )}
         {label.toUpperCase()}
       </div>
       <div className="card-value" style={{ color: valueColor }}>
