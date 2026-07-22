@@ -68,6 +68,11 @@ export class PurchasesService {
     const operations: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.purchaseEntry.create({
         data: {
+          // Phase 0.3 (docs/multi-tenancy-plan.md) — pumpId is required
+          // now; reuses the matched tank's own pumpId (already fetched
+          // above) rather than requireTenantContext(), matching
+          // DensityLogsService's reasoning for the linked DensityLog below.
+          pumpId: tank.pumpId,
           id: purchaseEntryId,
           supplierName: dto.supplierName,
           productType: dto.productType,
@@ -90,6 +95,7 @@ export class PurchasesService {
       operations.push(
         this.prisma.densityLog.create({
           data: {
+            pumpId: tank.pumpId,
             tankId: tank.id,
             densityValue: dto.densityValue,
             ppmValue: dto.ppmValue,

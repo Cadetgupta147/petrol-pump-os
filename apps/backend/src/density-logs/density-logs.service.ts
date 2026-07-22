@@ -76,6 +76,11 @@ export class DensityLogsService {
 
     return this.prisma.densityLog.create({
       data: {
+        // Phase 0.3 (docs/multi-tenancy-plan.md) — pumpId is required now;
+        // reuses the tank's own pumpId (already fetched above) rather than
+        // requireTenantContext(), since a DensityLog belongs to whichever
+        // pump owns the tank it's about.
+        pumpId: tank.pumpId,
         tankId: dto.tankId,
         densityValue: dto.densityValue,
         ppmValue: dto.ppmValue,

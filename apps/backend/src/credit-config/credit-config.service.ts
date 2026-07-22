@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { UpdateCreditConfigDto } from './dto/update-credit-config.dto';
 
 // TypeScript can't see that tenant-scoping.extension.ts injects `pumpId`
@@ -35,9 +36,13 @@ export class CreditConfigService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOrCreate() {
+    // Phase 0.3 (docs/multi-tenancy-plan.md) — pumpId is a required field
+    // on CreditConfigCreateInput now, so it must be stamped explicitly
+    // here even though the extension's upsert handling would also inject
+    // it at runtime.
     return this.prisma.creditConfig.upsert({
       where: EMPTY_UNIQUE_WHERE,
-      create: {},
+      create: { pumpId: requireTenantContext().pumpId },
       update: {},
     });
   }
@@ -46,6 +51,7 @@ export class CreditConfigService {
     return this.prisma.creditConfig.upsert({
       where: EMPTY_UNIQUE_WHERE,
       create: {
+        pumpId: requireTenantContext().pumpId,
         ...(dto.enforcementMode !== undefined && {
           enforcementMode: dto.enforcementMode,
         }),

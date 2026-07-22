@@ -101,6 +101,11 @@ export class ShiftSalesService {
 
     const created = await this.prisma.shiftSalesSummary.create({
       data: {
+        // Phase 0.3 (docs/multi-tenancy-plan.md) — pumpId is required now;
+        // reuses the shift's own MeterReading.pumpId (already fetched
+        // above) rather than requireTenantContext(), since this summary
+        // belongs to whichever pump owns the shift it's about.
+        pumpId: reading.pumpId,
         shiftId: dto.shiftId,
         dsmId: dto.dsmId ?? reading.staffId,
         nozzleId: dto.nozzleId ?? reading.nozzleId,

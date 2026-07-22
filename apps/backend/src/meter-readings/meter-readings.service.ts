@@ -8,6 +8,7 @@ import { Prisma, MeterReading } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
+import { requireTenantContext } from '../common/tenant-context';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
 
@@ -63,6 +64,7 @@ export class MeterReadingsService {
     try {
       const created = await this.prisma.meterReading.create({
         data: {
+          pumpId: requireTenantContext().pumpId,
           nozzleId: dto.nozzleId,
           staffId,
           openingReading: dto.openingReading,

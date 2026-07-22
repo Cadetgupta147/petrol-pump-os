@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { GiftCatalogService } from './gift-catalog.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { runInTenantContext } from '../common/tenant-context';
 
 // jest's asymmetric matchers are typed `any`; this wrapper gives them an
 // `unknown` type so they can sit inside object-literal expectations without
@@ -52,10 +53,12 @@ describe('GiftCatalogService', () => {
     it('defaults activeFlag to true when omitted', async () => {
       prisma.giftCatalogItem.create.mockResolvedValue({});
 
-      await service.create({
-        giftName: 'Engine Oil 1L',
-        pointsRequired: 100,
-      });
+      await runInTenantContext({ pumpId: 'pump-1' }, () =>
+        service.create({
+          giftName: 'Engine Oil 1L',
+          pointsRequired: 100,
+        }),
+      );
 
       expect(prisma.giftCatalogItem.create).toHaveBeenCalledWith({
         data: containing({ activeFlag: true }),
@@ -65,10 +68,12 @@ describe('GiftCatalogService', () => {
     it('leaves stockQuantity untracked (undefined -> Prisma default) when omitted', async () => {
       prisma.giftCatalogItem.create.mockResolvedValue({});
 
-      await service.create({
-        giftName: 'Branded Cap',
-        pointsRequired: 50,
-      });
+      await runInTenantContext({ pumpId: 'pump-1' }, () =>
+        service.create({
+          giftName: 'Branded Cap',
+          pointsRequired: 50,
+        }),
+      );
 
       expect(prisma.giftCatalogItem.create).toHaveBeenCalledWith({
         data: containing({ stockQuantity: undefined }),
@@ -78,11 +83,13 @@ describe('GiftCatalogService', () => {
     it('passes through an explicit stockQuantity when tracked', async () => {
       prisma.giftCatalogItem.create.mockResolvedValue({});
 
-      await service.create({
-        giftName: 'Travel Mug',
-        pointsRequired: 75,
-        stockQuantity: 20,
-      });
+      await runInTenantContext({ pumpId: 'pump-1' }, () =>
+        service.create({
+          giftName: 'Travel Mug',
+          pointsRequired: 75,
+          stockQuantity: 20,
+        }),
+      );
 
       expect(prisma.giftCatalogItem.create).toHaveBeenCalledWith({
         data: containing({ stockQuantity: 20 }),

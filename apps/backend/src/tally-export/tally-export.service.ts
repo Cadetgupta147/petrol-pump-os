@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { ExportRangeDto } from './dto/export-range.dto';
 import {
   BillForExport,
@@ -30,6 +31,7 @@ export class TallyExportService {
       this.config.get<string>('TALLY_COMPANY_NAME') ?? DEFAULT_COMPANY_NAME;
 
     let recordCount = 0;
+    const pumpId = requireTenantContext().pumpId;
     try {
       const [bills, payments] = await Promise.all([
         this.prisma.bill.findMany({
@@ -76,6 +78,7 @@ export class TallyExportService {
 
       await this.prisma.tallyExportLog.create({
         data: {
+          pumpId,
           format: 'xml',
           recordCount,
           status: 'success',
@@ -89,6 +92,7 @@ export class TallyExportService {
     } catch (error) {
       await this.prisma.tallyExportLog.create({
         data: {
+          pumpId,
           format: 'xml',
           recordCount,
           status: 'failed',

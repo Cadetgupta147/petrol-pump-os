@@ -141,7 +141,7 @@ model StaffAccount {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  memberships  Staff[]
+  memberships Staff[]
 }
 
 // Per-pump staff membership (see StaffAccount above for why this model kept
@@ -152,34 +152,34 @@ model Staff {
   id        String        @id @default(cuid())
   account   StaffAccount? @relation(fields: [accountId], references: [id])
   accountId String?
-  pump      Pump?         @relation(fields: [pumpId], references: [id])
-  pumpId    String?
+  pump      Pump          @relation(fields: [pumpId], references: [id])
+  pumpId    String
   // Denormalized copy of StaffAccount.name — see the comment there.
-  name           String
-  role           Role
-  active         Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  name      String
+  role      Role
+  active    Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
-  billsEntered       Bill[]              @relation("BillEnteredBy")
-  billsLastEdited    Bill[]              @relation("BillLastEditedBy")
-  billsDeleted       Bill[]              @relation("BillDeletedBy")
-  billAuditLogs      BillAuditLog[]
-  meterReadings      MeterReading[]
-  attendanceLogs     AttendanceLog[]
-  cashCustodyLogs    CashCustodyLog[]
-  dipReadings        DipReading[]
-  densityLogs        DensityLog[]
+  billsEntered    Bill[]           @relation("BillEnteredBy")
+  billsLastEdited Bill[]           @relation("BillLastEditedBy")
+  billsDeleted    Bill[]           @relation("BillDeletedBy")
+  billAuditLogs   BillAuditLog[]
+  meterReadings   MeterReading[]
+  attendanceLogs  AttendanceLog[]
+  cashCustodyLogs CashCustodyLog[]
+  dipReadings     DipReading[]
+  densityLogs     DensityLog[]
 
   @@unique([accountId, pumpId])
 }
 
 model AttendanceLog {
-  id        String   @id @default(cuid())
-  staff     Staff    @relation(fields: [staffId], references: [id])
-  staffId   String
-  clockIn   DateTime
-  clockOut  DateTime?
+  id       String    @id @default(cuid())
+  staff    Staff     @relation(fields: [staffId], references: [id])
+  staffId  String
+  clockIn  DateTime
+  clockOut DateTime?
 }
 
 // ---------- Customers / Bills ----------
@@ -193,9 +193,9 @@ model AttendanceLog {
 // upgrade path, matching how `Customer.phone` was already nullable for
 // exactly this reason before the split.
 model CustomerAccount {
-  id    String  @id @default(cuid())
-  phone String  @unique
-  name  String?
+  id           String   @id @default(cuid())
+  phone        String   @unique
+  name         String?
   // Section 5 — customer JWT "kill switch", moved here from the membership
   // row: this is a property of the LOGIN SESSION, not of any one pump
   // relationship. Embedded as a claim in every customer JWT at issuance
@@ -206,7 +206,7 @@ model CustomerAccount {
   tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
 
-  memberships  Customer[]
+  memberships Customer[]
 }
 
 // Per-pump customer/loyalty membership (see CustomerAccount above for the
@@ -214,19 +214,19 @@ model CustomerAccount {
 // loyalty/credit member at two different pumps has two rows here, each with
 // its own points/credit/qrMemberId, sharing one CustomerAccount for login.
 model Customer {
-  id              String   @id @default(cuid())
-  account         CustomerAccount? @relation(fields: [accountId], references: [id])
-  accountId       String?
-  pump            Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId          String?
-  name            String
+  id                  String                     @id @default(cuid())
+  account             CustomerAccount?           @relation(fields: [accountId], references: [id])
+  accountId           String?
+  pump                Pump                       @relation(fields: [pumpId], references: [id])
+  pumpId              String
+  name                String
   // Denormalized copy of CustomerAccount.phone (kept in sync on write by
   // CustomersService) — NOT globally unique anymore now that one account can
   // have multiple per-pump membership rows; uniqueness lives on
   // CustomerAccount.phone instead. Nullable for the same informal quick-add
   // reason as before the split.
-  phone           String?
-  vehicleNumber   String?
+  phone               String?
+  vehicleNumber       String?
   // Section 6.1/6.7 — human-friendly member id, e.g. "PUMP001-CUST-04521-6":
   // pump code + literal CUST + zero-padded sequence + Luhn check digit over
   // the sequence (for manual fallback entry when the card won't scan). This
@@ -234,21 +234,21 @@ model Customer {
   // allocateQrMemberId() (customers/member-id.ts) from MemberIdCounter — no
   // DB default on purpose, so every create path must go through the
   // generator.
-  qrMemberId      String   @unique
+  qrMemberId          String                     @unique
   loyaltyRateOverride Float? // per-customer override of default earning rate
-  creditLimit     Float    @default(0) // Section 3.4 — max outstanding credit allowed
+  creditLimit         Float                      @default(0) // Section 3.4 — max outstanding credit allowed
   // Section 3.4A — INFORMAL (quick-added at bill time, name + vehicle only) vs
   // VERIFIED (normal /customers onboarding, or an informal customer later
   // upgraded via PATCH). Visibility flag only — never itself blocks credit.
-  verificationStatus CustomerVerificationStatus @default(VERIFIED)
-  createdAt       DateTime @default(now())
+  verificationStatus  CustomerVerificationStatus @default(VERIFIED)
+  createdAt           DateTime                   @default(now())
 
-  bills                 Bill[]
-  loyaltyTransactions   LoyaltyTransaction[]
+  bills                  Bill[]
+  loyaltyTransactions    LoyaltyTransaction[]
   redemptionTransactions RedemptionTransaction[]
-  payments              Payment[]
-  creditAlerts          CreditLimitAlert[]
-  otpRequests           CustomerOtp[]
+  payments               Payment[]
+  creditAlerts           CreditLimitAlert[]
+  otpRequests            CustomerOtp[]
 
   @@unique([accountId, pumpId])
 }
@@ -271,6 +271,18 @@ model Customer {
 //     (it's nullable), so this OTP row carries pumpId directly, resolved
 //     from request context at send-time once that context exists (Phase 1/2)
 //     — not yet wired up in this pass.
+// pumpId is deliberately NOT required, unlike every other tenant table
+// (Phase 0.3, docs/multi-tenancy-plan.md) — requestOtp() is a @Public()
+// route with no JWT and Section 5's login flow allows sending an OTP to a
+// phone that has NO Customer row yet (verifyOtp() cleanly 404s "not
+// registered" rather than burning the caller's one valid OTP entry on a
+// phone-existence check up front). There is genuinely no pump to attribute
+// that OTP row to. When a matching Customer DOES already exist,
+// requestOtp() best-effort resolves pumpId from that customer's own row —
+// see the comment there. Either way, pumpId on THIS row is never
+// load-bearing for the actual login decision: verifyOtp() always
+// re-resolves pumpId fresh from a real Customer lookup for the JWT, never
+// from here.
 model CustomerOtp {
   id           String    @id @default(cuid())
   pump         Pump?     @relation(fields: [pumpId], references: [id])
@@ -298,38 +310,38 @@ model CustomerOtp {
 // counter, so member-id sequences don't collide across pumps.
 model MemberIdCounter {
   id      String @id
-  pump    Pump?  @relation(fields: [pumpId], references: [id])
-  pumpId  String? @unique
+  pump    Pump   @relation(fields: [pumpId], references: [id])
+  pumpId  String @unique
   lastSeq Int
 }
 
 model Bill {
-  id                 String        @id @default(cuid())
-  pump               Pump?         @relation(fields: [pumpId], references: [id])
-  pumpId             String?
-  customer           Customer?     @relation(fields: [customerId], references: [id])
-  customerId         String?
-  vehicleNumber      String?
-  customerName       String?
-  amount             Float
-  litres             Float
-  productType        String
-  rateApplied        Float
+  id                  String        @id @default(cuid())
+  pump                Pump          @relation(fields: [pumpId], references: [id])
+  pumpId              String
+  customer            Customer?     @relation(fields: [customerId], references: [id])
+  customerId          String?
+  vehicleNumber       String?
+  customerName        String?
+  amount              Float
+  litres              Float
+  productType         String
+  rateApplied         Float
   // payment_type is no longer a single field — see Section 5A. A bill's payment
   // breakdown is derived from its BillPaymentLine rows (supports split payments).
-  enteredBy          Staff         @relation("BillEnteredBy", fields: [enteredById], references: [id])
+  enteredBy           Staff         @relation("BillEnteredBy", fields: [enteredById], references: [id])
   enteredById         String
   entryChannel        EntryChannel
   timestamp           DateTime      @default(now())
   loyaltyPointsEarned Float         @default(0)
   loyaltyBasisUsed    EarningBasis?
 
-  lastEditedBy       Staff?        @relation("BillLastEditedBy", fields: [lastEditedById], references: [id])
-  lastEditedById     String?
-  lastEditedAt       DateTime?
-  deletedBy          Staff?        @relation("BillDeletedBy", fields: [deletedById], references: [id])
-  deletedById        String?
-  deletedAt          DateTime?
+  lastEditedBy   Staff?    @relation("BillLastEditedBy", fields: [lastEditedById], references: [id])
+  lastEditedById String?
+  lastEditedAt   DateTime?
+  deletedBy      Staff?    @relation("BillDeletedBy", fields: [deletedById], references: [id])
+  deletedById    String?
+  deletedAt      DateTime?
 
   loyaltyTransactions LoyaltyTransaction[]
   paymentLines        BillPaymentLine[]
@@ -341,15 +353,15 @@ model Bill {
 // each holding a full snapshot. The CREATED row is never modified or
 // removed, so the original entry's history survives every later edit.
 model BillAuditLog {
-  id            String           @id @default(cuid())
-  pump          Pump?            @relation(fields: [pumpId], references: [id])
-  pumpId        String?
-  bill          Bill             @relation(fields: [billId], references: [id])
+  id            String          @id @default(cuid())
+  pump          Pump            @relation(fields: [pumpId], references: [id])
+  pumpId        String
+  bill          Bill            @relation(fields: [billId], references: [id])
   billId        String
   action        BillAuditAction
-  performedBy   Staff            @relation(fields: [performedById], references: [id])
+  performedBy   Staff           @relation(fields: [performedById], references: [id])
   performedById String
-  performedAt   DateTime         @default(now())
+  performedAt   DateTime        @default(now())
   snapshot      Json
 }
 
@@ -358,15 +370,15 @@ model BillAuditLog {
 // Validation rule (enforce server-side, not just in the UI):
 //   sum(amount where direction = IN) - sum(amount where direction = OUT) = bill.amount
 model BillPaymentLine {
-  id          String            @id @default(cuid())
-  pump        Pump?             @relation(fields: [pumpId], references: [id])
-  pumpId      String?
-  bill        Bill              @relation(fields: [billId], references: [id])
+  id          String           @id @default(cuid())
+  pump        Pump             @relation(fields: [pumpId], references: [id])
+  pumpId      String
+  bill        Bill             @relation(fields: [billId], references: [id])
   billId      String
   paymentType PaymentType
   amount      Float
   direction   PaymentDirection // IN = money received, OUT = change given back
-  createdAt   DateTime          @default(now())
+  createdAt   DateTime         @default(now())
 }
 
 // Section 3.4A — dealer-configurable credit limit enforcement mode + the
@@ -376,11 +388,11 @@ model BillPaymentLine {
 // becomes the real per-pump singleton key once required (Phase 0.3).
 model CreditConfig {
   id                         String                @id @default(cuid())
-  pump                       Pump?                 @relation(fields: [pumpId], references: [id])
-  pumpId                     String?               @unique
-  enforcementMode            CreditEnforcementMode  @default(NOTIFY)
-  defaultInformalCreditLimit Float                  @default(5000)
-  updatedAt                  DateTime               @updatedAt
+  pump                       Pump                  @relation(fields: [pumpId], references: [id])
+  pumpId                     String                @unique
+  enforcementMode            CreditEnforcementMode @default(NOTIFY)
+  defaultInformalCreditLimit Float                 @default(5000)
+  updatedAt                  DateTime              @updatedAt
 }
 
 // Section 3.9 — Settings: business profile, GSTIN, pump license details.
@@ -393,8 +405,8 @@ model CreditConfig {
 // (Phase 0.3).
 model BusinessProfile {
   id            String   @id @default(cuid())
-  pump          Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId        String?  @unique
+  pump          Pump     @relation(fields: [pumpId], references: [id])
+  pumpId        String   @unique
   businessName  String?
   gstin         String?
   pumpLicenseNo String?
@@ -409,8 +421,8 @@ model BusinessProfile {
 // actually sending the reminder is Section 11, out of scope here.
 model CreditLimitAlert {
   id                  String    @id @default(cuid())
-  pump                Pump?     @relation(fields: [pumpId], references: [id])
-  pumpId              String?
+  pump                Pump      @relation(fields: [pumpId], references: [id])
+  pumpId              String
   bill                Bill      @relation(fields: [billId], references: [id])
   billId              String
   customer            Customer  @relation(fields: [customerId], references: [id])
@@ -427,33 +439,33 @@ model CreditLimitAlert {
 // ---------- Meter Readings / Tanks ----------
 
 model MeterReading {
-  id         String   @id @default(cuid())
-  pump       Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId     String?
-  nozzleId   String
-  staff      Staff    @relation(fields: [staffId], references: [id])
-  staffId    String
+  id             String    @id @default(cuid())
+  pump           Pump      @relation(fields: [pumpId], references: [id])
+  pumpId         String
+  nozzleId       String
+  staff          Staff     @relation(fields: [staffId], references: [id])
+  staffId        String
   openingReading Float
   closingReading Float?
-  shiftStart DateTime @default(now())
-  shiftEnd   DateTime?
+  shiftStart     DateTime  @default(now())
+  shiftEnd       DateTime?
   // Section 7.2 — product dispensed by this nozzle for this shift, captured
   // at open-shift time. There is no Nozzle master entity in this schema (see
   // apps/backend/src/tanks task spec), so this is how closeShift() resolves
   // which Tank to auto-deduct. Nullable so existing pre-Section-7 rows don't
   // need a migration backfill; OpenShiftDto requires it for all new shifts.
-  productType String?
+  productType    String?
 }
 
 model Tank {
-  id            String   @id @default(cuid())
-  pump          Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId        String?
-  productType   String
-  capacityLitres Float
-  currentStockLitres Float
-  lastDipReading Float?
-  lastDipAt      DateTime?
+  id                  String    @id @default(cuid())
+  pump                Pump      @relation(fields: [pumpId], references: [id])
+  pumpId              String
+  productType         String
+  capacityLitres      Float
+  currentStockLitres  Float
+  lastDipReading      Float?
+  lastDipAt           DateTime?
   // Section 7.1 — OMC audit reference for the tank's calibration chart
   // (converts a physical dip-stick reading to litres). Not used in any
   // calculation here — informational/audit field only.
@@ -470,19 +482,19 @@ model Tank {
 // re-aggregated from PurchaseEntry/MeterReading history.
 model DipReading {
   id                   String   @id @default(cuid())
-  pump                 Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId               String?
+  pump                 Pump     @relation(fields: [pumpId], references: [id])
+  pumpId               String
   tank                 Tank     @relation(fields: [tankId], references: [id])
   tankId               String
   recordedBy           Staff    @relation(fields: [recordedById], references: [id])
   recordedById         String
-  reading               Float    // physical stick measurement, litres
-  systemStockAtReading Float    // Tank.currentStockLitres captured at the moment of this reading
-  variance             Float    // systemStockAtReading - reading
+  reading              Float // physical stick measurement, litres
+  systemStockAtReading Float // Tank.currentStockLitres captured at the moment of this reading
+  variance             Float // systemStockAtReading - reading
   flagged              Boolean
   createdAt            DateTime @default(now())
 
-  densityLogs          DensityLog[]
+  densityLogs DensityLog[]
 }
 
 // Section 7.3 — density/quality check (density value in g/mL and, optionally,
@@ -494,8 +506,8 @@ model DipReading {
 // a DIP reading (see DipReadingsService/TanksService.recordDipReading()).
 model DensityLog {
   id              String         @id @default(cuid())
-  pump            Pump?          @relation(fields: [pumpId], references: [id])
-  pumpId          String?
+  pump            Pump           @relation(fields: [pumpId], references: [id])
+  pumpId          String
   tank            Tank           @relation(fields: [tankId], references: [id])
   tankId          String
   densityValue    Float
@@ -518,19 +530,19 @@ model DensityLog {
 // captured in aggregate here, reconciled against the shift's meter reading.
 
 model ShiftSalesSummary {
-  id                    String   @id @default(cuid())
-  pump                  Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId                String?
-  shiftId               String // ties back to the DSM's shift / MeterReading
-  dsmId                 String
-  nozzleId              String
-  walkInLitres          Float
-  walkInCashCollected    Float   @default(0)
-  walkInUpiCollected     Float   @default(0)
-  walkInCardCollected    Float   @default(0)
-  expectedValue          Float // walk-in litres × rate in effect (Rate Master)
-  variance                Float // expectedValue - (cash + upi + card actually collected)
-  createdAt              DateTime @default(now())
+  id                  String   @id @default(cuid())
+  pump                Pump     @relation(fields: [pumpId], references: [id])
+  pumpId              String
+  shiftId             String // ties back to the DSM's shift / MeterReading
+  dsmId               String
+  nozzleId            String
+  walkInLitres        Float
+  walkInCashCollected Float    @default(0)
+  walkInUpiCollected  Float    @default(0)
+  walkInCardCollected Float    @default(0)
+  expectedValue       Float // walk-in litres × rate in effect (Rate Master)
+  variance            Float // expectedValue - (cash + upi + card actually collected)
+  createdAt           DateTime @default(now())
 }
 
 // Section 8A.3 — PhonePe/Paytm Business merchant webhook events, used to
@@ -540,47 +552,47 @@ model ShiftSalesSummary {
 // (Phase 0.1, nullable): not yet resolvable at webhook-receive time — Phase 3
 // adds a pump-scoped webhook URL (/upi-webhook/:pumpId) that will set this.
 model UpiWebhookEvent {
-  id               String   @id @default(cuid())
-  pump             Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId           String?
-  provider         String // "phonepe" | "paytm"
-  providerEventId  String   @unique // for idempotency — reject duplicates
-  amount           Float
-  receivedAt       DateTime
-  matchedShiftId   String?
-  matchedNozzleId  String?
-  rawPayload       Json
-  processedAt      DateTime @default(now())
+  id              String   @id @default(cuid())
+  pump            Pump     @relation(fields: [pumpId], references: [id])
+  pumpId          String
+  provider        String // "phonepe" | "paytm"
+  providerEventId String   @unique // for idempotency — reject duplicates
+  amount          Float
+  receivedAt      DateTime
+  matchedShiftId  String?
+  matchedNozzleId String?
+  rawPayload      Json
+  processedAt     DateTime @default(now())
 }
 
 // ---------- Purchases / Lubricants / Rate Master ----------
 
 model PurchaseEntry {
-  id           String   @id @default(cuid())
-  pump         Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId       String?
-  supplierName String
-  productType  String
-  quantityLitres Float
-  amount       Float
+  id              String   @id @default(cuid())
+  pump            Pump     @relation(fields: [pumpId], references: [id])
+  pumpId          String
+  supplierName    String
+  productType     String
+  quantityLitres  Float
+  amount          Float
   // Section 7.1 — per-litre rate as stated on the invoice. Kept as its own
   // field rather than derived from amount/quantityLitres at read time, since
   // an invoice's stated rate can differ slightly from amount/quantity due to
   // rounding/taxes — deriving it would silently paper over that mismatch.
-  ratePerLitre Float
-  invoiceNo    String?
-  tankerNo     String?
+  ratePerLitre    Float
+  invoiceNo       String?
+  tankerNo        String?
   invoiceImageUrl String? // OCR source image, Section 9
-  ocrExtracted Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  ocrExtracted    Boolean  @default(false)
+  createdAt       DateTime @default(now())
 
-  densityLogs  DensityLog[]
+  densityLogs DensityLog[]
 }
 
 model LubricantItem {
-  id        String  @id @default(cuid())
-  pump      Pump?   @relation(fields: [pumpId], references: [id])
-  pumpId    String?
+  id        String @id @default(cuid())
+  pump      Pump   @relation(fields: [pumpId], references: [id])
+  pumpId    String
   name      String
   stockQty  Int
   reorderAt Int
@@ -594,11 +606,11 @@ model LubricantItem {
 // make "the current rate" ambiguous at that date. See
 // RateMasterService.getCurrentRate().
 model RateHistory {
-  id          String   @id @default(cuid())
-  pump        Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId      String?
-  productType String
-  rate        Float
+  id            String   @id @default(cuid())
+  pump          Pump     @relation(fields: [pumpId], references: [id])
+  pumpId        String
+  productType   String
+  rate          Float
   effectiveFrom DateTime
 
   @@unique([pumpId, productType, effectiveFrom])
@@ -613,42 +625,42 @@ model RateHistory {
 // any points can be calculated. pumpId (Phase 0.1, nullable + unique):
 // becomes the real per-pump singleton key once required (Phase 0.3).
 model LoyaltyConfig {
-  id                     String         @id @default(cuid())
-  pump                   Pump?          @relation(fields: [pumpId], references: [id])
-  pumpId                 String?        @unique
-  earningBasis           EarningBasis
-  defaultRate            Float
+  id                          String          @id @default(cuid())
+  pump                        Pump            @relation(fields: [pumpId], references: [id])
+  pumpId                      String          @unique
+  earningBasis                EarningBasis
+  defaultRate                 Float
   // Section 6.4 — redemption side. Nullable because redemption policy at
   // launch (cash / gift / both, ratio, minimum) is itself still an open
   // decision (Section 17) — the earning side must be configurable without
   // forcing a guessed redemption setup.
-  redemptionTypeAllowed  RedemptionType?
+  redemptionTypeAllowed       RedemptionType?
   // Section 6.4 — whether the customer picks cash/gift each redemption, or the
   // dealer has fixed a default. Only meaningful when redemptionTypeAllowed = BOTH.
-  customerCanChooseRedemption Boolean       @default(false)
+  customerCanChooseRedemption Boolean         @default(false)
   defaultRedemptionMode       RedemptionType?
-  cashRedemptionRatio    Float? // points -> currency conversion
-  minRedeemablePoints    Int?
-  updatedAt              DateTime       @updatedAt
+  cashRedemptionRatio         Float? // points -> currency conversion
+  minRedeemablePoints         Int?
+  updatedAt                   DateTime        @updatedAt
 }
 
 model LoyaltyTransaction {
-  id         String   @id @default(cuid())
-  pump       Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId     String?
-  customer   Customer @relation(fields: [customerId], references: [id])
-  customerId String
-  bill       Bill?    @relation(fields: [billId], references: [id])
-  billId     String?
-  pointsDelta Float   // positive = earned, negative = redeemed
-  reason     String
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  pump        Pump     @relation(fields: [pumpId], references: [id])
+  pumpId      String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  customerId  String
+  bill        Bill?    @relation(fields: [billId], references: [id])
+  billId      String?
+  pointsDelta Float // positive = earned, negative = redeemed
+  reason      String
+  createdAt   DateTime @default(now())
 }
 
 model GiftCatalogItem {
   id             String  @id @default(cuid())
-  pump           Pump?   @relation(fields: [pumpId], references: [id])
-  pumpId         String?
+  pump           Pump    @relation(fields: [pumpId], references: [id])
+  pumpId         String
   giftName       String
   imageUrl       String?
   pointsRequired Int
@@ -659,17 +671,17 @@ model GiftCatalogItem {
 }
 
 model RedemptionTransaction {
-  id          String           @id @default(cuid())
-  pump        Pump?            @relation(fields: [pumpId], references: [id])
-  pumpId      String?
-  customer    Customer         @relation(fields: [customerId], references: [id])
-  customerId  String
-  giftItem    GiftCatalogItem? @relation(fields: [giftItemId], references: [id])
-  giftItemId  String?
+  id             String           @id @default(cuid())
+  pump           Pump             @relation(fields: [pumpId], references: [id])
+  pumpId         String
+  customer       Customer         @relation(fields: [customerId], references: [id])
+  customerId     String
+  giftItem       GiftCatalogItem? @relation(fields: [giftItemId], references: [id])
+  giftItemId     String?
   redemptionType RedemptionType
-  pointsSpent Int
-  cashValue   Float?
-  createdAt   DateTime         @default(now())
+  pointsSpent    Int
+  cashValue      Float?
+  createdAt      DateTime         @default(now())
 }
 
 // ---------- Cash Custody ----------
@@ -686,14 +698,14 @@ model RedemptionTransaction {
 // outright rather than kept alongside, since none of those three fields map
 // cleanly onto the new shape and keeping them would just be dead columns.
 model CashCustodyLog {
-  id                                String   @id @default(cuid())
-  pump                              Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId                            String?
-  date                              DateTime
-  totalCashCollected                Float
-  depositedToBank                   Float
-  keptInLocker                      Float
-  takenHome                         Float
+  id                               String   @id @default(cuid())
+  pump                             Pump     @relation(fields: [pumpId], references: [id])
+  pumpId                           String
+  date                             DateTime
+  totalCashCollected               Float
+  depositedToBank                  Float
+  keptInLocker                     Float
+  takenHome                        Float
   // Carry-forward chain (see CashCustodyService.create() for the resolution
   // + math): cumulativeOutstandingBeforeToday is resolved server-side from
   // this same staff member's most recent prior row's newOutstanding (0 if
@@ -701,20 +713,20 @@ model CashCustodyLog {
   // debt. Named "cumulative", not "previous day", because it's the running
   // carried-through balance from the whole chain, not literally yesterday's
   // figure (a staff member's entries can be days apart, not just daily).
-  cumulativeOutstandingBeforeToday  Float
-  broughtBackToday                  Float
-  newOutstanding                    Float
-  handledBy                         Staff    @relation(fields: [handledById], references: [id])
-  handledById                       String
-  createdAt                         DateTime @default(now())
+  cumulativeOutstandingBeforeToday Float
+  broughtBackToday                 Float
+  newOutstanding                   Float
+  handledBy                        Staff    @relation(fields: [handledById], references: [id])
+  handledById                      String
+  createdAt                        DateTime @default(now())
 }
 
 // ---------- Payments (bills + credit dues) ----------
 
 model Payment {
   id         String      @id @default(cuid())
-  pump       Pump?       @relation(fields: [pumpId], references: [id])
-  pumpId     String?
+  pump       Pump        @relation(fields: [pumpId], references: [id])
+  pumpId     String
   customer   Customer    @relation(fields: [customerId], references: [id])
   customerId String
   amount     Float
@@ -727,8 +739,8 @@ model Payment {
 
 model TallyExportLog {
   id            String   @id @default(cuid())
-  pump          Pump?    @relation(fields: [pumpId], references: [id])
-  pumpId        String?
+  pump          Pump     @relation(fields: [pumpId], references: [id])
+  pumpId        String
   exportedAt    DateTime @default(now())
   format        String // "xml" | "api"
   recordCount   Int

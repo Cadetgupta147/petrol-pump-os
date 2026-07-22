@@ -47,11 +47,12 @@ export class CustomersService {
     // Customer's @@unique([accountId, pumpId])), preserving today's
     // "customer already exists" behavior.
     //
-    // Phase 2 — pumpId is deliberately NOT set explicitly in the
-    // tx.customer.create() data below: tenant-scoping.extension.ts
-    // auto-stamps it from the request's tenant context. allocateQrMemberId()
-    // still needs pumpId passed explicitly, since Pump/MemberIdCounter
-    // lookups aren't tenant-scoped the same way (Pump IS the tenant root).
+    // Phase 0.3 — pumpId is now required on Customer's Prisma input type,
+    // so it's stamped explicitly below (the extension would also inject it
+    // at runtime for this top-level create, but TypeScript can't see
+    // that). allocateQrMemberId() needs pumpId passed explicitly too,
+    // since Pump/MemberIdCounter lookups aren't tenant-scoped the same way
+    // (Pump IS the tenant root).
     const { pumpId } = requireTenantContext();
     return this.prisma
       .$transaction(async (tx) => {
@@ -64,6 +65,7 @@ export class CustomersService {
         const qrMemberId = await allocateQrMemberId(tx, pumpId);
         return tx.customer.create({
           data: {
+            pumpId,
             accountId: account.id,
             name: dto.name,
             phone: normalizedPhone,

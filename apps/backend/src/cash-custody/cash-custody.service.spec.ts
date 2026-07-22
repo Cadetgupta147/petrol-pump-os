@@ -4,6 +4,8 @@ import { Role } from '@prisma/client';
 import { CashCustodyService } from './cash-custody.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+import { runInTenantContext } from '../common/tenant-context';
+import type { CreateCashCustodyLogDto } from './dto/create-cash-custody-log.dto';
 
 // Caller staffId matches every dto.handledById used below ('staff-1'), so
 // resolveAssignableActorId() resolves to the same value regardless of role
@@ -55,10 +57,17 @@ describe('CashCustodyService', () => {
     service = module.get(CashCustodyService);
   });
 
+  // Phase 0.3 (docs/multi-tenancy-plan.md) — create() now reads
+  // requireTenantContext().pumpId directly; every call site needs an
+  // active tenant context.
+  function createLog(dto: CreateCashCustodyLogDto, user: AuthenticatedUser = callingStaff) {
+    return runInTenantContext({ pumpId: 'pump-1' }, () => service.create(dto, user));
+  }
+
   describe('create — 3-way split validation', () => {
     it('rejects when depositedToBank + keptInLocker + takenHome !== totalCashCollected', async () => {
       await expect(
-        service.create({
+        createLog({
           date: '2026-07-20',
           totalCashCollected: 1000,
           depositedToBank: 500,
@@ -77,7 +86,7 @@ describe('CashCustodyService', () => {
         .mockResolvedValueOnce(null); // no prior log -> cumulativeOutstandingBeforeToday = 0
       prisma.cashCustodyLog.create.mockResolvedValue({ id: 'log-1' });
 
-      await service.create({
+      await createLog({
         date: '2026-07-20',
         totalCashCollected: 1000,
         depositedToBank: 500.005,
@@ -95,7 +104,7 @@ describe('CashCustodyService', () => {
       prisma.cashCustodyLog.findFirst.mockResolvedValueOnce({ id: 'existing' });
 
       await expect(
-        service.create({
+        createLog({
           date: '2026-07-20',
           totalCashCollected: 1000,
           depositedToBank: 700,
@@ -114,7 +123,7 @@ describe('CashCustodyService', () => {
         .mockResolvedValueOnce({ newOutstanding: 500 }); // prior day's carry
       prisma.cashCustodyLog.create.mockImplementation(({ data }) => data);
 
-      const result = await service.create({
+      const result = await createLog({
         date: '2026-07-21',
         totalCashCollected: 1000,
         depositedToBank: 700,
@@ -136,7 +145,7 @@ describe('CashCustodyService', () => {
         .mockResolvedValueOnce(null); // no prior entry
       prisma.cashCustodyLog.create.mockImplementation(({ data }) => data);
 
-      const result = await service.create({
+      const result = await createLog({
         date: '2026-07-20',
         totalCashCollected: 1000,
         depositedToBank: 700,
@@ -155,7 +164,7 @@ describe('CashCustodyService', () => {
         .mockResolvedValueOnce({ newOutstanding: 300 }); // prior outstanding only 300
 
       await expect(
-        service.create({
+        createLog({
           date: '2026-07-21',
           totalCashCollected: 1000,
           depositedToBank: 700,
@@ -175,7 +184,7 @@ describe('CashCustodyService', () => {
         .mockResolvedValueOnce({ newOutstanding: 200 });
       prisma.cashCustodyLog.create.mockImplementation(({ data }) => data);
 
-      const result = await service.create({
+      const result = await createLog({
         date: '2026-07-21',
         totalCashCollected: 1000,
         depositedToBank: 1000,
@@ -209,12 +218,12 @@ describe('CashCustodyService', () => {
     };
 
     it('defaults handledById to the caller when omitted', async () => {
-      const result = await service.create(balancedDto, dsmCaller);
+      const result = await createLog(balancedDto, dsmCaller);
       expect(result.handledById).toBe('dsm-1');
     });
 
     it('allows a non-DSM caller to record for a different staff member', async () => {
-      const result = await service.create(
+      const result = await createLog(
         { ...balancedDto, handledById: 'other-staff' },
         callingStaff,
       );
@@ -223,7 +232,7 @@ describe('CashCustodyService', () => {
 
     it('rejects a DSM caller recording for a different staff member', async () => {
       await expect(
-        service.create({ ...balancedDto, handledById: 'other-staff' }, dsmCaller),
+        createLog({ ...balancedDto, handledById: 'other-staff' }, dsmCaller),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.cashCustodyLog.findFirst).not.toHaveBeenCalled();
       expect(prisma.cashCustodyLog.create).not.toHaveBeenCalled();

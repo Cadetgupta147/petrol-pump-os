@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { CreateGiftCatalogItemDto } from './dto/create-gift-catalog-item.dto';
 import { UpdateGiftCatalogItemDto } from './dto/update-gift-catalog-item.dto';
 
@@ -14,6 +15,7 @@ export class GiftCatalogService {
   create(dto: CreateGiftCatalogItemDto) {
     return this.prisma.giftCatalogItem.create({
       data: {
+        pumpId: requireTenantContext().pumpId,
         giftName: dto.giftName,
         imageUrl: dto.imageUrl ?? undefined,
         pointsRequired: dto.pointsRequired,

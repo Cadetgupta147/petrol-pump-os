@@ -7,6 +7,7 @@ import {
 import { CashCustodyLog, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+import { requireTenantContext } from '../common/tenant-context';
 import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
 import { CreateCashCustodyLogDto } from './dto/create-cash-custody-log.dto';
 
@@ -105,6 +106,7 @@ export class CashCustodyService {
     try {
       return await this.prisma.cashCustodyLog.create({
         data: {
+          pumpId: requireTenantContext().pumpId,
           date,
           totalCashCollected: dto.totalCashCollected,
           depositedToBank: dto.depositedToBank,

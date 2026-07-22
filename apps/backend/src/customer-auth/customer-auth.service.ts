@@ -91,13 +91,21 @@ export class CustomerAuthService {
     // doc's "not in scope" list).
     const existingCustomer = await this.prisma.customer.findFirst({
       where: { phone },
-      select: { id: true },
+      select: { id: true, pumpId: true },
     });
 
     const otpRow = await this.prisma.customerOtp.create({
       data: {
         phone,
         customerId: existingCustomer?.id,
+        // Phase 0.3 (docs/multi-tenancy-plan.md) — best-effort only:
+        // resolved from the matched customer's own pump when one exists,
+        // left null for an unregistered phone (no pump to attribute it to
+        // — see CustomerOtp's schema comment for why this is the one
+        // tenant table that stays nullable). Never load-bearing either
+        // way: verifyOtp() always re-resolves pumpId fresh from a real
+        // Customer lookup for the JWT, never from this row.
+        pumpId: existingCustomer?.pumpId,
         codeHash,
         expiresAt,
       },

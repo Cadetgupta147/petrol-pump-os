@@ -102,6 +102,7 @@ export class UpiWebhookService {
         return this.prisma.$transaction(async (tx) => {
           const event = await tx.upiWebhookEvent.create({
             data: {
+              pumpId,
               provider,
               providerEventId,
               amount,

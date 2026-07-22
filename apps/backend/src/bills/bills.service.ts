@@ -175,27 +175,35 @@ export class BillsService {
     // a bill and its loyalty transaction can never diverge.
     try {
       const [bill] = await this.prisma.$transaction(async (tx) => {
+        // Phase 0.3 (docs/multi-tenancy-plan.md): pumpId is now a REQUIRED
+        // field on every one of these models' Prisma input types (flipped
+        // from nullable once Phase 2's extension guaranteed it's always
+        // supplied), so TypeScript needs it stamped explicitly on every
+        // `data` object below even though the extension would also inject
+        // it at runtime for top-level creates — explicit-and-correct is
+        // simpler than a type-cast workaround, and it's the only option at
+        // all for the nested paymentLines write (see that comment below).
+        const pumpId = requireTenantContext().pumpId;
         let resolvedCustomerId = dto.customerId;
 
         if (isQuickAdd) {
-          // Phase 2 (docs/multi-tenancy-plan.md) — pumpId is deliberately
-          // NOT set explicitly in `data` below: tenant-scoping.extension.ts
-          // auto-stamps it from the request's tenant context. No accountId
-          // — a quick-add customer has no phone (Section 3.4A), so there's
-          // nothing to link an account to yet; the verification upgrade
-          // path (CustomersService.update()) creates/links one once a
-          // phone is added. allocateQrMemberId() still needs pumpId passed
-          // explicitly, since Pump/MemberIdCounter lookups aren't
-          // tenant-scoped the same way (Pump IS the tenant root).
+          // No accountId — a quick-add customer has no phone (Section
+          // 3.4A), so there's nothing to link an account to yet; the
+          // verification upgrade path (CustomersService.update())
+          // creates/links one once a phone is added. allocateQrMemberId()
+          // still needs pumpId passed explicitly, since Pump/
+          // MemberIdCounter lookups aren't tenant-scoped the same way
+          // (Pump IS the tenant root).
           const quickAddedCustomer = await tx.customer.create({
             data: {
+              pumpId,
               name: dto.quickAddCustomer!.name,
               vehicleNumber: dto.quickAddCustomer!.vehicleNumber,
               verificationStatus: 'INFORMAL',
               creditLimit: creditConfig.defaultInformalCreditLimit,
               // Section 6.1/6.7 — same member-id generator as the normal
               // /customers onboarding path, same transaction as the create.
-              qrMemberId: await allocateQrMemberId(tx, requireTenantContext().pumpId),
+              qrMemberId: await allocateQrMemberId(tx, pumpId),
             },
           });
           resolvedCustomerId = quickAddedCustomer.id;
@@ -218,14 +226,17 @@ export class BillsService {
         // Phase 2 (docs/multi-tenancy-plan.md) — a KNOWN NUANCE of the
         // tenant-scoping extension, found live against the real dev DB: it
         // intercepts top-level model operations (Bill.create below gets
-        // pumpId auto-stamped correctly), but NOT nested relation writes
-        // performed as part of that same call — Prisma resolves
-        // `paymentLines: { create: [...] }` internally without routing each
-        // nested row through $allOperations as its own BillPaymentLine
-        // "create". So BillPaymentLine.pumpId is stamped explicitly here.
-        const pumpId = requireTenantContext().pumpId;
+        // pumpId auto-stamped correctly even without the explicit value
+        // here), but NOT nested relation writes performed as part of that
+        // same call — Prisma resolves `paymentLines: { create: [...] }`
+        // internally without routing each nested row through
+        // $allOperations as its own BillPaymentLine "create". So
+        // BillPaymentLine.pumpId below MUST be stamped explicitly — it's
+        // the only one of these that's load-bearing at runtime, not just
+        // to satisfy TypeScript.
         const created = await tx.bill.create({
           data: {
+            pumpId,
             customerId: resolvedCustomerId,
             vehicleNumber: dto.vehicleNumber,
             customerName: dto.customerName,
@@ -258,6 +269,7 @@ export class BillsService {
         if (loyaltyCalc && loyaltyCalc.points !== 0) {
           await tx.loyaltyTransaction.create({
             data: {
+              pumpId,
               customerId: resolvedCustomerId!,
               billId: created.id,
               pointsDelta: loyaltyCalc.points,
@@ -268,6 +280,7 @@ export class BillsService {
 
         await tx.billAuditLog.create({
           data: {
+            pumpId,
             billId: created.id,
             action: 'CREATED',
             performedById: enteredById,
@@ -278,6 +291,7 @@ export class BillsService {
         if (alert) {
           await tx.creditLimitAlert.create({
             data: {
+              pumpId,
               billId: created.id,
               customerId: created.customerId!,
               outstandingBefore: alert.outstandingBefore,
@@ -482,6 +496,12 @@ export class BillsService {
     );
 
     try {
+      // Phase 0.3 (docs/multi-tenancy-plan.md) — resolved once, reused for
+      // every create() below (BillPaymentLine's nested write is the only
+      // one that's load-bearing at runtime — see the comment there; the
+      // rest just need it to satisfy TypeScript now that pumpId is
+      // required on these input types).
+      const pumpId = requireTenantContext().pumpId;
       const [bill] = await this.prisma.$transaction(async (tx) => {
         if (dto.paymentLines) {
           await tx.billPaymentLine.deleteMany({ where: { billId: id } });
@@ -507,7 +527,7 @@ export class BillsService {
               ? {
                   paymentLines: {
                     create: dto.paymentLines.map((line) => ({
-                      pumpId: requireTenantContext().pumpId,
+                      pumpId,
                       paymentType: line.paymentType,
                       amount: line.amount,
                       direction: line.direction,
@@ -521,6 +541,7 @@ export class BillsService {
 
         await tx.billAuditLog.create({
           data: {
+            pumpId,
             billId: updated.id,
             action: 'EDITED',
             performedById: editedById,
@@ -531,6 +552,7 @@ export class BillsService {
         if (alert) {
           await tx.creditLimitAlert.create({
             data: {
+              pumpId,
               billId: updated.id,
               customerId: updated.customerId!,
               outstandingBefore: alert.outstandingBefore,
@@ -569,6 +591,7 @@ export class BillsService {
     }
 
     try {
+      const pumpId = requireTenantContext().pumpId;
       const [bill] = await this.prisma.$transaction(async (tx) => {
         const deleted = await tx.bill.update({
           where: { id },
@@ -581,6 +604,7 @@ export class BillsService {
 
         await tx.billAuditLog.create({
           data: {
+            pumpId,
             billId: deleted.id,
             action: 'DELETED',
             performedById: deletedById,

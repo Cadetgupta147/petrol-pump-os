@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { EarningBasis, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { UpsertLoyaltyConfigDto } from './dto/upsert-loyalty-config.dto';
 import { CalculatePointsDto } from './dto/calculate-points.dto';
 
@@ -103,7 +104,12 @@ export class LoyaltyService {
   }
 
   upsertConfig(dto: UpsertLoyaltyConfigDto) {
+    // Phase 0.3 (docs/multi-tenancy-plan.md) — pumpId is a required field
+    // on LoyaltyConfigCreateInput now, so it must be stamped explicitly
+    // here even though the extension's upsert handling would also inject
+    // it at runtime; harmless no-op re-set on the update() side.
     const data = {
+      pumpId: requireTenantContext().pumpId,
       earningBasis: dto.earningBasis,
       defaultRate: dto.defaultRate,
       ...(dto.redemptionTypeAllowed !== undefined && {

@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { computeDensityFlag } from '../density-logs/density-logs.service';
 import { CreateTankDto } from './dto/create-tank.dto';
 import { UpdateTankDto } from './dto/update-tank.dto';
@@ -33,6 +34,7 @@ export class TanksService {
   create(dto: CreateTankDto) {
     return this.prisma.tank.create({
       data: {
+        pumpId: requireTenantContext().pumpId,
         productType: dto.productType,
         capacityLitres: dto.capacityLitres,
         currentStockLitres: dto.currentStockLitres,
@@ -105,6 +107,7 @@ export class TanksService {
 
         const created = await tx.dipReading.create({
           data: {
+            pumpId: tank.pumpId,
             tankId,
             recordedById: staffId,
             reading: dto.reading,
@@ -130,6 +133,7 @@ export class TanksService {
         if (dto.densityValue !== undefined) {
           await tx.densityLog.create({
             data: {
+              pumpId: tank.pumpId,
               tankId,
               densityValue: dto.densityValue,
               ppmValue: dto.ppmValue,

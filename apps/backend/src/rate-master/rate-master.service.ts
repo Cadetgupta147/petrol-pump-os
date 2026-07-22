@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { CreateRateHistoryDto } from './dto/create-rate-history.dto';
 
 // Section 7.4 — Rate Master. Append-only price history per product,
@@ -25,6 +26,7 @@ export class RateMasterService {
   create(dto: CreateRateHistoryDto) {
     return this.prisma.rateHistory.create({
       data: {
+        pumpId: requireTenantContext().pumpId,
         productType: dto.productType,
         rate: dto.rate,
         effectiveFrom: new Date(dto.effectiveFrom),

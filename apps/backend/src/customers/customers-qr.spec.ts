@@ -61,6 +61,12 @@ describe('CustomersService.qrCard (Section 6.1)', () => {
     service = module.get(CustomersService);
   });
 
+  // Explicit 15s timeout on both real-encoding tests below (Jest's 5000ms
+  // default): this test uses the REAL qrcode encoder (see the module mock's
+  // own comment — payloads recorded, not stubbed), which takes ~2.7s in
+  // isolation but crosses the 5s default under full-suite CPU contention
+  // (all 42 spec files running in parallel) — found flaky, not a
+  // regression from any particular change.
   it('encodes ONLY qrMemberId in the QR payload', async () => {
     prisma.customer.findUnique.mockResolvedValue(customer);
 
@@ -68,7 +74,7 @@ describe('CustomersService.qrCard (Section 6.1)', () => {
 
     expect(mockQrPayloads.toDataURL).toEqual(['PUMP001-CUST-00042-2']);
     expect(mockQrPayloads.toString).toEqual(['PUMP001-CUST-00042-2']);
-  });
+  }, 15000);
 
   it('returns scannable PNG + SVG renderings plus the human-readable caption fields', async () => {
     prisma.customer.findUnique.mockResolvedValue(customer);
@@ -81,7 +87,7 @@ describe('CustomersService.qrCard (Section 6.1)', () => {
     // Printed on the card next to the QR (Section 14 mockup), NOT inside it.
     expect(result.name).toBe('Asha Transport');
     expect(result.vehicleNumber).toBe('KA01AB1234');
-  });
+  }, 15000);
 
   it('unknown customer is a 404', async () => {
     prisma.customer.findUnique.mockResolvedValue(null);

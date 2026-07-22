@@ -265,7 +265,99 @@ required for isolation itself.
   through every JWT — test data cleaned up afterward. Response shapes for
   every existing endpoint are unchanged, so no frontend (web portal, DSM
   app, customer app) changes were needed.
-- [ ] Phase 0.3 — flip pumpId to required
+- [x] Phase 0.3 — flip pumpId to required (2026-07-22, done LAST — after
+  Phases 1-6 — since the plan text itself says this must be sequenced after
+  Phase 2's extension exists, and it was initially skipped over when
+  resuming work; done as soon as it was flagged).
+
+  **Pre-migration safety check** (mandatory, per this phase's whole
+  rationale): queried every one of the 26 tables Phase 0.1 gave a nullable
+  `pumpId` for `NULL` rows in the real dev DB before touching schema.prisma
+  at all. Found 2 real orphaned rows neither Phase 0.1's backfill nor
+  anything since had touched: 1 `BusinessProfile` row (`id: 'singleton'`,
+  the pre-Phase-2 hardcoded-id artifact — a second, correct
+  `pumpId`-scoped row already existed, and `pumpId` is `@unique` here so
+  this one couldn't even be backfilled) and 3 `Tank` rows (identical
+  Diesel/2000L-capacity/9999L-stock triples — stock exceeding capacity is
+  physically impossible, and zero Tanks had any pumpId set at all,
+  confirming these were pre-Phase-2 test artifacts, not real
+  configuration). **Asked the user before deleting either** (a genuine
+  destructive-action pause, not a judgment call to push through solo) —
+  approved, both deleted, re-verified zero NULL rows remained anywhere
+  before proceeding.
+
+  Schema: flipped `pumpId String?` → `pumpId String` (and the matching
+  `pump Pump?` → `pump Pump` relation) across all 26 models via a
+  hand-sequenced migration (drop FK → `ALTER COLUMN ... SET NOT NULL` →
+  re-add FK with the default `ON DELETE RESTRICT`, generated via `prisma
+  migrate diff` + applied via `prisma db execute`, same non-interactive
+  pattern as every other migration this retrofit).
+
+  **One deliberate exception found and corrected via a second, immediate
+  follow-up migration**: `CustomerOtp.pumpId` stays nullable. `requestOtp()`
+  is a `@Public()` route with no JWT, and Section 5's login flow
+  legitimately sends an OTP to a phone with NO `Customer` row yet
+  (`verifyOtp()` cleanly 404s "not registered" rather than rejecting the
+  send itself, so a would-be customer isn't told their number doesn't
+  exist before entering an OTP) — there is genuinely no pump to attribute
+  that OTP row to in that case, and requiring one would have meant either
+  breaking that flow or hardcoding a guess. Fixed in code too:
+  `requestOtp()` now best-effort resolves `pumpId` from the matched
+  customer's own row when one exists, `null` otherwise — never
+  load-bearing either way, since `verifyOtp()` always re-resolves `pumpId`
+  fresh from a real `Customer` lookup for the JWT, never from the OTP row.
+  Documented at length on the `CustomerOtp` model itself so a future
+  Phase-0.1-style sweep doesn't "fix" this one back to required by
+  reflex.
+
+  **TypeScript fallout, expected and fixed**: Prisma's generated
+  `XCreateInput` types now require `pumpId`/`pump` on every one of these
+  models' `create()` calls — 33 call sites across 17 service files needed
+  it stamped explicitly (the tenant-scoping extension would still
+  auto-inject it at runtime for top-level creates, but TypeScript can't
+  see that, and several of these are nested-relation writes where the
+  extension genuinely doesn't reach at all — same class of gap Phase 2
+  already found for `BillPaymentLine`). Resolved each from the most
+  directly correct source available, not a blanket `requireTenantContext()`
+  call: reused an already-fetched parent row's own `pumpId` where one
+  existed and was more directly correct (`DipReading`/`DensityLog` reuse
+  the `Tank`'s `pumpId`; `PurchaseEntry` reuses the matched `Tank`'s;
+  `ShiftSalesSummary` reuses the shift's `MeterReading`'s), and
+  `requireTenantContext().pumpId` everywhere else (new top-level rows with
+  no more-specific parent already in hand: `Customer`, `Bill` and its
+  nested `BillPaymentLine`/`LoyaltyTransaction`/`BillAuditLog`/
+  `CreditLimitAlert`, `Tank`, `GiftCatalogItem`, `RateHistory`, `Staff`,
+  `RedemptionTransaction`, `CashCustodyLog`, `MeterReading`,
+  `TallyExportLog`, `UpiWebhookEvent`, and the three singleton configs'
+  `upsert().create`).
+
+  **A real Windows/npm-runner problem found and fixed along the way**:
+  regenerating the Prisma client repeatedly hit `EPERM` file-lock errors,
+  traced to roughly a dozen ORPHANED `npm run start:dev`/`nest start
+  --watch` process pairs accumulated across this whole session's earlier
+  phases — each phase that started the dev server for a live smoke test
+  had only ever killed whichever single PID was actually LISTENING on port
+  3000 afterward, never the full parent+child process tree, so failed or
+  superseded instances kept piling up silently in the background. All
+  killed; going forward each phase's cleanup should kill the full tree, not
+  just the port-listener.
+
+  Verified: full backend suite green (42 suites/407 tests — 8 spec files
+  needed `runInTenantContext()` wrapping around service calls that now
+  read `requireTenantContext()` directly, 3 exact-match `data:` assertions
+  needed the new `pumpId` field added). Also fixed an unrelated flaky test
+  found along the way (`customers-qr.spec.ts`'s two real-QR-encoding tests
+  occasionally exceeding Jest's 5000ms default under full-suite parallel
+  CPU load — given an explicit 15s timeout, not a regression from this
+  phase). Database-level verification via `information_schema.columns`
+  confirms all 26 required tables are `NOT NULL` and `CustomerOtp` alone
+  stays nullable, exactly matching schema.prisma. Live end-to-end
+  verification against the real Supabase dev DB: `Tank`/`GiftCatalogItem`/
+  `RateHistory`/`Customer` creation all correctly stamp `pumpId`;
+  `CustomerOtp` for an unregistered phone correctly gets `pumpId: null`
+  while the OTP send itself still succeeds; `CustomerOtp` for an
+  already-registered phone correctly resolves `pumpId` matching that
+  customer's own pump. All test data cleaned up afterward.
 - [x] Phase 1 — Auth JWT/membership resolution. Folded into Phase 0.2's work
   (auth.service.ts and customer-auth.service.ts already resolve accounts →
   memberships and stamp pumpId into both JWTs as part of that commit) — no

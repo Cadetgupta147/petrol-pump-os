@@ -9,6 +9,8 @@ import { RedemptionsService } from './redemptions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { GiftCatalogService } from '../gift-catalog/gift-catalog.service';
+import { runInTenantContext } from '../common/tenant-context';
+import type { CreateRedemptionDto } from './dto/create-redemption.dto';
 
 // jest's asymmetric matchers are typed `any`; this wrapper gives them an
 // `unknown` type so they can sit inside object-literal expectations without
@@ -106,6 +108,13 @@ describe('RedemptionsService', () => {
     service = module.get(RedemptionsService);
   });
 
+  // Phase 0.3 (docs/multi-tenancy-plan.md) — RedemptionsService.create() now
+  // reads requireTenantContext().pumpId; every call site below needs an
+  // active tenant context.
+  function createRedemption(dto: CreateRedemptionDto) {
+    return runInTenantContext({ pumpId: 'pump-1' }, () => service.create(dto));
+  }
+
   function mockBalance(points: number) {
     // Pre-check balance now goes through LoyaltyService.getBalance() (see
     // the refactor pulling getBalance() up out of RedemptionsService); the
@@ -125,7 +134,7 @@ describe('RedemptionsService', () => {
       loyaltyService.getConfig.mockResolvedValue(null);
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 10 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 10 }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -136,7 +145,7 @@ describe('RedemptionsService', () => {
       });
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 10 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 10 }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -146,7 +155,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'nope', pointsToRedeem: 10 }),
+        createRedemption({ customerId: 'nope', pointsToRedeem: 10 }),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
@@ -157,7 +166,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', pointsToRedeem: 100 });
+      await createRedemption({ customerId: 'cust-1', pointsToRedeem: 100 });
 
       expect(tx.redemptionTransaction.create).toHaveBeenCalledWith({
         data: containing({
@@ -173,7 +182,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({
+        createRedemption({
           customerId: 'cust-1',
           redemptionType: RedemptionType.GIFT,
           giftItemId: 'gift-1',
@@ -190,7 +199,7 @@ describe('RedemptionsService', () => {
       tx.giftCatalogItem.updateMany.mockResolvedValue({ count: 1 });
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', giftItemId: 'gift-1' });
+      await createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' });
 
       expect(tx.redemptionTransaction.create).toHaveBeenCalledWith({
         data: containing({
@@ -205,7 +214,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({
+        createRedemption({
           customerId: 'cust-1',
           redemptionType: RedemptionType.CASH,
           pointsToRedeem: 10,
@@ -220,7 +229,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 10 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 10 }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -229,7 +238,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({
+      await createRedemption({
         customerId: 'cust-1',
         redemptionType: RedemptionType.CASH,
         pointsToRedeem: 50,
@@ -247,7 +256,7 @@ describe('RedemptionsService', () => {
       tx.giftCatalogItem.updateMany.mockResolvedValue({ count: 1 });
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({
+      await createRedemption({
         customerId: 'cust-1',
         redemptionType: RedemptionType.GIFT,
         giftItemId: 'gift-1',
@@ -267,7 +276,7 @@ describe('RedemptionsService', () => {
       tx.giftCatalogItem.updateMany.mockResolvedValue({ count: 1 });
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', giftItemId: 'gift-1' });
+      await createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' });
 
       expect(tx.redemptionTransaction.create).toHaveBeenCalledWith({
         data: containing({ redemptionType: RedemptionType.GIFT }),
@@ -279,7 +288,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({
+        createRedemption({
           customerId: 'cust-1',
           redemptionType: RedemptionType.CASH,
           pointsToRedeem: 10,
@@ -295,7 +304,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'cust-1' }),
+        createRedemption({ customerId: 'cust-1' }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
   });
@@ -309,7 +318,7 @@ describe('RedemptionsService', () => {
       mockBalance(50);
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 10 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 10 }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -322,7 +331,7 @@ describe('RedemptionsService', () => {
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 100 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 100 }),
       ).resolves.toBeDefined();
     });
 
@@ -331,7 +340,7 @@ describe('RedemptionsService', () => {
       mockBalance(50);
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 100 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 100 }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -346,7 +355,7 @@ describe('RedemptionsService', () => {
       });
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 100 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 100 }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
   });
@@ -360,7 +369,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'cust-1', giftItemId: 'nope' }),
+        createRedemption({ customerId: 'cust-1', giftItemId: 'nope' }),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -373,7 +382,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'cust-1', giftItemId: 'gift-1' }),
+        createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -386,7 +395,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'cust-1', giftItemId: 'gift-1' }),
+        createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -397,7 +406,7 @@ describe('RedemptionsService', () => {
       tx.giftCatalogItem.updateMany.mockResolvedValue({ count: 1 });
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', giftItemId: 'gift-1' });
+      await createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' });
 
       expect(tx.giftCatalogItem.updateMany).toHaveBeenCalledWith({
         where: { id: 'gift-1', stockQuantity: { gt: 0 } },
@@ -414,7 +423,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', giftItemId: 'gift-1' });
+      await createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' });
 
       expect(tx.giftCatalogItem.updateMany).not.toHaveBeenCalled();
       expect(tx.redemptionTransaction.create).toHaveBeenCalled();
@@ -427,7 +436,7 @@ describe('RedemptionsService', () => {
       tx.giftCatalogItem.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.create({ customerId: 'cust-1', giftItemId: 'gift-1' }),
+        createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' }),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(tx.redemptionTransaction.create).not.toHaveBeenCalled();
     });
@@ -439,7 +448,7 @@ describe('RedemptionsService', () => {
       tx.giftCatalogItem.updateMany.mockResolvedValue({ count: 1 });
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({
+      await createRedemption({
         customerId: 'cust-1',
         giftItemId: 'gift-1',
         pointsToRedeem: 1, // must be ignored on the GIFT branch
@@ -457,10 +466,11 @@ describe('RedemptionsService', () => {
       tx.giftCatalogItem.updateMany.mockResolvedValue({ count: 1 });
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', giftItemId: 'gift-1' });
+      await createRedemption({ customerId: 'cust-1', giftItemId: 'gift-1' });
 
       expect(tx.loyaltyTransaction.create).toHaveBeenCalledWith({
         data: {
+          pumpId: 'pump-1',
           customerId: 'cust-1',
           billId: null,
           pointsDelta: -100,
@@ -479,7 +489,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', pointsToRedeem: 200 });
+      await createRedemption({ customerId: 'cust-1', pointsToRedeem: 200 });
 
       expect(tx.redemptionTransaction.create).toHaveBeenCalledWith({
         data: containing({ cashValue: 100, pointsSpent: 200 }),
@@ -494,7 +504,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'cust-1', pointsToRedeem: 100 }),
+        createRedemption({ customerId: 'cust-1', pointsToRedeem: 100 }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -503,10 +513,11 @@ describe('RedemptionsService', () => {
       mockBalance(500);
       tx.redemptionTransaction.create.mockResolvedValue({ id: 'rt-1' });
 
-      await service.create({ customerId: 'cust-1', pointsToRedeem: 100 });
+      await createRedemption({ customerId: 'cust-1', pointsToRedeem: 100 });
 
       expect(tx.loyaltyTransaction.create).toHaveBeenCalledWith({
         data: {
+          pumpId: 'pump-1',
           customerId: 'cust-1',
           billId: null,
           pointsDelta: -100,
@@ -520,7 +531,7 @@ describe('RedemptionsService', () => {
       mockBalance(500);
 
       await expect(
-        service.create({ customerId: 'cust-1' }),
+        createRedemption({ customerId: 'cust-1' }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });

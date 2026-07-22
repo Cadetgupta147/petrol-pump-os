@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 
@@ -78,6 +79,7 @@ export class StaffManagementService {
         });
         const membership = await tx.staff.create({
           data: {
+            pumpId: requireTenantContext().pumpId,
             accountId: account.id,
             name: dto.name,
             role: dto.role,

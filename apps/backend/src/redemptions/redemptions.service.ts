@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { LoyaltyConfig, RedemptionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { GiftCatalogService } from '../gift-catalog/gift-catalog.service';
 import { CreateRedemptionDto } from './dto/create-redemption.dto';
@@ -196,8 +197,10 @@ export class RedemptionsService {
         }
       }
 
+      const pumpId = requireTenantContext().pumpId;
       const redemption = await tx.redemptionTransaction.create({
         data: {
+          pumpId,
           customerId: dto.customerId,
           giftItemId: gift.id,
           redemptionType: RedemptionType.GIFT,
@@ -211,6 +214,7 @@ export class RedemptionsService {
       // comment on LoyaltyTransaction.pointsDelta.
       await tx.loyaltyTransaction.create({
         data: {
+          pumpId,
           customerId: dto.customerId,
           billId: null,
           pointsDelta: -pointsSpent,
@@ -259,8 +263,10 @@ export class RedemptionsService {
         );
       }
 
+      const pumpId = requireTenantContext().pumpId;
       const redemption = await tx.redemptionTransaction.create({
         data: {
+          pumpId,
           customerId: dto.customerId,
           giftItemId: null,
           redemptionType: RedemptionType.CASH,
@@ -271,6 +277,7 @@ export class RedemptionsService {
 
       await tx.loyaltyTransaction.create({
         data: {
+          pumpId,
           customerId: dto.customerId,
           billId: null,
           pointsDelta: -pointsSpent,

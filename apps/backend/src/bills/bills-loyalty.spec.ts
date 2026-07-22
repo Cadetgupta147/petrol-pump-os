@@ -191,6 +191,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
     expect(prisma.loyaltyTransaction.create).toHaveBeenCalledTimes(1);
     expect(prisma.loyaltyTransaction.create).toHaveBeenCalledWith({
       data: {
+        pumpId: 'default_pump',
         customerId: 'cust-1',
         billId: 'bill-1',
         pointsDelta: 20,

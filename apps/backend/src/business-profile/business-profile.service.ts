@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { UpdateBusinessProfileDto } from './dto/update-business-profile.dto';
 
 // TypeScript can't see that tenant-scoping.extension.ts injects `pumpId`
@@ -27,9 +28,14 @@ export class BusinessProfileService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOrCreate() {
+    // Phase 0.3 (docs/multi-tenancy-plan.md) — pumpId is a required field
+    // on BusinessProfileCreateInput now, so it must be stamped explicitly
+    // here even though the extension's upsert handling would also inject
+    // it at runtime (data.pumpId ?? ctx.pumpId — see
+    // tenant-scoping.extension.ts's scopeArgs()).
     return this.prisma.businessProfile.upsert({
       where: EMPTY_UNIQUE_WHERE,
-      create: {},
+      create: { pumpId: requireTenantContext().pumpId },
       update: {},
     });
   }
@@ -38,6 +44,7 @@ export class BusinessProfileService {
     return this.prisma.businessProfile.upsert({
       where: EMPTY_UNIQUE_WHERE,
       create: {
+        pumpId: requireTenantContext().pumpId,
         ...(dto.businessName !== undefined && { businessName: dto.businessName }),
         ...(dto.gstin !== undefined && { gstin: dto.gstin }),
         ...(dto.pumpLicenseNo !== undefined && { pumpLicenseNo: dto.pumpLicenseNo }),

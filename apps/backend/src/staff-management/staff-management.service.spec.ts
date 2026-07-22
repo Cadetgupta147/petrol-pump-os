@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { Prisma, Role } from '@prisma/client';
 import { StaffManagementService } from './staff-management.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { runInTenantContext } from '../common/tenant-context';
 
 // Section 3.7 — Staff Management create/update. Covers the role-vs-credential
 // cross rule (DSM: pin only, everyone else: password only, and the WRONG
@@ -125,7 +126,9 @@ describe('StaffManagementService', () => {
           }),
       );
 
-      const result = await service.create({ name: 'A', phone: '+911234567890', role: Role.DSM, pin: '1234' });
+      const result = await runInTenantContext({ pumpId: 'pump-1' }, () =>
+        service.create({ name: 'A', phone: '+911234567890', role: Role.DSM, pin: '1234' }),
+      );
 
       const accountCall = tx.staffAccount.create.mock.calls[0][0] as {
         data: { pinHash: string; passwordHash: null; phone: string; name: string };
@@ -159,12 +162,14 @@ describe('StaffManagementService', () => {
         }),
       );
 
-      await service.create({
-        name: 'A',
-        phone: '+911234567890',
-        role: Role.ACCOUNTANT,
-        password: 'longenoughpassword',
-      });
+      await runInTenantContext({ pumpId: 'pump-1' }, () =>
+        service.create({
+          name: 'A',
+          phone: '+911234567890',
+          role: Role.ACCOUNTANT,
+          password: 'longenoughpassword',
+        }),
+      );
 
       const accountCall = tx.staffAccount.create.mock.calls[0][0] as {
         data: { pinHash: null; passwordHash: string };

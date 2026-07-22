@@ -9,6 +9,8 @@ import { Role } from '@prisma/client';
 import { MeterReadingsService } from './meter-readings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+import { runInTenantContext } from '../common/tenant-context';
+import type { OpenShiftDto } from './dto/open-shift.dto';
 
 const dsmCaller: AuthenticatedUser = {
   staffId: 's1',
@@ -67,6 +69,14 @@ describe('MeterReadingsService', () => {
     service = module.get(MeterReadingsService);
   });
 
+  // Phase 0.3 (docs/multi-tenancy-plan.md) — openShift() now reads
+  // requireTenantContext().pumpId directly (not just via
+  // resolveAssignableActorId's user param); every call site needs an
+  // active tenant context.
+  function openShift(dto: OpenShiftDto, user: AuthenticatedUser) {
+    return runInTenantContext({ pumpId: 'pump-1' }, () => service.openShift(dto, user));
+  }
+
   describe('openShift', () => {
     it('persists productType on the MeterReading row', async () => {
       prisma.meterReading.create.mockResolvedValue({
@@ -80,7 +90,7 @@ describe('MeterReadingsService', () => {
         productType: 'petrol',
       });
 
-      await service.openShift(
+      await openShift(
         {
           nozzleId: 'n1',
           staffId: 's1',
@@ -92,6 +102,7 @@ describe('MeterReadingsService', () => {
 
       expect(prisma.meterReading.create).toHaveBeenCalledWith({
         data: {
+          pumpId: 'pump-1',
           nozzleId: 'n1',
           staffId: 's1',
           openingReading: 100,
@@ -105,7 +116,7 @@ describe('MeterReadingsService', () => {
     it('defaults staffId to the caller when omitted', async () => {
       prisma.meterReading.create.mockResolvedValue({ id: 'mr-1' });
 
-      await service.openShift(
+      await openShift(
         { nozzleId: 'n1', openingReading: 100, productType: 'petrol' },
         dsmCaller,
       );
@@ -117,7 +128,7 @@ describe('MeterReadingsService', () => {
 
     it('rejects a DSM caller opening a shift assigned to a different staff member', async () => {
       await expect(
-        service.openShift(
+        openShift(
           { nozzleId: 'n1', staffId: 'other-staff', openingReading: 100, productType: 'petrol' },
           dsmCaller,
         ),
@@ -128,7 +139,7 @@ describe('MeterReadingsService', () => {
     it('allows a non-DSM caller to open a shift assigned to a different staff member', async () => {
       prisma.meterReading.create.mockResolvedValue({ id: 'mr-1' });
 
-      await service.openShift(
+      await openShift(
         { nozzleId: 'n1', staffId: 'other-staff', openingReading: 100, productType: 'petrol' },
         managerCaller,
       );
