@@ -465,4 +465,24 @@ required for isolation itself.
   writes. All test data cleaned up afterward. Backend suite unaffected
   (this phase doesn't touch any service code): 42 suites/407 tests still
   green.
-- [ ] Phase 6 — Frontend verification pass
+- [x] Phase 6 — Frontend verification pass (2026-07-22). Confirmed, not
+  just assumed, that no structural frontend changes were needed: response
+  shapes are unchanged (ids still resolve the same way from each app's
+  point of view, whether they now point at a membership row or previously
+  a bare account/table row).
+  - `apps/web-portal`: `tsc --noEmit` + `vite build` clean.
+  - `apps/dsm-app`: `tsc --noEmit` clean, `jest` — 2 suites/10 tests green.
+  - `apps/customer-app`: `tsc --noEmit` clean, `jest` — 1 suite/23 tests
+    green. (Untouched by any of Phases 2-5's backend changes — this was
+    its first verification pass this round, not a re-check.)
+
+  Also did the optional low-priority polish item this plan called out:
+  `TopBar.tsx`'s hardcoded `PUMP_NAME` placeholder (its own comment said
+  "swap once a real business-settings entity exists to read it from") is
+  now replaced with a live `GET /business-profile` fetch of
+  `BusinessProfile.businessName` — Section 3.9's entity is exactly that
+  now-real settings row. Deliberately did NOT widen that endpoint's
+  existing Owner/Accountant-only role restriction just to show a name in
+  the header — Manager/DSM/Read-only (and Owner/Accountant before they've
+  filled in a business name, or if the fetch fails for any reason) fall
+  back to the generic "PumpOS" brand instead of a per-pump name.

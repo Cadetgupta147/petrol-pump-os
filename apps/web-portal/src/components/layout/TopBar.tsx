@@ -1,13 +1,32 @@
+import { useEffect, useState } from 'react';
 import { useAuth } from '../../context/useAuth';
-
-// Pump name is a placeholder until Section 3 grows a real "business
-// settings" entity to read it from — nothing in the current schema stores
-// a pump/dealer name anywhere (Staff and Customer are the only "identity"
-// models). Swap PUMP_NAME once that settings entity exists.
-const PUMP_NAME = 'Shree Balaji Petrol Pump';
+import { getBusinessProfile } from '../../api/businessProfile';
 
 export function TopBar() {
   const { staff, logout } = useAuth();
+
+  // Multi-tenancy Phase 6 (docs/multi-tenancy-plan.md) — this used to be a
+  // hardcoded placeholder ("nothing in the schema stores a pump/dealer name
+  // anywhere"); Section 3.9's BusinessProfile.businessName is exactly that
+  // now-real settings entity. GET /business-profile stays Owner/Accountant
+  // only server-side (Section 2) — deliberately NOT widened here just to
+  // show a name in the header, so Manager/DSM/Read-only fall back to the
+  // generic "PumpOS" brand instead of a per-pump name, same as if the
+  // fetch fails for any other reason.
+  const [pumpName, setPumpName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (staff?.role !== 'OWNER' && staff?.role !== 'ACCOUNTANT') return;
+    let cancelled = false;
+    getBusinessProfile()
+      .then((profile) => {
+        if (!cancelled && profile.businessName) setPumpName(profile.businessName);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [staff?.role]);
 
   const initials = staff
     ? staff.name
@@ -23,11 +42,15 @@ export function TopBar() {
       <div className="topbar-brand">
         <div className="topbar-drop" />
         <span className="topbar-title">PumpOS</span>
-        <div className="topbar-divider" />
-        <div>
-          <div className="topbar-pump">{PUMP_NAME}</div>
-          <div className="topbar-sub">Dealer dashboard</div>
-        </div>
+        {pumpName && (
+          <>
+            <div className="topbar-divider" />
+            <div>
+              <div className="topbar-pump">{pumpName}</div>
+              <div className="topbar-sub">Dealer dashboard</div>
+            </div>
+          </>
+        )}
       </div>
       <div className="topbar-profile">
         <div className="topbar-profile-text">
