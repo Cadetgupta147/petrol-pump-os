@@ -88,14 +88,17 @@ describe('CustomerPortalController — guard enforcement + cross-customer protec
       .overrideProvider(PrismaService)
       .useValue({
         // CustomerJwtStrategy.validate() re-checks tokenVersion against this
-        // on every request — stub a tiny in-memory table.
+        // on every request — stub a tiny in-memory table. Phase 0.2
+        // (docs/multi-tenancy-plan.md): tokenVersion moved onto the joined
+        // account, so the stub returns { account: { tokenVersion } }.
         customer: {
           findUnique: (args: { where: { id: string } }) => {
             const table: Record<string, { tokenVersion: number } | undefined> = {
               [activeCustomerId]: { tokenVersion: 0 },
               [otherCustomerId]: { tokenVersion: 0 },
             };
-            return Promise.resolve(table[args.where.id] ?? null);
+            const account = table[args.where.id];
+            return Promise.resolve(account ? { account } : null);
           },
         },
         // CustomerPortalService.getBills() queries this directly (not via
@@ -137,6 +140,7 @@ describe('CustomerPortalController — guard enforcement + cross-customer protec
   async function customerToken(customerId: string): Promise<string> {
     return customerJwtService.signAsync({
       customerId,
+      pumpId: 'pump-1',
       phone: '9990000001',
       scope: 'customer',
       tokenVersion: 0,
@@ -147,6 +151,7 @@ describe('CustomerPortalController — guard enforcement + cross-customer protec
   async function staffToken(): Promise<string> {
     return staffJwtService.signAsync({
       staffId: 'staff-1',
+      pumpId: 'pump-1',
       role: Role.OWNER,
       sub: 'staff-1',
     });

@@ -231,7 +231,40 @@ required for isolation itself.
   rows show `pumpId: "default_pump"` and new creates still succeed unaffected (`pumpId: null`,
   expected until Phase 2). Zero application code changed — no service reads/filters on `pumpId`
   yet.
-- [ ] Phase 0.2 — Staff/Customer → Account/Membership split
+- [x] Phase 0.2 — Staff/Customer → Account/Membership split (2026-07-21/22).
+  Added `StaffAccount`/`CustomerAccount` (login identity) — `Staff`/`Customer`
+  kept their original names and now represent per-pump MEMBERSHIP rows (see
+  schema comments for why: avoids a `prisma.staff.* → staffMembership.*`
+  rename across ~150 existing call sites). `name` is denormalized onto both
+  membership rows (kept in sync on write) so the many read call sites never
+  needed to change; `phone` similarly denormalized onto `Customer` (not
+  unique anymore — uniqueness lives on `CustomerAccount.phone`).
+  `tokenVersion` moved from `Customer` to `CustomerAccount` (it's a session
+  property, not a per-pump one). `member-id.ts`'s `allocateQrMemberId()` is
+  now pump-aware (`pumpCode` read from the `Pump` row, not a `PUMP_CODE` env
+  var — removed from `.env.example`). Real code touched: `auth.service.ts`,
+  `customer-auth.service.ts`, both JWT strategies + payload interfaces (both
+  gained `pumpId`), `staff-management.service.ts`, `customers.service.ts`
+  (account find-or-create on create/update), `bills.service.ts`'s quick-add
+  path, `prisma/seed.ts`. Everything else (bills, cash-custody, meter-
+  readings, attendance, dip-readings, density-logs, etc.) needed **zero**
+  changes — they only ever referenced `Staff`/`Customer` by id via existing
+  relations, never touched credential fields.
+  Migration `20260721220000_multi_tenancy_phase_0_2_staff_customer_account_split`
+  — hand-sequenced (not a single `prisma migrate diff` pass, which would
+  have dropped the old phone/pinHash/passwordHash/tokenVersion columns
+  before their values could be copied out): create new tables → add new
+  columns nullable → backfill (reusing each existing Staff/Customer row's
+  own id as its new Account row's id, a safe 1:1 mapping) → drop old
+  columns → add constraints. Verified: full test suite green (41
+  suites/378 tests, ~15 spec files updated for the new
+  account-lookup/transaction shapes), live smoke test against the real
+  Supabase dev DB — login, PIN-login, staff-management create, customer
+  create, OTP request/verify, and an authenticated `/customer-portal/me`
+  call all confirmed working end-to-end with `pumpId` correctly flowing
+  through every JWT — test data cleaned up afterward. Response shapes for
+  every existing endpoint are unchanged, so no frontend (web portal, DSM
+  app, customer app) changes were needed.
 - [ ] Phase 0.3 — flip pumpId to required
 - [ ] Phase 1 — Auth JWT/membership resolution
 - [ ] Phase 2 — AsyncLocalStorage + Prisma Client Extension tenant scoping

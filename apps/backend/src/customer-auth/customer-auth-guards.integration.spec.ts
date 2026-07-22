@@ -70,16 +70,19 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
       .useValue({
         // CustomerJwtStrategy.validate() now hits the DB on every request to
         // enforce the tokenVersion "kill switch" (see
-        // prisma/schema.prisma's Customer.tokenVersion comment) — stub a
-        // small in-memory table keyed by customerId so both the "matches"
-        // and "stale tokenVersion" cases below are exercisable.
+        // prisma/schema.prisma's CustomerAccount.tokenVersion comment) —
+        // stub a small in-memory table keyed by customerId so both the
+        // "matches" and "stale tokenVersion" cases below are exercisable.
+        // Phase 0.2 (docs/multi-tenancy-plan.md): tokenVersion moved onto
+        // the joined account, so the stub returns { account: { tokenVersion } }.
         customer: {
           findUnique: (args: { where: { id: string } }) => {
             const table: Record<string, { tokenVersion: number } | undefined> = {
               c1: { tokenVersion: 0 },
               'c-bumped': { tokenVersion: 5 }, // simulates a bump AFTER the token below was issued
             };
-            return Promise.resolve(table[args.where.id] ?? null);
+            const account = table[args.where.id];
+            return Promise.resolve(account ? { account } : null);
           },
         },
       })
@@ -116,7 +119,7 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   });
 
   it('rejects a staff token on a customer-only route (401)', async () => {
-    const token = await staffJwtService.signAsync({ staffId: 's1', role: Role.OWNER, sub: 's1' });
+    const token = await staffJwtService.signAsync({ staffId: 's1', pumpId: 'pump-1', role: Role.OWNER, sub: 's1' });
     const res = await fetch(`${baseUrl}/test-customer-only/protected`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -126,6 +129,7 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   it('allows a customer token on a customer-only route', async () => {
     const token = await customerJwtService.signAsync({
       customerId: 'c1',
+      pumpId: 'pump-1',
       phone: '9990000001',
       scope: 'customer',
       tokenVersion: 0,
@@ -140,6 +144,7 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   it('rejects a customer token on a staff-only route (401)', async () => {
     const token = await customerJwtService.signAsync({
       customerId: 'c1',
+      pumpId: 'pump-1',
       phone: '9990000001',
       scope: 'customer',
       tokenVersion: 0,
@@ -152,7 +157,7 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   });
 
   it('allows a staff token on a staff-only route (regression sanity check)', async () => {
-    const token = await staffJwtService.signAsync({ staffId: 's1', role: Role.OWNER, sub: 's1' });
+    const token = await staffJwtService.signAsync({ staffId: 's1', pumpId: 'pump-1', role: Role.OWNER, sub: 's1' });
     const res = await fetch(`${baseUrl}/test-staff-only/protected`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -173,6 +178,7 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   it('rejects a customer token whose tokenVersion claim is stale vs. the current DB value (401)', async () => {
     const token = await customerJwtService.signAsync({
       customerId: 'c-bumped',
+      pumpId: 'pump-1',
       phone: '9990000002',
       scope: 'customer',
       tokenVersion: 3, // stale — the stubbed DB above has this customer at tokenVersion 5
@@ -187,6 +193,7 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   it('allows a customer token whose tokenVersion claim still matches the current DB value', async () => {
     const token = await customerJwtService.signAsync({
       customerId: 'c-bumped',
+      pumpId: 'pump-1',
       phone: '9990000002',
       scope: 'customer',
       tokenVersion: 5, // matches the stubbed DB value

@@ -26,20 +26,30 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 // Minimal in-memory fake PrismaService — every existing spec in this
 // codebase fakes/mocks PrismaService rather than hitting the real (Supabase)
 // database; this follows the same convention. Supports exactly the calls
-// the two flows under test make: customer.create/findUnique,
+// the two flows under test make: customer.create/findUnique/findFirst,
+// customerAccount.upsert (Phase 0.2, docs/multi-tenancy-plan.md — the
+// find-or-create-by-phone account link), pump.findUniqueOrThrow +
 // memberIdCounter.update (inside the same $transaction as customer.create,
 // per member-id.ts), and the customerOtp CRUD CustomerAuthService needs.
 class FakePrisma {
   private customers = new Map<string, Record<string, unknown>>();
+  private customerAccounts = new Map<string, Record<string, unknown>>();
   private otps = new Map<string, Record<string, unknown>>();
   private counterSeq = 0;
   private nextCustomerSeq = 1;
+  private nextAccountSeq = 1;
   private nextOtpSeq = 1;
+
+  private hydrateAccount(row: Record<string, unknown>): Record<string, unknown> {
+    const accountId = row.accountId as string | null | undefined;
+    const account = accountId ? this.customerAccounts.get(accountId) ?? null : null;
+    return { ...row, account };
+  }
 
   customer = {
     create: ({ data }: { data: Record<string, unknown> }) => {
       const id = `cust-${this.nextCustomerSeq++}`;
-      const row = { id, tokenVersion: 0, qrMemberId: null, ...data };
+      const row = { id, qrMemberId: null, ...data };
       this.customers.set(id, row);
       return Promise.resolve(row);
     },
@@ -68,12 +78,63 @@ class FakePrisma {
       }
       return Promise.resolve(row);
     },
+    // Phase 0.2: Customer.phone is no longer unique — CustomerAuthService
+    // uses findFirst instead of findUnique for phone lookups.
+    findFirst: ({
+      where,
+      select,
+      include,
+    }: {
+      where: { phone?: string };
+      select?: Record<string, boolean>;
+      include?: { account?: boolean };
+    }) => {
+      const row = [...this.customers.values()].find((c) => c.phone === where.phone);
+      if (!row) return Promise.resolve(null);
+      const hydrated = include?.account ? this.hydrateAccount(row) : row;
+      if (select) {
+        const projected: Record<string, unknown> = {};
+        for (const key of Object.keys(select)) {
+          if (select[key]) projected[key] = hydrated[key];
+        }
+        return Promise.resolve(projected);
+      }
+      return Promise.resolve(hydrated);
+    },
+  };
+
+  customerAccount = {
+    // find-or-create by phone, matching the real Prisma upsert's semantics
+    // for CustomersService.create()'s account-link step.
+    upsert: ({
+      where,
+      create,
+    }: {
+      where: { phone: string };
+      update: Record<string, unknown>;
+      create: Record<string, unknown>;
+    }) => {
+      const existing = [...this.customerAccounts.values()].find(
+        (a) => a.phone === where.phone,
+      );
+      if (existing) return Promise.resolve(existing);
+      const id = `account-${this.nextAccountSeq++}`;
+      const row = { id, tokenVersion: 0, ...create };
+      this.customerAccounts.set(id, row);
+      return Promise.resolve(row);
+    },
+  };
+
+  pump = {
+    findUniqueOrThrow: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve({ id: where.id, pumpCode: 'PUMP001' });
+    },
   };
 
   memberIdCounter = {
     update: ({ data }: { data: { lastSeq: { increment: number } } }) => {
       this.counterSeq += data.lastSeq.increment;
-      return Promise.resolve({ id: 'singleton', lastSeq: this.counterSeq });
+      return Promise.resolve({ pumpId: 'default_pump', lastSeq: this.counterSeq });
     },
   };
 
@@ -197,6 +258,7 @@ describe('Web-portal-created customer can OTP-login with a differently-formatted
   it('logs in via OTP using a differently-formatted phone than the one used at customer creation', async () => {
     const staffToken = await staffJwtService.signAsync({
       staffId: 'staff-1',
+      pumpId: 'pump-1',
       role: Role.OWNER,
       sub: 'staff-1',
     });

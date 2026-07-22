@@ -52,6 +52,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
     loyaltyTransaction: { create: jest.Mock };
     loyaltyConfig: { findUnique: jest.Mock };
     memberIdCounter: { update: jest.Mock };
+    pump: { findUniqueOrThrow: jest.Mock };
     $transaction: jest.Mock;
   };
   let creditConfigService: { getOrCreate: jest.Mock };
@@ -118,7 +119,10 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       loyaltyTransaction: { create: jest.fn().mockResolvedValue({}) },
       loyaltyConfig: { findUnique: jest.fn() },
       memberIdCounter: {
-        update: jest.fn().mockResolvedValue({ id: 'singleton', lastSeq: 6 }),
+        update: jest.fn().mockResolvedValue({ id: 'singleton', pumpId: 'default_pump', lastSeq: 6 }),
+      },
+      pump: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'default_pump', pumpCode: 'PUMP001' }),
       },
       $transaction: jest.fn(),
     };

@@ -7,18 +7,33 @@ import { UpdateStaffDto } from './dto/update-staff.dto';
 
 const SALT_ROUNDS = 10;
 
+// Phase 0.2 (docs/multi-tenancy-plan.md): hardcoded until Phase 2's
+// AsyncLocalStorage tenant context exists — same interim pattern used
+// across every service touched in that phase.
+const DEFAULT_PUMP_ID = 'default_pump';
+
 // Never select pinHash/passwordHash out of the DB for this screen — the
 // management UI needs to know a staff member exists and what role they
-// have, never their credential hash.
+// have, never their credential hash. Phase 0.2 split the credential off
+// Staff onto StaffAccount — phone now comes from the joined account, not a
+// direct column, but the flattened response shape (toStaffDto below) stays
+// identical to what this endpoint returned before the split.
 const SAFE_SELECT = {
   id: true,
   name: true,
-  phone: true,
   role: true,
   active: true,
   createdAt: true,
   updatedAt: true,
+  account: { select: { phone: true } },
 } satisfies Prisma.StaffSelect;
+
+type StaffRow = Prisma.StaffGetPayload<{ select: typeof SAFE_SELECT }>;
+
+function toStaffDto(row: StaffRow) {
+  const { account, ...rest } = row;
+  return { ...rest, phone: account?.phone ?? '' };
+}
 
 // Section 3.7 — Staff Management: create/edit the staff master (distinct
 // from StaffService's minimal id+name picker directory at GET /staff, which
@@ -37,13 +52,20 @@ const SAFE_SELECT = {
 export class StaffManagementService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.staff.findMany({
+  async findAll() {
+    const rows = await this.prisma.staff.findMany({
       select: SAFE_SELECT,
       orderBy: { name: 'asc' },
     });
+    return rows.map(toStaffDto);
   }
 
+  // Phase 0.2 — creates a StaffAccount (the login identity/credential) and
+  // a Staff row (the per-pump membership) together, atomically. A person
+  // with memberships at more than one pump would get a second Staff row
+  // linked to the SAME account (not built here — this endpoint always
+  // creates a brand-new account, since there's no "add an existing person
+  // to this pump" flow yet).
   async create(dto: CreateStaffDto) {
     const { pinHash, passwordHash } = await this.resolveCredential(dto.role, {
       pin: dto.pin,
@@ -51,15 +73,20 @@ export class StaffManagementService {
     });
 
     try {
-      return await this.prisma.staff.create({
-        data: {
-          name: dto.name,
-          phone: dto.phone,
-          role: dto.role,
-          pinHash,
-          passwordHash,
-        },
-        select: SAFE_SELECT,
+      return await this.prisma.$transaction(async (tx) => {
+        const account = await tx.staffAccount.create({
+          data: { name: dto.name, phone: dto.phone, pinHash, passwordHash },
+        });
+        const membership = await tx.staff.create({
+          data: {
+            accountId: account.id,
+            pumpId: DEFAULT_PUMP_ID,
+            name: dto.name,
+            role: dto.role,
+          },
+          select: SAFE_SELECT,
+        });
+        return toStaffDto(membership);
       });
     } catch (error) {
       this.handlePrismaError(error, dto.phone);
@@ -67,9 +94,18 @@ export class StaffManagementService {
   }
 
   async update(id: string, dto: UpdateStaffDto) {
-    const existing = await this.prisma.staff.findUnique({ where: { id } });
+    const existing = await this.prisma.staff.findUnique({
+      where: { id },
+      include: { account: true },
+    });
     if (!existing) {
       throw new NotFoundException(`Staff ${id} not found`);
+    }
+    if (!existing.accountId || !existing.account) {
+      // Shouldn't happen — create() always links an account — but a
+      // pre-split legacy row (there shouldn't be any post-migration) would
+      // hit this rather than silently no-op a credential reset.
+      throw new BadRequestException(`Staff ${id} has no linked account — cannot update credentials`);
     }
 
     if (dto.pin && existing.role !== Role.DSM) {
@@ -87,26 +123,40 @@ export class StaffManagementService {
     const passwordHash = dto.password ? await bcrypt.hash(dto.password, SALT_ROUNDS) : undefined;
 
     try {
-      return await this.prisma.staff.update({
-        where: { id },
-        data: {
-          name: dto.name,
-          phone: dto.phone,
-          active: dto.active,
-          ...(pinHash ? { pinHash } : {}),
-          ...(passwordHash ? { passwordHash } : {}),
-        },
-        select: SAFE_SELECT,
+      return await this.prisma.$transaction(async (tx) => {
+        // name/phone/credential live on the account; active is per-membership.
+        // name is also denormalized onto the membership row (see schema
+        // comment) — kept in sync here so existing readers of Staff.name
+        // never see it drift from the account.
+        await tx.staffAccount.update({
+          where: { id: existing.accountId! },
+          data: {
+            ...(dto.name !== undefined ? { name: dto.name } : {}),
+            ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+            ...(pinHash ? { pinHash } : {}),
+            ...(passwordHash ? { passwordHash } : {}),
+          },
+        });
+        const membership = await tx.staff.update({
+          where: { id },
+          data: {
+            ...(dto.name !== undefined ? { name: dto.name } : {}),
+            ...(dto.active !== undefined ? { active: dto.active } : {}),
+          },
+          select: SAFE_SELECT,
+        });
+        return toStaffDto(membership);
       });
     } catch (error) {
-      this.handlePrismaError(error, dto.phone ?? existing.phone);
+      this.handlePrismaError(error, dto.phone ?? existing.account.phone);
     }
   }
 
-  // Section 4 / Staff schema comment — DSM logs in with a pin only, every
-  // other role logs in with a password only. Rejects the wrong credential
-  // for the role (not just "requires the right one is missing"), since a
-  // client sending both would otherwise silently succeed with one ignored.
+  // Section 4 / StaffAccount schema comment — DSM logs in with a pin only,
+  // every other role logs in with a password only. Rejects the wrong
+  // credential for the role (not just "requires the right one is missing"),
+  // since a client sending both would otherwise silently succeed with one
+  // ignored.
   private async resolveCredential(
     role: Role,
     creds: { pin?: string; password?: string },

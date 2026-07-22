@@ -88,6 +88,8 @@ model Pump {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  staff                  Staff[]
+  customers              Customer[]
   bills                  Bill[]
   billAuditLogs          BillAuditLog[]
   billPaymentLines       BillPaymentLine[]
@@ -116,15 +118,45 @@ model Pump {
 
 // ---------- Staff / Users / Roles ----------
 
-model Staff {
-  id             String          @id @default(cuid())
-  name           String
-  phone          String          @unique
-  role           Role
-  pinHash        String? // for DSM app PIN login
+// Phase 0.2 (docs/multi-tenancy-plan.md) — login identity for staff. One row
+// per real person, holding the actual login credential. `Staff` below is now
+// the per-pump MEMBERSHIP row — deliberately still named "Staff" (not
+// "StaffMembership") so the many existing relations to it (Bill.enteredById,
+// CashCustodyLog.handledById, MeterReading.staffId, etc.) don't need to
+// change at all; only the credential-touching code
+// (auth.service.ts/staff-management.service.ts) goes through this model.
+model StaffAccount {
+  id           String   @id @default(cuid())
+  phone        String   @unique
+  pinHash      String? // for DSM app PIN login
   // Web portal (Owner/Accountant/Manager/Read-only) login credential — Section 2.
   // Nullable: DSM-only staff authenticate via pinHash on the DSM app, not here.
-  passwordHash   String?
+  passwordHash String?
+  // Authoritative identity name. Staff.name below is a denormalized COPY of
+  // this (kept in sync on write by staff-management.service.ts) so the many
+  // existing call sites that read Staff.name for display/audit purposes
+  // don't need to join through account for every read.
+  name         String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships  Staff[]
+}
+
+// Per-pump staff membership (see StaffAccount above for why this model kept
+// its original name through the split). One row per (account, pump) — a
+// person with memberships at two different pumps has two rows here, each
+// with its own role/active flag, sharing one StaffAccount for login.
+model Staff {
+  id        String        @id @default(cuid())
+  account   StaffAccount? @relation(fields: [accountId], references: [id])
+  accountId String?
+  pump      Pump?         @relation(fields: [pumpId], references: [id])
+  pumpId    String?
+  // Denormalized copy of StaffAccount.name — see the comment there.
+  name           String
+  role           Role
   active         Boolean         @default(true)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -138,6 +170,8 @@ model Staff {
   cashCustodyLogs    CashCustodyLog[]
   dipReadings        DipReading[]
   densityLogs        DensityLog[]
+
+  @@unique([accountId, pumpId])
 }
 
 model AttendanceLog {
@@ -150,12 +184,48 @@ model AttendanceLog {
 
 // ---------- Customers / Bills ----------
 
+// Phase 0.2 (docs/multi-tenancy-plan.md) — login identity for customers. One
+// row per real phone number. `Customer` below is now the per-pump
+// MEMBERSHIP row (kept its original name for the same reason `Staff` did —
+// see that model's comment). Unlike StaffAccount, not every Customer gets
+// one: an informal quick-added customer (Section 3.4A, no phone yet) has
+// `accountId: null` until a phone is later added via the verification
+// upgrade path, matching how `Customer.phone` was already nullable for
+// exactly this reason before the split.
+model CustomerAccount {
+  id    String  @id @default(cuid())
+  phone String  @unique
+  name  String?
+  // Section 5 — customer JWT "kill switch", moved here from the membership
+  // row: this is a property of the LOGIN SESSION, not of any one pump
+  // relationship. Embedded as a claim in every customer JWT at issuance
+  // (CustomerAuthService.verifyOtp) and re-checked against this live DB
+  // value on every customer-authenticated request (CustomerJwtStrategy.validate).
+  // Bumping this value invalidates every previously-issued token at once,
+  // e.g. for a lost/stolen phone.
+  tokenVersion Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  memberships  Customer[]
+}
+
+// Per-pump customer/loyalty membership (see CustomerAccount above for the
+// naming rationale). One row per (account, pump) — a customer who's a
+// loyalty/credit member at two different pumps has two rows here, each with
+// its own points/credit/qrMemberId, sharing one CustomerAccount for login.
 model Customer {
   id              String   @id @default(cuid())
+  account         CustomerAccount? @relation(fields: [accountId], references: [id])
+  accountId       String?
+  pump            Pump?    @relation(fields: [pumpId], references: [id])
+  pumpId          String?
   name            String
-  phone           String?  @unique // KYC-lite identity — Section 6.1. Optional: quick-added
-  // (informal) customers via bill-time quick-add (Section 3.4A) don't have a phone yet.
-  // Postgres unique indexes treat multiple NULLs as distinct, so this stays safe.
+  // Denormalized copy of CustomerAccount.phone (kept in sync on write by
+  // CustomersService) — NOT globally unique anymore now that one account can
+  // have multiple per-pump membership rows; uniqueness lives on
+  // CustomerAccount.phone instead. Nullable for the same informal quick-add
+  // reason as before the split.
+  phone           String?
   vehicleNumber   String?
   // Section 6.1/6.7 — human-friendly member id, e.g. "PUMP001-CUST-04521-6":
   // pump code + literal CUST + zero-padded sequence + Luhn check digit over
@@ -172,14 +242,6 @@ model Customer {
   // upgraded via PATCH). Visibility flag only — never itself blocks credit.
   verificationStatus CustomerVerificationStatus @default(VERIFIED)
   createdAt       DateTime @default(now())
-  // Section 5 — customer JWT "kill switch". Embedded as a claim in every
-  // customer JWT at issuance (CustomerAuthService.verifyOtp) and re-checked
-  // against this live DB value on every customer-authenticated request
-  // (CustomerJwtStrategy.validate). Bumping this value (no endpoint yet —
-  // manual via Prisma Studio) invalidates every previously-issued token for
-  // this customer at once, e.g. for a lost/stolen phone — a minimal "kill
-  // all sessions" lever without building full refresh-token rotation.
-  tokenVersion    Int      @default(0)
 
   bills                 Bill[]
   loyaltyTransactions   LoyaltyTransaction[]
@@ -187,6 +249,8 @@ model Customer {
   payments              Payment[]
   creditAlerts          CreditLimitAlert[]
   otpRequests           CustomerOtp[]
+
+  @@unique([accountId, pumpId])
 }
 
 // Section 5 — Credit Customer App login (phone + OTP). One row per OTP

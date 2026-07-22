@@ -176,13 +176,20 @@ export class BillsService {
         if (isQuickAdd) {
           const quickAddedCustomer = await tx.customer.create({
             data: {
+              // Phase 0.2 (docs/multi-tenancy-plan.md): hardcoded until
+              // Phase 2's tenant context exists. No accountId — a quick-add
+              // customer has no phone (Section 3.4A), so there's nothing to
+              // link an account to yet; the verification upgrade path
+              // (CustomersService.update()) creates/links one once a phone
+              // is added.
+              pumpId: 'default_pump',
               name: dto.quickAddCustomer!.name,
               vehicleNumber: dto.quickAddCustomer!.vehicleNumber,
               verificationStatus: 'INFORMAL',
               creditLimit: creditConfig.defaultInformalCreditLimit,
               // Section 6.1/6.7 — same member-id generator as the normal
               // /customers onboarding path, same transaction as the create.
-              qrMemberId: await allocateQrMemberId(tx),
+              qrMemberId: await allocateQrMemberId(tx, 'default_pump'),
             },
           });
           resolvedCustomerId = quickAddedCustomer.id;

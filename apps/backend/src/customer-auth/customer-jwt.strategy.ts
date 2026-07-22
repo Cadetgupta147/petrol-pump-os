@@ -37,13 +37,14 @@ export class CustomerJwtStrategy extends PassportStrategy(Strategy, 'customer-jw
   // Unlike the staff JwtStrategy (deliberately no DB round-trip per
   // request), this DOES hit the DB on every customer-authenticated request
   // — that's the whole point of the tokenVersion "kill switch" (see
-  // prisma/schema.prisma's Customer.tokenVersion comment): a token that's
-  // structurally/cryptographically valid must still be rejected once the
-  // customer's tokenVersion has been bumped (e.g. lost/stolen phone),
+  // prisma/schema.prisma's CustomerAccount.tokenVersion comment): a token
+  // that's structurally/cryptographically valid must still be rejected once
+  // the customer's tokenVersion has been bumped (e.g. lost/stolen phone),
   // without waiting for the token's own expiry.
   async validate(payload: CustomerJwtPayload): Promise<AuthenticatedCustomer> {
     if (
       !payload?.customerId ||
+      !payload?.pumpId ||
       !payload?.phone ||
       payload.scope !== 'customer' ||
       typeof payload.tokenVersion !== 'number'
@@ -51,14 +52,18 @@ export class CustomerJwtStrategy extends PassportStrategy(Strategy, 'customer-jw
       throw new UnauthorizedException('Invalid token payload');
     }
 
+    // Phase 0.2 (docs/multi-tenancy-plan.md): tokenVersion moved from
+    // Customer (the membership row) to CustomerAccount (the login identity)
+    // — this membership must still exist AND still be linked to an account
+    // whose tokenVersion matches.
     const customer = await this.prisma.customer.findUnique({
       where: { id: payload.customerId },
-      select: { tokenVersion: true },
+      select: { account: { select: { tokenVersion: true } } },
     });
-    if (!customer || customer.tokenVersion !== payload.tokenVersion) {
+    if (!customer || !customer.account || customer.account.tokenVersion !== payload.tokenVersion) {
       throw new UnauthorizedException('Session has been invalidated');
     }
 
-    return { customerId: payload.customerId, phone: payload.phone };
+    return { customerId: payload.customerId, pumpId: payload.pumpId, phone: payload.phone };
   }
 }

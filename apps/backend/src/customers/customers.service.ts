@@ -21,6 +21,12 @@ import { allocateQrMemberId, isValidQrMemberId } from './member-id';
 // never drift apart.
 import { normalizeIndianMobile } from '../customer-auth/phone.util';
 
+// Phase 0.2 (docs/multi-tenancy-plan.md): every pump-scoped write below is
+// hardcoded to DEFAULT_PUMP_ID until Phase 2's AsyncLocalStorage tenant
+// context exists — same interim pattern used across every service touched
+// in this phase.
+const DEFAULT_PUMP_ID = 'default_pump';
+
 // Customer master CRUD + ledger — Section 3.4. Outstanding balance is
 // deliberately NOT stored on Customer: it's derived on read from the
 // bill/payment ledger (see ledger() below). Auth/role guards do exist and
@@ -33,15 +39,33 @@ export class CustomersService {
 
   create(dto: CreateCustomerDto) {
     // Member id allocation + customer create share one transaction so a
-    // failed create (e.g. duplicate phone) rolls the counter increment back
-    // — no burned sequence numbers (Section 6.1/6.7, see member-id.ts).
+    // failed create (e.g. duplicate phone at this pump) rolls the counter
+    // increment back — no burned sequence numbers (Section 6.1/6.7, see
+    // member-id.ts).
+    //
+    // Phase 0.2 — every Customer created here gets a linked CustomerAccount
+    // (find-or-create by phone): if this phone already has an account (e.g.
+    // a customer who's a member elsewhere, once multiple pumps exist), the
+    // existing account is reused so the same phone/OTP-login serves every
+    // pump membership; otherwise a new account is created. A second
+    // create() for the same phone AT THIS SAME PUMP still fails (P2002 on
+    // Customer's @@unique([accountId, pumpId])), preserving today's
+    // "customer already exists" behavior.
     return this.prisma
       .$transaction(async (tx) => {
-        const qrMemberId = await allocateQrMemberId(tx);
+        const normalizedPhone = normalizeIndianMobile(dto.phone);
+        const account = await tx.customerAccount.upsert({
+          where: { phone: normalizedPhone },
+          update: {},
+          create: { phone: normalizedPhone, name: dto.name },
+        });
+        const qrMemberId = await allocateQrMemberId(tx, DEFAULT_PUMP_ID);
         return tx.customer.create({
           data: {
+            accountId: account.id,
+            pumpId: DEFAULT_PUMP_ID,
             name: dto.name,
-            phone: normalizeIndianMobile(dto.phone),
+            phone: normalizedPhone,
             vehicleNumber: dto.vehicleNumber,
             creditLimit: dto.creditLimit ?? 0,
             qrMemberId,
@@ -68,27 +92,44 @@ export class CustomersService {
   async update(id: string, dto: UpdateCustomerDto) {
     // Confirm existence first so a bad id always yields a clean 404, not a
     // Prisma P2025 translated into a generic error.
-    await this.findOne(id);
+    const existing = await this.findOne(id);
 
-    return this.prisma.customer
-      .update({
-        where: { id },
-        data: {
-          ...(dto.name !== undefined && { name: dto.name }),
-          ...(dto.phone !== undefined && {
-            phone: normalizeIndianMobile(dto.phone),
-          }),
-          ...(dto.vehicleNumber !== undefined && {
-            vehicleNumber: dto.vehicleNumber,
-          }),
-          ...(dto.creditLimit !== undefined && {
-            creditLimit: dto.creditLimit,
-          }),
-          // Section 3.4A — the "upgrade informal -> verified" path.
-          ...(dto.verificationStatus !== undefined && {
-            verificationStatus: dto.verificationStatus,
-          }),
-        },
+    // Phase 0.2 — if this update sets/changes phone (e.g. the informal ->
+    // verified upgrade path, Section 3.4A, adding a phone for the first
+    // time), find-or-create the matching CustomerAccount and link it, same
+    // as create(). A membership that already had a different account linked
+    // (phone changed to a different number) gets re-linked to the new one.
+    return this.prisma
+      .$transaction(async (tx) => {
+        let accountId = existing.accountId;
+        let normalizedPhone: string | undefined;
+        if (dto.phone !== undefined) {
+          normalizedPhone = normalizeIndianMobile(dto.phone);
+          const account = await tx.customerAccount.upsert({
+            where: { phone: normalizedPhone },
+            update: {},
+            create: { phone: normalizedPhone, name: dto.name ?? existing.name },
+          });
+          accountId = account.id;
+        }
+
+        return tx.customer.update({
+          where: { id },
+          data: {
+            ...(dto.name !== undefined && { name: dto.name }),
+            ...(normalizedPhone !== undefined && { phone: normalizedPhone, accountId }),
+            ...(dto.vehicleNumber !== undefined && {
+              vehicleNumber: dto.vehicleNumber,
+            }),
+            ...(dto.creditLimit !== undefined && {
+              creditLimit: dto.creditLimit,
+            }),
+            // Section 3.4A — the "upgrade informal -> verified" path.
+            ...(dto.verificationStatus !== undefined && {
+              verificationStatus: dto.verificationStatus,
+            }),
+          },
+        });
       })
       .catch((error) => this.handlePrismaError(error));
   }

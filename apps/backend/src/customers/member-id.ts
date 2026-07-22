@@ -4,9 +4,10 @@ import { Prisma } from '@prisma/client';
 // Section 6.1/6.7 — human-friendly member IDs.
 //
 // Format:  <PUMP_CODE>-CUST-<seq>-<check>   e.g.  PUMP001-CUST-04521-6
-//   - PUMP_CODE: from the PUMP_CODE env var, default "PUMP001" (single-pump
-//     deployment; becomes per-pump config if multi-pump ever exists).
-//   - seq: monotonic customer sequence from the MemberIdCounter singleton,
+//   - PUMP_CODE: Pump.pumpCode for the pump this customer belongs to (Phase
+//     0.2, docs/multi-tenancy-plan.md — previously a single global PUMP_CODE
+//     env var; now read from the DB so each pump gets its own prefix).
+//   - seq: monotonic customer sequence from that pump's MemberIdCounter row,
 //     zero-padded to 5 digits (grows naturally past 99999).
 //   - check: Luhn check digit over the padded sequence digits — Section 6.1's
 //     "optional checksum for manual fallback entry", so a DSM typing the ID
@@ -22,14 +23,7 @@ import { Prisma } from '@prisma/client';
 // agree (pinned by member-id.spec.ts using values the migration produced).
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PUMP_CODE = 'PUMP001';
-const MEMBER_ID_COUNTER_ID = 'singleton';
 const SEQ_PAD = 5;
-
-export function pumpCode(): string {
-  const configured = process.env.PUMP_CODE?.trim();
-  return configured && configured.length > 0 ? configured : DEFAULT_PUMP_CODE;
-}
 
 // Standard Luhn: from the rightmost payload digit (which sits immediately
 // left of where the check digit will go), double every other digit,
@@ -52,12 +46,12 @@ export function luhnCheckDigit(digits: string): number {
   return (10 - (sum % 10)) % 10;
 }
 
-export function formatQrMemberId(seq: number): string {
+export function formatQrMemberId(seq: number, pumpCode: string): string {
   if (!Number.isInteger(seq) || seq <= 0) {
     throw new Error(`Member sequence must be a positive integer, got ${seq}`);
   }
   const padded = String(seq).padStart(SEQ_PAD, '0');
-  return `${pumpCode()}-CUST-${padded}-${luhnCheckDigit(padded)}`;
+  return `${pumpCode}-CUST-${padded}-${luhnCheckDigit(padded)}`;
 }
 
 // Checksum validation for manual fallback entry (Section 6.1). Deliberately
@@ -69,17 +63,28 @@ export function isValidQrMemberId(id: string): boolean {
   return Number(match[2]) === luhnCheckDigit(match[1]);
 }
 
-// Atomically claims the next member number and formats it. MUST be called
-// with the SAME transaction client that creates the Customer row, so a
-// failed create rolls the counter back too. The increment-and-return is a
-// single UPDATE, so concurrent transactions can never mint the same number
-// (the @unique on Customer.qrMemberId is the DB-level backstop).
+// Atomically claims the next member number (from the given pump's counter
+// row) and formats it with that pump's code. MUST be called with the SAME
+// transaction client that creates the Customer row, so a failed create rolls
+// the counter increment back too. The increment-and-return is a single
+// UPDATE, so concurrent transactions can never mint the same number for a
+// given pump (the @unique on Customer.qrMemberId is the DB-level backstop).
+//
+// Phase 0.2 (docs/multi-tenancy-plan.md): every pump needs its own
+// MemberIdCounter row — the migration backfill created one for the seeded
+// default pump (pumpId set on the pre-existing singleton row); a real pump
+// provisioning flow (Phase 5) must create one for every new pump too, or
+// this throws (findUniqueOrThrow-style failure via update-on-missing-row).
 export async function allocateQrMemberId(
-  db: Pick<Prisma.TransactionClient, 'memberIdCounter'>,
+  db: Pick<Prisma.TransactionClient, 'memberIdCounter' | 'pump'>,
+  pumpId: string,
 ): Promise<string> {
-  const counter = await db.memberIdCounter.update({
-    where: { id: MEMBER_ID_COUNTER_ID },
-    data: { lastSeq: { increment: 1 } },
-  });
-  return formatQrMemberId(counter.lastSeq);
+  const [counter, pump] = await Promise.all([
+    db.memberIdCounter.update({
+      where: { pumpId },
+      data: { lastSeq: { increment: 1 } },
+    }),
+    db.pump.findUniqueOrThrow({ where: { id: pumpId } }),
+  ]);
+  return formatQrMemberId(counter.lastSeq, pump.pumpCode);
 }

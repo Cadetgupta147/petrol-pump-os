@@ -83,7 +83,13 @@ export class CustomerAuthService {
     // registered under this phone (see prisma/schema.prisma CustomerOtp
     // comment) — this does NOT change the response, so the request
     // endpoint never reveals whether a phone number has an account.
-    const existingCustomer = await this.prisma.customer.findUnique({
+    //
+    // Phase 0.2 (docs/multi-tenancy-plan.md): Customer.phone is no longer
+    // unique (one CustomerAccount can have a membership at more than one
+    // pump) — findFirst, not findUnique. v1 takes whichever membership
+    // matches first; a multi-pump picker isn't built yet (see the plan
+    // doc's "not in scope" list).
+    const existingCustomer = await this.prisma.customer.findFirst({
       where: { phone },
       select: { id: true },
     });
@@ -169,8 +175,20 @@ export class CustomerAuthService {
     // Look this up BEFORE consuming the OTP so a customer who genuinely
     // isn't registered yet can still get a clear error without burning
     // their one valid OTP entry on it.
-    const customer = await this.prisma.customer.findUnique({ where: { phone } });
-    if (!customer) {
+    //
+    // Phase 0.2 (docs/multi-tenancy-plan.md): every Customer created via
+    // POST /customers gets a linked CustomerAccount automatically
+    // (CustomersService.create()), so a phone with a Customer row should
+    // always have one — the !customer.account branch below is a defensive
+    // check for a legacy/inconsistent row, not an expected path.
+    // findFirst (not findUnique) — Customer.phone is no longer unique post
+    // account/membership split (see the comment on requestOtp()'s lookup
+    // above for why).
+    const customer = await this.prisma.customer.findFirst({
+      where: { phone },
+      include: { account: true },
+    });
+    if (!customer || !customer.account || !customer.pumpId) {
       throw new NotFoundException(
         "This number isn't registered yet — ask at the pump counter to get set up.",
       );
@@ -185,9 +203,10 @@ export class CustomerAuthService {
 
     const payload: CustomerJwtPayload = {
       customerId: customer.id,
+      pumpId: customer.pumpId,
       phone: customer.phone ?? phone,
       scope: 'customer',
-      tokenVersion: customer.tokenVersion,
+      tokenVersion: customer.account.tokenVersion,
       sub: customer.id,
     };
 

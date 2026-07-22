@@ -98,6 +98,7 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
   it('allows a protected route through with a valid token', async () => {
     const token = await jwtService.signAsync({
       staffId: 'staff-1',
+      pumpId: 'pump-1',
       role: Role.ACCOUNTANT,
       sub: 'staff-1',
     });
@@ -111,6 +112,7 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
   it('blocks a non-OWNER role from an @Roles(Role.OWNER)-only route (403)', async () => {
     const token = await jwtService.signAsync({
       staffId: 'staff-2',
+      pumpId: 'pump-1',
       role: Role.ACCOUNTANT,
       sub: 'staff-2',
     });
@@ -124,6 +126,7 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
   it('allows OWNER through the @Roles(Role.OWNER)-only route', async () => {
     const token = await jwtService.signAsync({
       staffId: 'staff-3',
+      pumpId: 'pump-1',
       role: Role.OWNER,
       sub: 'staff-3',
     });

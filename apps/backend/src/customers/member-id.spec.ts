@@ -3,24 +3,18 @@ import {
   formatQrMemberId,
   isValidQrMemberId,
   luhnCheckDigit,
-  pumpCode,
 } from './member-id';
 
 // Section 6.1/6.7 — member ID format + checksum. Rule-heavy identity logic:
 // the check digit is what makes manual fallback entry (card won't scan, DSM
 // types the ID) safe against typos, and the TS implementation must agree
 // with the SQL backfill in the human_friendly_member_ids migration.
+//
+// Phase 0.2 (docs/multi-tenancy-plan.md): pumpCode is now an explicit
+// parameter (read from the Pump row for the customer's pump), not a global
+// PUMP_CODE env var — every test below passes it explicitly instead of
+// relying on process.env.
 describe('member-id (Section 6.1/6.7)', () => {
-  const originalPumpCode = process.env.PUMP_CODE;
-
-  afterEach(() => {
-    if (originalPumpCode === undefined) {
-      delete process.env.PUMP_CODE;
-    } else {
-      process.env.PUMP_CODE = originalPumpCode;
-    }
-  });
-
   describe('luhnCheckDigit', () => {
     it('matches the classic Luhn reference value', () => {
       // Textbook example: payload 7992739871 -> check digit 3.
@@ -44,45 +38,40 @@ describe('member-id (Section 6.1/6.7)', () => {
   });
 
   describe('formatQrMemberId', () => {
-    it('formats <PUMP_CODE>-CUST-<padded seq>-<check>', () => {
-      delete process.env.PUMP_CODE;
-      expect(formatQrMemberId(1)).toBe('PUMP001-CUST-00001-8');
-      expect(formatQrMemberId(4521)).toBe(
+    it('formats <pumpCode>-CUST-<padded seq>-<check>', () => {
+      expect(formatQrMemberId(1, 'PUMP001')).toBe('PUMP001-CUST-00001-8');
+      expect(formatQrMemberId(4521, 'PUMP001')).toBe(
         `PUMP001-CUST-04521-${luhnCheckDigit('04521')}`,
       );
     });
 
-    it('respects the PUMP_CODE env var for new IDs', () => {
-      process.env.PUMP_CODE = 'PUMP042';
-      expect(formatQrMemberId(1)).toBe('PUMP042-CUST-00001-8');
-      expect(pumpCode()).toBe('PUMP042');
+    it('uses whatever pumpCode is passed in', () => {
+      expect(formatQrMemberId(1, 'PUMP042')).toBe('PUMP042-CUST-00001-8');
     });
 
     it('grows past 5 digits without truncation', () => {
-      delete process.env.PUMP_CODE;
-      const id = formatQrMemberId(123456);
+      const id = formatQrMemberId(123456, 'PUMP001');
       expect(id).toBe(`PUMP001-CUST-123456-${luhnCheckDigit('123456')}`);
       expect(isValidQrMemberId(id)).toBe(true);
     });
 
     it('rejects non-positive or fractional sequences', () => {
-      expect(() => formatQrMemberId(0)).toThrow();
-      expect(() => formatQrMemberId(-3)).toThrow();
-      expect(() => formatQrMemberId(1.5)).toThrow();
+      expect(() => formatQrMemberId(0, 'PUMP001')).toThrow();
+      expect(() => formatQrMemberId(-3, 'PUMP001')).toThrow();
+      expect(() => formatQrMemberId(1.5, 'PUMP001')).toThrow();
     });
   });
 
   describe('isValidQrMemberId (manual fallback entry)', () => {
     it('accepts every generated ID (round-trip)', () => {
-      delete process.env.PUMP_CODE;
       for (const seq of [1, 2, 5, 42, 4521, 99999, 100000]) {
-        expect(isValidQrMemberId(formatQrMemberId(seq))).toBe(true);
+        expect(isValidQrMemberId(formatQrMemberId(seq, 'PUMP001'))).toBe(true);
       }
     });
 
-    it('still accepts IDs minted under an older pump code', () => {
-      process.env.PUMP_CODE = 'PUMPNEW';
-      // Card printed back when the code was PUMP001 must keep validating.
+    it('still accepts IDs minted under a different pump code', () => {
+      // Different pump, or a card printed back when this pump's code was
+      // different — the validator doesn't pin the pump-code segment at all.
       expect(isValidQrMemberId('PUMP001-CUST-00001-8')).toBe(true);
     });
 
@@ -103,19 +92,37 @@ describe('member-id (Section 6.1/6.7)', () => {
   });
 
   describe('allocateQrMemberId', () => {
-    it('increments the singleton counter atomically and formats the result', async () => {
-      delete process.env.PUMP_CODE;
-      const update = jest.fn().mockResolvedValue({ id: 'singleton', lastSeq: 6 });
+    it("increments the given pump's counter atomically and formats the result with that pump's code", async () => {
+      const update = jest.fn().mockResolvedValue({ pumpId: 'pump-1', lastSeq: 6 });
+      const findUniqueOrThrow = jest.fn().mockResolvedValue({ id: 'pump-1', pumpCode: 'PUMP001' });
 
-      const id = await allocateQrMemberId({
-        memberIdCounter: { update },
-      } as unknown as Parameters<typeof allocateQrMemberId>[0]);
+      const id = await allocateQrMemberId(
+        { memberIdCounter: { update }, pump: { findUniqueOrThrow } } as unknown as Parameters<
+          typeof allocateQrMemberId
+        >[0],
+        'pump-1',
+      );
 
       expect(update).toHaveBeenCalledWith({
-        where: { id: 'singleton' },
+        where: { pumpId: 'pump-1' },
         data: { lastSeq: { increment: 1 } },
       });
+      expect(findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: 'pump-1' } });
       expect(id).toBe(`PUMP001-CUST-00006-${luhnCheckDigit('00006')}`);
+    });
+
+    it('uses a different pump code for a different pump', async () => {
+      const update = jest.fn().mockResolvedValue({ pumpId: 'pump-2', lastSeq: 1 });
+      const findUniqueOrThrow = jest.fn().mockResolvedValue({ id: 'pump-2', pumpCode: 'PUMP042' });
+
+      const id = await allocateQrMemberId(
+        { memberIdCounter: { update }, pump: { findUniqueOrThrow } } as unknown as Parameters<
+          typeof allocateQrMemberId
+        >[0],
+        'pump-2',
+      );
+
+      expect(id).toBe(`PUMP042-CUST-00001-8`);
     });
   });
 });

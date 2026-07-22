@@ -129,6 +129,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
   async function accountantToken(): Promise<string> {
     return jwtService.signAsync({
       staffId: 'staff-accountant',
+      pumpId: 'pump-1',
       role: Role.ACCOUNTANT,
       sub: 'staff-accountant',
     });
@@ -137,6 +138,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
   async function dsmToken(): Promise<string> {
     return jwtService.signAsync({
       staffId: 'staff-dsm',
+      pumpId: 'pump-1',
       role: Role.DSM,
       sub: 'staff-dsm',
     });
@@ -145,6 +147,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
   async function ownerToken(): Promise<string> {
     return jwtService.signAsync({
       staffId: 'staff-owner',
+      pumpId: 'pump-1',
       role: Role.OWNER,
       sub: 'staff-owner',
     });

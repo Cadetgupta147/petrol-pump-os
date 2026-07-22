@@ -20,20 +20,24 @@ describe('JwtStrategy', () => {
     process.env.JWT_SECRET = secret;
   });
 
-  it('maps a valid payload to { staffId, role } on req.user', () => {
+  it('maps a valid payload to { staffId, pumpId, role } on req.user', () => {
     const strategy = new JwtStrategy();
     const result = strategy.validate({
       staffId: 'staff-1',
+      pumpId: 'pump-1',
       role: Role.OWNER,
       sub: 'staff-1',
     });
-    expect(result).toEqual({ staffId: 'staff-1', role: Role.OWNER });
+    expect(result).toEqual({ staffId: 'staff-1', pumpId: 'pump-1', role: Role.OWNER });
   });
 
-  it('rejects a payload missing staffId or role', () => {
+  it('rejects a payload missing staffId, pumpId, or role', () => {
     const strategy = new JwtStrategy();
     expect(() => strategy.validate({ sub: 'staff-1' } as never)).toThrow(
       UnauthorizedException,
     );
+    expect(() =>
+      strategy.validate({ staffId: 'staff-1', role: Role.OWNER, sub: 'staff-1' } as never),
+    ).toThrow(UnauthorizedException);
   });
 });

@@ -25,7 +25,7 @@ describe('CustomerAuthService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
-    customer: { findUnique: jest.Mock };
+    customer: { findFirst: jest.Mock };
   };
   let jwtService: { signAsync: jest.Mock };
   let otpProvider: { sendOtp: jest.Mock };
@@ -54,7 +54,7 @@ describe('CustomerAuthService', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
-      customer: { findUnique: jest.fn() },
+      customer: { findFirst: jest.fn() },
     };
     jwtService = { signAsync: jest.fn().mockResolvedValue('signed.customer.jwt') };
     otpProvider = { sendOtp: jest.fn().mockResolvedValue(undefined) };
@@ -80,7 +80,7 @@ describe('CustomerAuthService', () => {
       process.env.NODE_ENV = 'production';
       prisma.customerOtp.findFirst.mockResolvedValue(null);
       prisma.customerOtp.count.mockResolvedValue(0);
-      prisma.customer.findUnique.mockResolvedValue({ id: 'customer-1' });
+      prisma.customer.findFirst.mockResolvedValue({ id: 'customer-1' });
       let capturedCreateArgs: CustomerOtpCreateArgs | undefined;
       prisma.customerOtp.create.mockImplementation((args: CustomerOtpCreateArgs) => {
         capturedCreateArgs = args;
@@ -108,7 +108,7 @@ describe('CustomerAuthService', () => {
       process.env.NODE_ENV = 'development';
       prisma.customerOtp.findFirst.mockResolvedValue(null);
       prisma.customerOtp.count.mockResolvedValue(0);
-      prisma.customer.findUnique.mockResolvedValue(null);
+      prisma.customer.findFirst.mockResolvedValue(null);
       let capturedCodeHash = '';
       prisma.customerOtp.create.mockImplementation((args: CustomerOtpCreateArgs) => {
         capturedCodeHash = args.data.codeHash;
@@ -177,13 +177,14 @@ describe('CustomerAuthService', () => {
         capturedUpdateArgs = args;
         return Promise.resolve({ ...row, ...args.data });
       });
-      prisma.customer.findUnique.mockResolvedValue({
+      prisma.customer.findFirst.mockResolvedValue({
         id: 'customer-1',
+        pumpId: 'pump-1',
         name: 'Test Customer',
         phone: '9990000001',
         qrMemberId: 'PUMP001-CUST-00001-8',
         vehicleNumber: 'MH12AB1234',
-        tokenVersion: 2,
+        account: { tokenVersion: 2 },
       });
 
       const result = await service.verifyOtp({ phone: '9990000001', otp: code, requestId: 'otp-row-1' });
@@ -196,11 +197,13 @@ describe('CustomerAuthService', () => {
         qrMemberId: 'PUMP001-CUST-00001-8',
         vehicleNumber: 'MH12AB1234',
       });
-      // tokenVersion must be embedded as-is from the DB row at issuance time
-      // — this is the claim CustomerJwtStrategy re-checks on every request.
+      // tokenVersion must be embedded as-is from the account row at
+      // issuance time — this is the claim CustomerJwtStrategy re-checks on
+      // every request (Phase 0.2: moved from Customer to CustomerAccount).
       expect(jwtService.signAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           customerId: 'customer-1',
+          pumpId: 'pump-1',
           phone: '9990000001',
           scope: 'customer',
           tokenVersion: 2,
@@ -298,7 +301,7 @@ describe('CustomerAuthService', () => {
     it('rejects with a customer-facing NotFoundException when the OTP is correct but no Customer exists for the phone', async () => {
       const { row, code } = await makeOtpRow();
       prisma.customerOtp.findUnique.mockResolvedValue(row);
-      prisma.customer.findUnique.mockResolvedValue(null);
+      prisma.customer.findFirst.mockResolvedValue(null);
 
       const call = service.verifyOtp({ phone: '9990000001', otp: code, requestId: 'otp-row-1' });
       await expect(call).rejects.toBeInstanceOf(NotFoundException);
