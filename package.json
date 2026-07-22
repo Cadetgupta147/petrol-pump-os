@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "prisma db seed",
+    "provision-pump": "ts-node prisma/provision-pump.cts",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down"
   },

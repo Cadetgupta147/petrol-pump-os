@@ -426,5 +426,43 @@ required for isolation itself.
   **Also found and documented, not fixed** (belongs to the human/business
   side, not code): root `.env`'s `UPI_WEBHOOK_SIGNING_SECRET` is corrupted
   (Phase 3's finding) — still outstanding, unrelated to this phase.
-- [ ] Phase 5 — Pump provisioning script
+- [x] Phase 5 — Pump provisioning script (2026-07-22). Added
+  `prisma/provision-pump.cts`, run via `npm run provision-pump -- --pump-name
+  "..." --pump-code "..." --owner-name "..." --owner-phone "..."
+  --owner-password "..."` (all-flags, non-interactive — no TTY in this
+  environment). Creates, atomically in one `$transaction`: `Pump`, a
+  `MemberIdCounter` row for it (mandatory — `allocateQrMemberId()` throws
+  for a pump with none; Phase 0.2's migration backfill created one for the
+  seeded default pump, but nothing else did for a brand-new one until now),
+  and a `StaffAccount` + `Staff(role=OWNER)` membership pair. Pre-flight
+  checks reject a duplicate `pumpCode` or a phone that already has a
+  `StaffAccount` (phone is the global login identifier — must stay unique
+  across every pump) before the transaction opens, so a failed run never
+  leaves partial data. `CreditConfig`/`BusinessProfile`/`LoyaltyConfig` are
+  deliberately NOT created here — confirmed each is a lazy
+  upsert-on-first-access (e.g. `CreditConfigService.getOrCreate()`), so
+  they self-heal the first time the new pump's Owner touches any of those
+  features.
+
+  **`.cts` extension is deliberate, not a typo**: this repo has no root
+  `tsconfig.json`, so a plain `ts-node prisma/provision-pump.ts` gets
+  misdetected as ESM (`Unknown file extension ".ts"`) — discovered live
+  when the obvious `--compiler-options {"module":"CommonJS"}` CLI flag
+  (the same one `prisma/seed.ts` uses, invoked via `npx prisma db seed`)
+  turned out to break under `npm run`'s argument quoting on Windows
+  (reproduced in both Git Bash and PowerShell — not a Bash-tool quirk).
+  `.cts` gives Node/ts-node unconditional CommonJS treatment regardless of
+  nearest `package.json`/`tsconfig.json`, sidestepping the whole problem
+  without touching `seed.ts`'s own already-working (if equally fragile)
+  invocation path.
+
+  Verified live against the real Supabase dev DB: full run producing a
+  real `Pump` + `MemberIdCounter` + `StaffAccount` + `Staff(OWNER)`,
+  confirmed by direct query; the new Owner's real login (`POST
+  /auth/login`) succeeded with the correct `pumpId`/`role` in the JWT and
+  a wrong-password attempt correctly 401'd; both duplicate-`pumpCode` and
+  duplicate-phone pre-flight checks correctly rejected with no partial
+  writes. All test data cleaned up afterward. Backend suite unaffected
+  (this phase doesn't touch any service code): 42 suites/407 tests still
+  green.
 - [ ] Phase 6 — Frontend verification pass
