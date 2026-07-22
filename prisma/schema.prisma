@@ -96,6 +96,7 @@ model Pump {
   creditConfigs          CreditConfig[]
   businessProfiles       BusinessProfile[]
   creditLimitAlerts      CreditLimitAlert[]
+  nozzles                Nozzle[]
   meterReadings          MeterReading[]
   tanks                  Tank[]
   dipReadings            DipReading[]
@@ -438,22 +439,60 @@ model CreditLimitAlert {
 
 // ---------- Meter Readings / Tanks ----------
 
+// Section 3.3/4 — Nozzle master entity. Closes the gap this schema used to
+// flag on MeterReading.productType ("no Nozzle master entity"). A dealer
+// configures their pump's actual physical nozzle/meter count once, here —
+// deliberately just a flat list scoped to the tenant pump (no fixed count,
+// no hardcoded per-pump layout) since different pumps have different
+// nozzle/gun counts and that must stay dealer-configurable, not baked into
+// the schema. Every nozzle picker in the DSM app and web portal reads this
+// list and renders a dropdown over it — nozzleId is never free-typed by a
+// DSM again (see MeterReading.nozzleId below).
+//
+// startingReading is a ONE-TIME baseline, set when the nozzle is first
+// configured (e.g. onboarding an already-running pump whose meter isn't at
+// zero). It is read exactly once: the nozzle's very first-ever shift. Every
+// shift after that carries the previous shift's closingReading forward as
+// the new shift's openingReading instead — see
+// MeterReadingsService.openShift()'s resolveOpeningReading() — which is
+// also why startingReading must not be edited once any MeterReading exists
+// against this nozzle (NozzlesService.update() enforces that).
+model Nozzle {
+  id              String   @id @default(cuid())
+  pump            Pump     @relation(fields: [pumpId], references: [id])
+  pumpId          String
+  label           String // dealer-defined display label shown in every dropdown, e.g. "N1", "P3"
+  productType     String // e.g. PETROL/DIESEL/SPEED — ties this nozzle to a Tank.productType
+  startingReading Float // one-time baseline; superseded by carry-forward after the first shift
+  isActive        Boolean  @default(true) // soft-disable instead of delete once a nozzle has reading history
+  createdAt       DateTime @default(now())
+
+  meterReadings MeterReading[]
+
+  @@unique([pumpId, label])
+}
+
 model MeterReading {
   id             String    @id @default(cuid())
   pump           Pump      @relation(fields: [pumpId], references: [id])
   pumpId         String
+  nozzle         Nozzle    @relation(fields: [nozzleId], references: [id])
   nozzleId       String
   staff          Staff     @relation(fields: [staffId], references: [id])
   staffId        String
+  // Server-derived, never client-supplied — see openShift()'s
+  // resolveOpeningReading(): carried forward from this nozzle's last closed
+  // shift, or Nozzle.startingReading for its first-ever shift. A DSM (or any
+  // caller) cannot set or edit this value directly.
   openingReading Float
   closingReading Float?
   shiftStart     DateTime  @default(now())
   shiftEnd       DateTime?
   // Section 7.2 — product dispensed by this nozzle for this shift, captured
-  // at open-shift time. There is no Nozzle master entity in this schema (see
-  // apps/backend/src/tanks task spec), so this is how closeShift() resolves
-  // which Tank to auto-deduct. Nullable so existing pre-Section-7 rows don't
-  // need a migration backfill; OpenShiftDto requires it for all new shifts.
+  // at open-shift time from Nozzle.productType (also server-derived, not
+  // client-supplied — see openShift()). This is how closeShift() resolves
+  // which Tank to auto-deduct. Still nullable only because pre-Nozzle-master
+  // legacy rows may have it null; every shift opened from here on always has it.
   productType    String?
 }
 

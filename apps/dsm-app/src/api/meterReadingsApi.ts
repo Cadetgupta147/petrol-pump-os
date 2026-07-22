@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '../config';
+import type { Nozzle } from './nozzlesApi';
 
 // Mirrors the backend contract exactly (apps/backend/src/meter-readings/*,
 // Section 3.3 / Section 4 "Shift start/end: meter reading"). All routes here
@@ -7,6 +8,11 @@ import { API_BASE_URL } from '../config';
 export interface MeterReading {
   id: string;
   nozzleId: string;
+  // Section 3.3/4 — the full Nozzle master row this reading's nozzleId
+  // points at, always included server-side (`include: { nozzle: true }`) so
+  // this screen can show the dealer-facing label/product without a second
+  // round trip.
+  nozzle: Nozzle;
   staffId: string;
   openingReading: number;
   closingReading: number | null;
@@ -86,8 +92,12 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+// Section 3.3/4 — openingReading and productType are DELIBERATELY ABSENT
+// from params: both are now server-derived (the carry-forward rule +
+// Nozzle.productType). A DSM picks a nozzleId from GET /nozzles and cannot
+// set or edit the opening reading at all.
 export async function openShift(
-  params: { nozzleId: string; staffId: string; openingReading: number },
+  params: { nozzleId: string; staffId: string },
   accessToken: string,
 ): Promise<MeterReading> {
   return request<MeterReading>('/meter-readings', {

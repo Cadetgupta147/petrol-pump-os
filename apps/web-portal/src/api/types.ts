@@ -132,16 +132,54 @@ export interface UpdateBillRequest {
   rateApplied?: number;
 }
 
+// GET /nozzles — Section 3.3/4 Nozzle master (Settings: "how many nozzles/
+// meters does this pump have"). nextOpeningReading is server-computed on
+// every read (never persisted) — the carry-forward rule's result: this
+// nozzle's last closed shift's closingReading, or startingReading if it's
+// never had one. This is what the DSM app's/web portal's shift-open picker
+// shows as a READ-ONLY preview before submitting — never an editable field.
+export interface Nozzle {
+  id: string;
+  label: string;
+  productType: string;
+  startingReading: number;
+  isActive: boolean;
+  createdAt: string;
+  nextOpeningReading: number;
+}
+
+// Mirrors apps/backend/src/nozzles/dto/create-nozzle.dto.ts.
+export interface CreateNozzleRequest {
+  label: string;
+  productType: string;
+  startingReading: number;
+}
+
+// Mirrors apps/backend/src/nozzles/dto/update-nozzle.dto.ts — any subset.
+// NozzlesService.update() rejects a startingReading change once the nozzle
+// has any shift history (409) — surfaced as an ApiError, not re-validated
+// client-side.
+export interface UpdateNozzleRequest {
+  label?: string;
+  productType?: string;
+  startingReading?: number;
+  isActive?: boolean;
+}
+
 export interface MeterReading {
   id: string;
   nozzleId: string;
+  // Section 3.3/4 — the full Nozzle master row this reading's nozzleId
+  // points at, always included server-side (see MeterReadingsService's
+  // `include: { nozzle: true }`) so every table/label in this app can show
+  // the dealer-facing label/productType without a second round trip.
+  nozzle: Nozzle;
   staffId: string;
   openingReading: number;
   closingReading: number | null;
   // Section 7.2 — product dispensed by this nozzle for this shift, captured
-  // at open-shift time (closeShift() uses it to resolve which Tank to
-  // auto-deduct). Nullable only for legacy pre-Section-7 rows — every shift
-  // opened through this page's form sends it.
+  // at open-shift time. Nullable only for legacy pre-Nozzle-master rows —
+  // every shift opened from here on derives it from nozzle.productType.
   productType: string | null;
   shiftStart: string;
   shiftEnd: string | null;
@@ -155,6 +193,11 @@ export interface MeterReading {
 
 // Mirrors apps/backend/src/meter-readings/dto/open-shift.dto.ts.
 //
+// openingReading and productType are DELIBERATELY ABSENT — both are now
+// server-derived (the carry-forward rule + Nozzle.productType). A caller
+// picks a nozzleId from GET /nozzles and cannot set or edit the opening
+// reading at all; see OpenShiftDto's own comment for why.
+//
 // Finding A1 (docs/production-readiness.md) — staffId is OPTIONAL and
 // defaults server-side to the authenticated caller when omitted; a non-DSM
 // caller may still set it to assign the shift to a different staff member
@@ -162,8 +205,6 @@ export interface MeterReading {
 export interface OpenShiftRequest {
   nozzleId: string;
   staffId?: string;
-  openingReading: number;
-  productType: string;
 }
 
 // Mirrors apps/backend/src/meter-readings/dto/close-shift.dto.ts.
@@ -174,6 +215,7 @@ export interface CloseShiftRequest {
 export interface MeterVariance {
   meterReadingId: string;
   nozzleId: string;
+  nozzleLabel: string;
   staffId: string;
   shiftStart: string;
   shiftEnd: string;

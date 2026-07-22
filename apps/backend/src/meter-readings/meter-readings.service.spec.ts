@@ -23,14 +23,24 @@ const managerCaller: AuthenticatedUser = {
   role: Role.MANAGER,
 };
 
-// Section 3.3 (pre-existing, previously untested — this file closes that
-// pre-existing gap, per the task spec) + Section 7.2 step 2 (tank
-// auto-deduction on shift close, added by this slice). Covers only what this
-// slice touches: openShift's new productType field, and closeShift's tank
-// auto-deduction / tankWarning behavior. Section 3.3's other pre-existing
-// behavior (checkVariance's litres-billed approximation, etc.) is left
-// uncovered here — out of scope for this task, flagged, not silently
-// expanded beyond what was asked.
+const activeNozzle = {
+  id: 'n1',
+  pumpId: 'pump-1',
+  label: 'N1',
+  productType: 'petrol',
+  startingReading: 100,
+  isActive: true,
+  createdAt: new Date(),
+};
+
+// Section 3.3 (pre-existing) + Section 7.2 step 2 (tank auto-deduction on
+// shift close) + Section 3.3/4 Nozzle master carry-forward (this slice):
+// openShift() no longer accepts openingReading/productType from the client
+// at all — both are derived from the Nozzle master and the carry-forward
+// rule (this nozzle's last closed shift's closingReading, or
+// Nozzle.startingReading if it's never had one). That's the rule-heavy
+// behavior this file focuses new coverage on; checkVariance's litres-billed
+// approximation etc. remain out of scope here, as before.
 describe('MeterReadingsService', () => {
   let service: MeterReadingsService;
 
@@ -43,6 +53,7 @@ describe('MeterReadingsService', () => {
       create: jest.Mock;
       update: jest.Mock;
     };
+    nozzle: { findUnique: jest.Mock };
     tank: { findFirst: jest.Mock; update: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -50,11 +61,12 @@ describe('MeterReadingsService', () => {
   beforeEach(async () => {
     prisma = {
       meterReading: {
-        findFirst: jest.fn().mockResolvedValue(null), // no open shift by default
+        findFirst: jest.fn().mockResolvedValue(null), // no open shift / no prior closed shift by default
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
       },
+      nozzle: { findUnique: jest.fn().mockResolvedValue(activeNozzle) },
       tank: { findFirst: jest.fn(), update: jest.fn() },
       $transaction: jest.fn((cb: TxCallback) => cb(prisma)),
     };
@@ -78,7 +90,7 @@ describe('MeterReadingsService', () => {
   }
 
   describe('openShift', () => {
-    it('persists productType on the MeterReading row', async () => {
+    it('derives openingReading (from Nozzle.startingReading) and productType (from the Nozzle) — never from the request body', async () => {
       prisma.meterReading.create.mockResolvedValue({
         id: 'mr-1',
         nozzleId: 'n1',
@@ -88,27 +100,65 @@ describe('MeterReadingsService', () => {
         shiftStart: new Date(),
         shiftEnd: null,
         productType: 'petrol',
+        nozzle: activeNozzle,
       });
 
-      await openShift(
-        {
-          nozzleId: 'n1',
-          staffId: 's1',
-          openingReading: 100,
-          productType: 'petrol',
-        },
-        dsmCaller,
-      );
+      await openShift({ nozzleId: 'n1', staffId: 's1' }, dsmCaller);
 
       expect(prisma.meterReading.create).toHaveBeenCalledWith({
         data: {
           pumpId: 'pump-1',
           nozzleId: 'n1',
           staffId: 's1',
-          openingReading: 100,
+          openingReading: 100, // == activeNozzle.startingReading — no prior closed shift
           productType: 'petrol',
         },
+        include: { nozzle: true },
       });
+    });
+
+    it("carries forward the nozzle's last closed shift's closingReading as the new shift's openingReading", async () => {
+      // First findFirst call = the "already has an open shift?" check (none);
+      // second = resolveOpeningReading()'s "last closed shift" lookup.
+      prisma.meterReading.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ closingReading: 5000 });
+      prisma.meterReading.create.mockResolvedValue({ id: 'mr-2' });
+
+      await openShift({ nozzleId: 'n1', staffId: 's1' }, dsmCaller);
+
+      expect(prisma.meterReading.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ openingReading: 5000 }),
+        }),
+      );
+    });
+
+    it('404s when the nozzle does not exist', async () => {
+      prisma.nozzle.findUnique.mockResolvedValue(null);
+
+      await expect(
+        openShift({ nozzleId: 'does-not-exist', staffId: 's1' }, dsmCaller),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.meterReading.create).not.toHaveBeenCalled();
+    });
+
+    it('404s when the nozzle has been soft-disabled (isActive: false)', async () => {
+      prisma.nozzle.findUnique.mockResolvedValue({ ...activeNozzle, isActive: false });
+
+      await expect(
+        openShift({ nozzleId: 'n1', staffId: 's1' }, dsmCaller),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.meterReading.create).not.toHaveBeenCalled();
+    });
+
+    it('409s when the nozzle already has an open shift', async () => {
+      prisma.meterReading.findFirst.mockResolvedValueOnce({ id: 'open-shift-1' });
+
+      await expect(
+        openShift({ nozzleId: 'n1', staffId: 's1' }, dsmCaller),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.meterReading.create).not.toHaveBeenCalled();
     });
 
     // Finding A1 (docs/production-readiness.md) — resolveAssignableActorId()
@@ -116,10 +166,7 @@ describe('MeterReadingsService', () => {
     it('defaults staffId to the caller when omitted', async () => {
       prisma.meterReading.create.mockResolvedValue({ id: 'mr-1' });
 
-      await openShift(
-        { nozzleId: 'n1', openingReading: 100, productType: 'petrol' },
-        dsmCaller,
-      );
+      await openShift({ nozzleId: 'n1' }, dsmCaller);
 
       expect(prisma.meterReading.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ staffId: 's1' }) }),
@@ -128,10 +175,7 @@ describe('MeterReadingsService', () => {
 
     it('rejects a DSM caller opening a shift assigned to a different staff member', async () => {
       await expect(
-        openShift(
-          { nozzleId: 'n1', staffId: 'other-staff', openingReading: 100, productType: 'petrol' },
-          dsmCaller,
-        ),
+        openShift({ nozzleId: 'n1', staffId: 'other-staff' }, dsmCaller),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.meterReading.create).not.toHaveBeenCalled();
     });
@@ -139,10 +183,7 @@ describe('MeterReadingsService', () => {
     it('allows a non-DSM caller to open a shift assigned to a different staff member', async () => {
       prisma.meterReading.create.mockResolvedValue({ id: 'mr-1' });
 
-      await openShift(
-        { nozzleId: 'n1', staffId: 'other-staff', openingReading: 100, productType: 'petrol' },
-        managerCaller,
-      );
+      await openShift({ nozzleId: 'n1', staffId: 'other-staff' }, managerCaller);
 
       expect(prisma.meterReading.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ staffId: 'other-staff' }) }),
@@ -151,7 +192,7 @@ describe('MeterReadingsService', () => {
   });
 
   describe('closeShift', () => {
-    const openShift = {
+    const openShiftRow = {
       id: 'mr-1',
       nozzleId: 'n1',
       staffId: 's1',
@@ -172,7 +213,7 @@ describe('MeterReadingsService', () => {
 
     it('409s if the shift is already closed', async () => {
       prisma.meterReading.findUnique.mockResolvedValue({
-        ...openShift,
+        ...openShiftRow,
         closingReading: 150,
         shiftEnd: new Date(),
       });
@@ -183,7 +224,7 @@ describe('MeterReadingsService', () => {
     });
 
     it('400s if closingReading is less than openingReading', async () => {
-      prisma.meterReading.findUnique.mockResolvedValue(openShift);
+      prisma.meterReading.findUnique.mockResolvedValue(openShiftRow);
 
       await expect(
         service.closeShift('mr-1', { closingReading: 50 }),
@@ -191,11 +232,12 @@ describe('MeterReadingsService', () => {
     });
 
     it('decrements the matching tank by litresSold and returns no tankWarning when a Tank matches', async () => {
-      prisma.meterReading.findUnique.mockResolvedValue(openShift);
+      prisma.meterReading.findUnique.mockResolvedValue(openShiftRow);
       prisma.meterReading.update.mockResolvedValue({
-        ...openShift,
+        ...openShiftRow,
         closingReading: 150,
         shiftEnd: new Date(),
+        nozzle: activeNozzle,
       });
       prisma.tank.findFirst.mockResolvedValue({
         id: 'tank-1',
@@ -218,11 +260,12 @@ describe('MeterReadingsService', () => {
     });
 
     it('returns tankWarning (does NOT block the close) when no Tank matches the productType', async () => {
-      prisma.meterReading.findUnique.mockResolvedValue(openShift);
+      prisma.meterReading.findUnique.mockResolvedValue(openShiftRow);
       prisma.meterReading.update.mockResolvedValue({
-        ...openShift,
+        ...openShiftRow,
         closingReading: 150,
         shiftEnd: new Date(),
+        nozzle: activeNozzle,
       });
       prisma.tank.findFirst.mockResolvedValue(null);
 
@@ -238,14 +281,15 @@ describe('MeterReadingsService', () => {
 
     it('returns tankWarning (does NOT block the close) for a legacy shift with no productType', async () => {
       prisma.meterReading.findUnique.mockResolvedValue({
-        ...openShift,
+        ...openShiftRow,
         productType: null,
       });
       prisma.meterReading.update.mockResolvedValue({
-        ...openShift,
+        ...openShiftRow,
         productType: null,
         closingReading: 150,
         shiftEnd: new Date(),
+        nozzle: activeNozzle,
       });
 
       const result = await service.closeShift('mr-1', { closingReading: 150 });

@@ -40,8 +40,8 @@ export function CloseShiftModal({ reading, onClose, onSaved }: CloseShiftModalPr
         <div className="section-title">
           <h3>Close shift</h3>
           <span className="section-note">
-            Nozzle {reading.nozzleId} &middot; opened {formatTime(reading.shiftStart)} &middot; opening reading{' '}
-            {reading.openingReading.toFixed(1)}
+            Nozzle {reading.nozzle.label} ({reading.nozzle.productType}) &middot; opened{' '}
+            {formatTime(reading.shiftStart)} &middot; opening reading {reading.openingReading.toFixed(1)}
           </span>
         </div>
 

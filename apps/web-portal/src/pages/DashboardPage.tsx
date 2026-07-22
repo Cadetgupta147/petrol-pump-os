@@ -228,7 +228,7 @@ export function DashboardPage() {
       if (variance.flagged) {
         list.push({
           id: `variance-${readingId}`,
-          title: `Nozzle ${variance.nozzleId}: meter-vs-billed variance ${variance.variance > 0 ? '+' : ''}${variance.variance.toFixed(1)} L`,
+          title: `Nozzle ${variance.nozzleLabel}: meter-vs-billed variance ${variance.variance > 0 ? '+' : ''}${variance.variance.toFixed(1)} L`,
           sub: `tolerance is ±${variance.toleranceLitres} L for this shift`,
           severity: 'red',
         });

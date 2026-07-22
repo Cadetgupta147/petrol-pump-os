@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -11,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import type { StaffSummary } from '../api/authApi';
+import { listNozzles, NozzlesApiError, type Nozzle } from '../api/nozzlesApi';
 import {
   closeShift,
   listMeterReadings,
@@ -28,26 +31,30 @@ interface Props {
 // Section 3.3 / Section 4 — "Shift start: opening meter reading" and "Shift
 // end: closing meter reading" (litres sold auto-computed by the backend).
 //
-// There is no Nozzle model/endpoint (per task spec) — nozzleId is a
-// free-text field, so this is a plain text input, not a picker.
-//
-// Flow: DSM types a nozzle id and taps "Check Nozzle" — this fetches
-// GET /meter-readings and filters client-side for an open shift
-// (closingReading === null) on that nozzle, since the backend has no
-// ?nozzleId= filter. Depending on what's found, the screen then shows
-// either "open a new shift" (no open shift found) or "close this shift"
-// (an open shift exists) controls.
+// Section 3.3/4 Nozzle master rework: nozzleId is now picked from a real
+// dropdown (GET /nozzles, dealer-configured under Settings on the web
+// portal) instead of a free-typed field — a DSM can no longer mistype a
+// nozzle id. Picking a nozzle immediately checks for an open shift on it
+// (no separate "Check Nozzle" button anymore — see handleSelectNozzle()).
+// Opening reading is NEVER a form field here: it's shown read-only
+// (nozzle.nextOpeningReading, the carry-forward rule's result — this
+// nozzle's last closed shift's closingReading, or its configured
+// startingReading if it's never had one) and the backend derives the real
+// value itself when the shift is actually opened.
 export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
-  const [nozzleId, setNozzleId] = useState('');
+  const [nozzles, setNozzles] = useState<Nozzle[] | null>(null);
+  const [nozzlesError, setNozzlesError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectedNozzleId, setSelectedNozzleId] = useState<string | null>(null);
+
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
-  // undefined = not checked yet for the current nozzleId; null = checked,
-  // no open shift found; MeterReading = checked, open shift found.
+  // undefined = not checked yet; null = checked, no open shift found;
+  // MeterReading = checked, open shift found.
   const [openShiftForNozzle, setOpenShiftForNozzle] = useState<MeterReading | null | undefined>(
     undefined,
   );
 
-  const [openingReadingInput, setOpeningReadingInput] = useState('');
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
 
@@ -56,36 +63,43 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closedResult, setClosedResult] = useState<MeterReading | null>(null);
 
-  const resetCheckState = () => {
+  useEffect(() => {
+    let cancelled = false;
+    listNozzles(accessToken)
+      .then((result) => {
+        if (!cancelled) setNozzles(result);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setNozzlesError(
+          error instanceof NozzlesApiError ? error.message : 'Something went wrong. Please try again.',
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  const selectedNozzle = nozzles?.find((n) => n.id === selectedNozzleId) ?? null;
+
+  async function handleSelectNozzle(nozzle: Nozzle) {
+    setPickerOpen(false);
+    setSelectedNozzleId(nozzle.id);
     setOpenShiftForNozzle(undefined);
     setCheckError(null);
     setOpenError(null);
     setCloseError(null);
     setClosedResult(null);
-    setOpeningReadingInput('');
     setClosingReadingInput('');
-  };
 
-  const handleNozzleIdChange = (value: string) => {
-    setNozzleId(value);
-    // Changing the nozzle id invalidates whatever we last checked.
-    resetCheckState();
-  };
-
-  const handleCheckNozzle = async () => {
-    const trimmedNozzleId = nozzleId.trim();
-    if (!trimmedNozzleId) return;
     setChecking(true);
-    setCheckError(null);
-    setClosedResult(null);
     try {
       const readings = await listMeterReadings(accessToken);
       // Newest first per the backend contract — the first match for this
       // nozzle that's still open is the current open shift, if any.
       const openShiftMatch =
-        readings.find(
-          (reading) => reading.nozzleId === trimmedNozzleId && reading.closingReading === null,
-        ) ?? null;
+        readings.find((reading) => reading.nozzleId === nozzle.id && reading.closingReading === null) ??
+        null;
       setOpenShiftForNozzle(openShiftMatch);
     } catch (error) {
       const message =
@@ -95,27 +109,17 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
     } finally {
       setChecking(false);
     }
-  };
+  }
 
   const handleOpenShift = async () => {
-    const trimmedNozzleId = nozzleId.trim();
-    const openingReading = Number(openingReadingInput);
-    if (!trimmedNozzleId) return;
-    if (!openingReadingInput.trim() || Number.isNaN(openingReading) || openingReading < 0) {
-      setOpenError('Enter a valid opening reading (0 or more).');
-      return;
-    }
+    if (!selectedNozzleId) return;
     setOpening(true);
     setOpenError(null);
     try {
-      const created = await openShift(
-        { nozzleId: trimmedNozzleId, staffId: staff.id, openingReading },
-        accessToken,
-      );
+      const created = await openShift({ nozzleId: selectedNozzleId, staffId: staff.id }, accessToken);
       // Immediately reflect the newly-opened shift so the DSM can close it
       // later in the same session without re-checking.
       setOpenShiftForNozzle(created);
-      setOpeningReadingInput('');
     } catch (error) {
       const message =
         error instanceof MeterReadingsApiError ? error.message : 'Something went wrong. Please try again.';
@@ -164,29 +168,56 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Meter Reading</Text>
 
-        <Text style={styles.label}>Nozzle ID</Text>
-        <TextInput
-          style={styles.input}
-          value={nozzleId}
-          onChangeText={handleNozzleIdChange}
-          placeholder="e.g. N1"
-          autoCapitalize="characters"
-          editable={!checking}
-          testID="nozzle-id-input"
-        />
+        <Text style={styles.label}>Nozzle</Text>
+        {nozzlesError ? (
+          <Text style={styles.error} testID="nozzles-error">
+            {nozzlesError}
+          </Text>
+        ) : !nozzles ? (
+          <ActivityIndicator style={{ marginBottom: 12 }} />
+        ) : nozzles.length === 0 ? (
+          <Text style={styles.error}>
+            No nozzles are configured yet — ask the owner/accountant to add this pump&rsquo;s nozzles under
+            Settings on the web portal.
+          </Text>
+        ) : (
+          <Pressable
+            style={styles.picker}
+            onPress={() => setPickerOpen(true)}
+            testID="nozzle-picker-button"
+          >
+            <Text style={selectedNozzle ? styles.pickerValue : styles.pickerPlaceholder}>
+              {selectedNozzle ? `${selectedNozzle.label} · ${selectedNozzle.productType}` : 'Select nozzle'}
+            </Text>
+          </Pressable>
+        )}
 
-        <Pressable
-          style={[styles.buttonSecondary, (!nozzleId.trim() || checking) && styles.buttonDisabled]}
-          onPress={() => { void handleCheckNozzle(); }}
-          disabled={!nozzleId.trim() || checking}
-          testID="check-nozzle-button"
-        >
-          {checking ? (
-            <ActivityIndicator color="#1a73e8" />
-          ) : (
-            <Text style={styles.buttonSecondaryText}>Check Nozzle</Text>
-          )}
-        </Pressable>
+        <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+          <Pressable style={styles.modalOverlay} onPress={() => setPickerOpen(false)}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Select nozzle</Text>
+              <FlatList
+                data={nozzles ?? []}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <Pressable
+                    style={styles.modalOption}
+                    onPress={() => {
+                      void handleSelectNozzle(item);
+                    }}
+                    testID={`nozzle-option-${item.label}`}
+                  >
+                    <Text style={styles.modalOptionText}>
+                      {item.label} · {item.productType}
+                    </Text>
+                  </Pressable>
+                )}
+              />
+            </View>
+          </Pressable>
+        </Modal>
+
+        {checking ? <ActivityIndicator style={{ marginVertical: 12 }} color="#1a73e8" /> : null}
 
         {checkError ? (
           <Text style={styles.error} testID="check-error">
@@ -203,65 +234,68 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
           </View>
         ) : null}
 
-        {openShiftForNozzle === undefined ? null : openShiftForNozzle === null ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionHeading}>No open shift for this nozzle</Text>
-            <Text style={styles.label}>Opening Reading</Text>
-            <TextInput
-              style={styles.input}
-              value={openingReadingInput}
-              onChangeText={setOpeningReadingInput}
-              placeholder="e.g. 12345.6"
-              keyboardType="decimal-pad"
-              editable={!opening}
-              testID="opening-reading-input"
-            />
-            {openError ? (
-              <Text style={styles.error} testID="open-error">
-                {openError}
-              </Text>
+        {!checking && openShiftForNozzle === undefined
+          ? null
+          : !checking && openShiftForNozzle === null && selectedNozzle ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionHeading}>No open shift for this nozzle</Text>
+                <Text style={styles.resultLine}>
+                  Opening reading (carried forward — not editable): {selectedNozzle.nextOpeningReading.toFixed(1)}
+                </Text>
+                <Text style={styles.hint}>
+                  This is the previous shift&rsquo;s closing reading, or this nozzle&rsquo;s configured starting
+                  reading if it&rsquo;s never had a shift.
+                </Text>
+                {openError ? (
+                  <Text style={styles.error} testID="open-error">
+                    {openError}
+                  </Text>
+                ) : null}
+                <Pressable
+                  style={[styles.button, opening && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handleOpenShift();
+                  }}
+                  disabled={opening}
+                  testID="open-shift-button"
+                >
+                  {opening ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Open Shift</Text>}
+                </Pressable>
+              </View>
+            ) : !checking && openShiftForNozzle ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionHeading}>Open shift found</Text>
+                <Text style={styles.resultLine}>Opening reading: {openShiftForNozzle.openingReading}</Text>
+                <Text style={styles.resultLine}>
+                  Shift start: {new Date(openShiftForNozzle.shiftStart).toLocaleString()}
+                </Text>
+                <Text style={styles.label}>Closing Reading</Text>
+                <TextInput
+                  style={styles.input}
+                  value={closingReadingInput}
+                  onChangeText={setClosingReadingInput}
+                  placeholder="e.g. 12400.2"
+                  keyboardType="decimal-pad"
+                  editable={!closing}
+                  testID="closing-reading-input"
+                />
+                {closeError ? (
+                  <Text style={styles.error} testID="close-error">
+                    {closeError}
+                  </Text>
+                ) : null}
+                <Pressable
+                  style={[styles.button, closing && styles.buttonDisabled]}
+                  onPress={() => {
+                    void handleCloseShift();
+                  }}
+                  disabled={closing}
+                  testID="close-shift-button"
+                >
+                  {closing ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Close Shift</Text>}
+                </Pressable>
+              </View>
             ) : null}
-            <Pressable
-              style={[styles.button, opening && styles.buttonDisabled]}
-              onPress={() => { void handleOpenShift(); }}
-              disabled={opening}
-              testID="open-shift-button"
-            >
-              {opening ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Open Shift</Text>}
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.section}>
-            <Text style={styles.sectionHeading}>Open shift found</Text>
-            <Text style={styles.resultLine}>Opening reading: {openShiftForNozzle.openingReading}</Text>
-            <Text style={styles.resultLine}>
-              Shift start: {new Date(openShiftForNozzle.shiftStart).toLocaleString()}
-            </Text>
-            <Text style={styles.label}>Closing Reading</Text>
-            <TextInput
-              style={styles.input}
-              value={closingReadingInput}
-              onChangeText={setClosingReadingInput}
-              placeholder="e.g. 12400.2"
-              keyboardType="decimal-pad"
-              editable={!closing}
-              testID="closing-reading-input"
-            />
-            {closeError ? (
-              <Text style={styles.error} testID="close-error">
-                {closeError}
-              </Text>
-            ) : null}
-            <Pressable
-              style={[styles.button, closing && styles.buttonDisabled]}
-              onPress={() => { void handleCloseShift(); }}
-              disabled={closing}
-              testID="close-shift-button"
-            >
-              {closing ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Close Shift</Text>}
-            </Pressable>
-          </View>
-        )}
 
         <Pressable style={styles.backButton} onPress={onBack} testID="meter-reading-back-button">
           <Text style={styles.backButtonText}>Back</Text>
@@ -300,8 +334,57 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 12,
   },
+  picker: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    marginBottom: 12,
+  },
+  pickerPlaceholder: {
+    fontSize: 16,
+    color: '#999',
+  },
+  pickerValue: {
+    fontSize: 16,
+    color: '#111',
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    maxHeight: '60%',
+    paddingVertical: 8,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  modalOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  modalOptionText: {
+    fontSize: 16,
+  },
   error: {
     color: '#b00020',
+    marginBottom: 12,
+  },
+  hint: {
+    fontSize: 12,
+    color: '#777',
     marginBottom: 12,
   },
   section: {
@@ -344,19 +427,6 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  buttonSecondary: {
-    borderWidth: 1,
-    borderColor: '#1a73e8',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  buttonSecondaryText: {
-    color: '#1a73e8',
     fontSize: 16,
     fontWeight: '600',
   },

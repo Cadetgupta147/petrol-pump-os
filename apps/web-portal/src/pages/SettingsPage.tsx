@@ -6,6 +6,7 @@ import { downloadTallyExport } from '../api/tallyExport';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { todayIsoDate } from '../utils/format';
+import { NozzleSettings } from '../components/settings/NozzleSettings';
 import type { BusinessProfile } from '../api/types';
 
 const ROLE_REFERENCE: { role: string; canDo: string; cannotDo: string }[] = [
@@ -23,6 +24,7 @@ const ROLE_REFERENCE: { role: string; canDo: string; cannotDo: string }[] = [
 export function SettingsPage() {
   const { staff } = useAuth();
   const isOwner = staff?.role === 'OWNER';
+  const canManageNozzles = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT';
 
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -167,6 +169,8 @@ export function SettingsPage() {
             )
           )}
         </div>
+
+        <NozzleSettings canManage={canManageNozzles} />
 
         <div className="section">
           <div className="section-title">

@@ -125,6 +125,28 @@ Every feature below includes **what it does, why it exists, and how it works** �
 
 **Why it exists:** the meter is the ground truth for how much fuel physically left the tank. Bills are what customers were charged. If these two numbers don't match over time, either someone is under-billing (theft or error) or the meter itself has drifted — both need immediate attention, which is why this is a flag, not just a report you'd have to go looking for.
 
+#### 3.3.1 Nozzle Master (Settings) — resolved, no longer an open item
+
+*(Researched against Softgum, Petro360, PumpManager, and similar Indian petrol-pump ERPs before implementation — see the "Researched but deliberately deferred" note below for what that research surfaced beyond this slice's scope.)*
+
+**What it does:** a Settings-level configuration screen (Owner/Accountant) where the dealer registers exactly how many physical nozzles/meters this pump has, before any shift is ever opened against them.
+
+- **Flexible count, not hardcoded** — different pumps have a different number of guns/nozzles (a small pump might have 4, a highway pump 12+), so this is a plain dealer-managed list scoped to the pump, never a fixed schema-level count.
+- Each nozzle has: a dealer-chosen **label** (e.g. "N1", "P3" — shown everywhere a nozzle is picked), a **product type** (ties it to a Tank, Section 7.1), and a one-time **starting reading** — the baseline for that nozzle's very first-ever shift (relevant when onboarding a pump that's already running and whose meters aren't at zero).
+- A nozzle can be **soft-disabled** (not deleted) once it has reading history, so its past shifts stay intact but it drops out of new shift-start pickers.
+
+**Carry-forward rule (closes the "DSM shouldn't be able to edit the opening reading" gap):** a nozzle's opening reading is never typed by anyone, ever, after its first shift. When a new shift is opened on a nozzle:
+
+1. If that nozzle has a previous **closed** shift, its opening reading = that shift's closing reading, automatically.
+2. If it has never had a shift before, its opening reading = the nozzle's one-time configured starting reading.
+3. Either way, the value is computed server-side and returned read-only — there is no form field for it, on the web portal or the DSM app, so it cannot be typed, edited, or spoofed by a client.
+
+**Dropdown, not free text:** every place a nozzle is selected (DSM app shift start/close, web portal meter-reading forms and filters) reads the Nozzle Master list and renders a picker over it. A DSM never types a nozzle id.
+
+**Researched but deliberately deferred (not built in this slice):** several competitor products (and the reference screenshot this feature was speced from) additionally track **Testing** (fuel drawn off for equipment calibration, not a sale), **Transfer** (fuel moved between nozzles/tanks for reconciliation), and **Lube** (lubricant dispensed alongside a fuel sale) as separate adjustment columns per shift, with litres sold computed as `(closing − opening) − testing − transfer` rather than the plain `closing − opening` this build uses. This is a real, common pattern worth adopting later, but is a separate vertical slice (new MeterReading fields + variance-formula change) — flagged here rather than silently folded into this one.
+
+**Database entity:** `Nozzle { id, pump_id, label, product_type, starting_reading, is_active }`. `MeterReading.nozzle_id` is a real foreign key to this table (previously free text — see Section 13).
+
 ### 3.4 Credit Customer Management
 
 **What it does:** the accounts-receivable module for customers who buy on credit rather than paying per visit.
@@ -202,7 +224,7 @@ Full list in **Section 12**.
 | Feature | What it does | Why / how |
 |---|---|---|
 | PIN or biometric login | Staff logs in with a PIN or fingerprint, not free-text name entry | Ties attendance and every bill to a verifiable credential — you always know exactly who entered what |
-| Shift start: opening meter reading | DSM enters opening reading per nozzle at shift start | Baseline for the shift's litres-sold calculation |
+| Shift start: pick nozzle, opening reading shown read-only | DSM picks a nozzle from a dropdown (Section 3.3.1 Nozzle Master, configured in Settings) — the opening reading is carried forward automatically from that nozzle's last closing reading (or its configured starting reading, for a first-ever shift) and shown read-only, never typed | Removes the single biggest DSM data-entry error (typing the wrong opening number) and closes off that number as a manipulation vector |
 | Shift end: closing meter reading | DSM enters closing reading; app auto-calculates litres sold | closing − opening = litres sold, feeds the Variance Flag (3.3) |
 | New Bill screen | QR scan → auto-fills customer name, vehicle, loyalty rate → DSM enters amount/litres → saves | This is the core transaction screen — see the full flow in Section 6.3 |
 | Payment type selection | Cash / Card / UPI / Credit | Every bill must be tagged so cash reconciliation (Section 8) and reports (Section 12) can split correctly |
@@ -570,7 +592,9 @@ Build the **Tally XML export** in Phase 2 (right after the core web app MVP), no
 
 High-level entity list — expand each into full tables with your ORM's migration tool once you start building.
 
-`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | MeterReadings | Tanks | PurchaseEntries | LubricantItems | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents`
+`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | Nozzles | MeterReadings | Tanks | PurchaseEntries | LubricantItems | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents`
+
+**Nozzle** row should store: `pump_id, label, product_type, starting_reading, is_active` — Section 3.3.1. `MeterReading.nozzle_id` is a foreign key to this table (a real Nozzle Master, not free text) — `MeterReading.opening_reading` is always server-derived (carried forward from the nozzle's last closed shift, or `Nozzle.starting_reading` for its first) and never client-supplied.
 
 **Bill** row should store: `customer_id (nullable), vehicle_number (nullable), customer_name (nullable), amount, litres, product_type, rate_applied (from Rate Master), entered_by (staff_id), entry_channel (web/dsm_app), timestamp, loyalty_points_earned, loyalty_basis_used (rupee/litre)`. Note: `payment_type` is no longer a single field on Bill — it's derived from the bill's `BillPaymentLines` (Section 5A), since a bill can now be split across multiple methods.
 

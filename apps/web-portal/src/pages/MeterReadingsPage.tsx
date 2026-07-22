@@ -5,11 +5,11 @@ import { OpenShiftModal } from '../components/meterReadings/OpenShiftModal';
 import { CloseShiftModal } from '../components/meterReadings/CloseShiftModal';
 import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
 import { getStaffList } from '../api/staff';
-import { getTanks } from '../api/tanks';
+import { getNozzles } from '../api/nozzles';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { formatDateTime, formatLitres, formatSignedLitres } from '../utils/format';
-import type { MeterReading, MeterVariance, StaffListItem, Tank } from '../api/types';
+import type { MeterReading, MeterVariance, Nozzle, StaffListItem } from '../api/types';
 
 type StatusFilter = 'all' | 'open' | 'closed';
 
@@ -29,7 +29,7 @@ export function MeterReadingsPage() {
   const { staff: currentStaff } = useAuth();
   const [readings, setReadings] = useState<MeterReading[] | null>(null);
   const [staff, setStaff] = useState<StaffListItem[]>([]);
-  const [tanks, setTanks] = useState<Tank[]>([]);
+  const [nozzles, setNozzles] = useState<Nozzle[]>([]);
   const [varianceByReadingId, setVarianceByReadingId] = useState<Map<string, MeterVariance>>(new Map());
   const [varianceCheckError, setVarianceCheckError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,8 +69,8 @@ export function MeterReadingsPage() {
     getStaffList().then((result) => {
       if (!cancelled) setStaff(result);
     }).catch(() => undefined);
-    getTanks().then((result) => {
-      if (!cancelled) setTanks(result);
+    getNozzles().then((result) => {
+      if (!cancelled) setNozzles(result);
     }).catch(() => undefined);
     return () => {
       cancelled = true;
@@ -122,7 +122,7 @@ export function MeterReadingsPage() {
     if (!readings) return [];
     return readings.filter((r) => {
       if (staffFilter && r.staffId !== staffFilter) return false;
-      if (nozzleFilter && !r.nozzleId.toLowerCase().includes(nozzleFilter.trim().toLowerCase())) return false;
+      if (nozzleFilter && r.nozzleId !== nozzleFilter) return false;
       if (statusFilter === 'open' && r.closingReading !== null) return false;
       if (statusFilter === 'closed' && r.closingReading === null) return false;
       return true;
@@ -171,12 +171,14 @@ export function MeterReadingsPage() {
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>
               <label htmlFor="mr-nozzle-filter">Nozzle</label>
-              <input
-                id="mr-nozzle-filter"
-                value={nozzleFilter}
-                onChange={(e) => setNozzleFilter(e.target.value)}
-                placeholder="e.g. N1"
-              />
+              <select id="mr-nozzle-filter" value={nozzleFilter} onChange={(e) => setNozzleFilter(e.target.value)}>
+                <option value="">All nozzles</option>
+                {nozzles.map((nozzle) => (
+                  <option key={nozzle.id} value={nozzle.id}>
+                    {nozzle.label} &middot; {nozzle.productType}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>
               <label htmlFor="mr-status-filter">Status</label>
@@ -227,8 +229,8 @@ export function MeterReadingsPage() {
                     <tr key={reading.id}>
                       <td>{formatDateTime(reading.shiftStart)}</td>
                       <td>{reading.shiftEnd ? formatDateTime(reading.shiftEnd) : '—'}</td>
-                      <td>{reading.nozzleId}</td>
-                      <td>{reading.productType ?? '—'}</td>
+                      <td>{reading.nozzle.label}</td>
+                      <td>{reading.productType ?? reading.nozzle.productType ?? '—'}</td>
                       <td>{staffNameById.get(reading.staffId) ?? reading.staffId.slice(0, 8) + '…'}</td>
                       <td className="num">
                         {reading.openingReading.toFixed(1)}
@@ -277,9 +279,7 @@ export function MeterReadingsPage() {
               </tbody>
             </table>
             <div className="footnote">
-              Nozzle IDs are free-text on this schema — there's no Nozzle model linking a nozzle to a fuel type
-              beyond what was recorded at shift-open. Staff not in the current active-staff directory show a
-              truncated id instead of a name.
+              Staff not in the current active-staff directory show a truncated id instead of a name.
             </div>
           </div>
         )}
@@ -287,7 +287,7 @@ export function MeterReadingsPage() {
         {openingShift && (
           <OpenShiftModal
             staff={staff}
-            tanks={tanks}
+            nozzles={nozzles}
             currentStaff={currentStaff}
             onClose={() => setOpeningShift(false)}
             onSaved={handleShiftSaved}

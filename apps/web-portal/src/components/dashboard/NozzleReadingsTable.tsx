@@ -31,7 +31,7 @@ function VarianceSummaryBanner({ readings, varianceByReadingId }: NozzleReadings
     );
   }
 
-  const flaggedNozzles = Array.from(new Set(flagged.map((v) => v.nozzleId))).join(', ');
+  const flaggedNozzles = Array.from(new Set(flagged.map((v) => v.nozzleLabel))).join(', ');
   return (
     <div className="banner">
       Aggregate meter-vs-billed variance today: {formatSignedLitres(totalVariance)}, {flagged.length} shift
@@ -73,7 +73,9 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
             const isOpen = reading.closingReading === null;
             return (
               <tr key={reading.id}>
-                <td>{reading.nozzleId}</td>
+                <td>
+                  {reading.nozzle.label} <span className="section-note">({reading.nozzle.productType})</span>
+                </td>
                 <td title={reading.staffId}>{reading.staffId.slice(0, 8)}&hellip;</td>
                 <td>{formatTime(reading.shiftStart)}</td>
                 <td>{reading.shiftEnd ? formatTime(reading.shiftEnd) : '—'}</td>
@@ -117,8 +119,7 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
         </tbody>
       </table>
       <div className="footnote">
-        Nozzle IDs are free-text on this schema — there's no Nozzle model linking a nozzle to a fuel type, so petrol/diesel
-        isn&rsquo;t shown per row. Staff IDs aren&rsquo;t resolved to names because no endpoint exposes Staff lookups yet.
+        Staff IDs aren&rsquo;t resolved to names because no endpoint exposes Staff lookups yet.
       </div>
     </div>
   );

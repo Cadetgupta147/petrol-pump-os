@@ -1,10 +1,12 @@
 import { apiFetch } from './client';
 import type { CloseShiftRequest, MeterReading, MeterVariance, OpenShiftRequest } from './types';
 
-// POST /meter-readings — Section 3.3/4 shift-start opening reading entry.
-// This page's manual-entry fallback (the same call the DSM app's shift-start
-// flow makes) — Owner/Accountant/DSM server-side, but only Owner/Accountant
-// reach this page (Section 2: DSM has no web portal access).
+// POST /meter-readings — Section 3.3/4 shift-start entry: pick a nozzleId
+// (from GET /nozzles); openingReading/productType are server-derived (the
+// carry-forward rule), never sent here. This page's manual-entry fallback
+// (the same call the DSM app's shift-start flow makes) — Owner/Accountant/
+// DSM server-side, but only Owner/Accountant reach this page (Section 2: DSM
+// has no web portal access).
 export function openShift(dto: OpenShiftRequest): Promise<MeterReading> {
   return apiFetch<MeterReading>('/meter-readings', {
     method: 'POST',
