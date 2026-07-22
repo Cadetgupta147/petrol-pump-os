@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { AttendanceService } from './attendance.service';
 import { ClockInDto } from './dto/clock-in.dto';
 import { DateRangeQueryDto } from '../common/dto/date-range-query.dto';
@@ -23,8 +25,8 @@ export class AttendanceController {
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.MANAGER, Role.DSM)
   @Post('clock-in')
-  clockIn(@Body() dto: ClockInDto) {
-    return this.attendanceService.clockIn(dto);
+  clockIn(@Body() dto: ClockInDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.attendanceService.clockIn(dto, user);
   }
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.MANAGER, Role.DSM)

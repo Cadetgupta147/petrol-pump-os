@@ -24,7 +24,6 @@ import { RateMasterService } from '../rate-master/rate-master.service';
 import { parseDateRangeStrings } from '../common/date-range.util';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
-import { DeleteBillDto } from './dto/delete-bill.dto';
 import { ListBillsQueryDto } from './dto/list-bills-query.dto';
 
 // Manual bill entry — Section 3.2 (add/edit/delete parity with the DSM app),
@@ -64,7 +63,11 @@ export class BillsService {
     private readonly rateMasterService: RateMasterService,
   ) {}
 
-  async create(dto: CreateBillDto) {
+  // Finding A1 (docs/production-readiness.md) — enteredById is no longer a
+  // DTO field; BillsController derives it from req.user.staffId (the
+  // authenticated caller) and passes it as its own argument, so a request
+  // can no longer attribute bill entry to a different staff member.
+  async create(dto: CreateBillDto, enteredById: string) {
     // Section 4 — Vehicle Number and Customer Name are each individually
     // optional, but at least one of the two must be present. Enforced here
     // regardless of what the web/DSM UI does or doesn't hide.
@@ -230,7 +233,7 @@ export class BillsService {
             litres: dto.litres,
             productType: dto.productType,
             rateApplied: resolvedRate.rate,
-            enteredById: dto.enteredById,
+            enteredById,
             entryChannel: dto.entryChannel,
             loyaltyPointsEarned: loyaltyCalc?.points ?? 0,
             loyaltyBasisUsed: loyaltyCalc?.basis ?? null,
@@ -267,7 +270,7 @@ export class BillsService {
           data: {
             billId: created.id,
             action: 'CREATED',
-            performedById: dto.enteredById,
+            performedById: enteredById,
             snapshot: created,
           },
         });
@@ -300,7 +303,7 @@ export class BillsService {
       }
       return bill;
     } catch (error) {
-      this.handlePrismaError(error, dto.enteredById);
+      this.handlePrismaError(error, enteredById);
     }
   }
 
@@ -378,7 +381,9 @@ export class BillsService {
   // amount/litres/customerId change. Reconciling points on edit (recompute +
   // compensating LoyaltyTransaction) is a follow-up slice; until then the
   // bill's audit trail preserves what was credited and why.
-  async update(id: string, dto: UpdateBillDto) {
+  // Finding A1 — editedById is no longer a DTO field, same reasoning as
+  // create()'s enteredById above.
+  async update(id: string, dto: UpdateBillDto, editedById: string) {
     const existing = await this.prisma.bill.findUnique({
       where: { id },
       include: { paymentLines: true },
@@ -492,7 +497,7 @@ export class BillsService {
             productType: effective.productType,
             rateApplied: effective.rateApplied,
             customerId: effective.customerId,
-            lastEditedById: dto.editedById,
+            lastEditedById: editedById,
             lastEditedAt: new Date(),
             // Phase 2 (docs/multi-tenancy-plan.md) — pumpId is stamped
             // explicitly here for the same reason as create() above:
@@ -518,7 +523,7 @@ export class BillsService {
           data: {
             billId: updated.id,
             action: 'EDITED',
-            performedById: dto.editedById,
+            performedById: editedById,
             snapshot: updated,
           },
         });
@@ -540,7 +545,7 @@ export class BillsService {
       });
       return bill;
     } catch (error) {
-      this.handlePrismaError(error, dto.editedById);
+      this.handlePrismaError(error, editedById);
     }
   }
 
@@ -549,7 +554,9 @@ export class BillsService {
   // so a deleted bill's points remain in the customer's balance. A
   // compensating negative LoyaltyTransaction on delete is a follow-up slice
   // (same one as the edit gap above).
-  async remove(id: string, dto: DeleteBillDto) {
+  // Finding A1 — deletedById is no longer a DTO field, same reasoning as
+  // create()/update() above.
+  async remove(id: string, deletedById: string) {
     const existing = await this.prisma.bill.findUnique({
       where: { id },
       include: { paymentLines: true },
@@ -567,7 +574,7 @@ export class BillsService {
           where: { id },
           data: {
             deletedAt: new Date(),
-            deletedById: dto.deletedById,
+            deletedById,
           },
           include: { paymentLines: true },
         });
@@ -576,7 +583,7 @@ export class BillsService {
           data: {
             billId: deleted.id,
             action: 'DELETED',
-            performedById: dto.deletedById,
+            performedById: deletedById,
             snapshot: deleted,
           },
         });
@@ -585,7 +592,7 @@ export class BillsService {
       });
       return bill;
     } catch (error) {
-      this.handlePrismaError(error, dto.deletedById);
+      this.handlePrismaError(error, deletedById);
     }
   }
 

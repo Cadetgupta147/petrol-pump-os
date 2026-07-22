@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { openShift } from '../../api/meterReadings';
 import { ApiError } from '../../api/client';
-import type { MeterReading, StaffListItem, Tank } from '../../api/types';
+import type { MeterReading, StaffListItem, StaffSummary, Tank } from '../../api/types';
 
 interface OpenShiftModalProps {
   staff: StaffListItem[];
   tanks: Tank[];
+  currentStaff: StaffSummary | null;
   onClose: () => void;
   onSaved: (reading: MeterReading) => void;
 }
@@ -13,9 +14,16 @@ interface OpenShiftModalProps {
 // Section 3.3/4 — manual opening-reading entry (fallback if the DSM app
 // fails, or a back-office correction). Same POST /meter-readings the DSM
 // app's own shift-start screen calls.
-export function OpenShiftModal({ staff, tanks, onClose, onSaved }: OpenShiftModalProps) {
+//
+// Finding A1 (docs/production-readiness.md) — MeterReadingsService.
+// openShift() now rejects (403) a DSM caller assigning the shift to a
+// different staffId (resolveAssignableActorId()); a DSM can only open a
+// shift for themselves, so the dropdown below is locked to self for that
+// role instead of letting them pick someone else and hit an avoidable error.
+export function OpenShiftModal({ staff, tanks, currentStaff, onClose, onSaved }: OpenShiftModalProps) {
+  const isDsm = currentStaff?.role === 'DSM';
   const [nozzleId, setNozzleId] = useState('');
-  const [staffId, setStaffId] = useState('');
+  const [staffId, setStaffId] = useState(isDsm ? currentStaff.id : '');
   const [openingReading, setOpeningReading] = useState('');
   const [productType, setProductType] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +73,13 @@ export function OpenShiftModal({ staff, tanks, onClose, onSaved }: OpenShiftModa
         </div>
         <div className="form-field">
           <label htmlFor="os-staff">DSM / staff</label>
-          <select id="os-staff" value={staffId} onChange={(e) => setStaffId(e.target.value)} required>
+          <select
+            id="os-staff"
+            value={staffId}
+            onChange={(e) => setStaffId(e.target.value)}
+            required
+            disabled={isDsm}
+          >
             <option value="" disabled>
               Select staff
             </option>
@@ -75,6 +89,7 @@ export function OpenShiftModal({ staff, tanks, onClose, onSaved }: OpenShiftModa
               </option>
             ))}
           </select>
+          {isDsm && <div className="card-sub">DSM staff can only open a shift for themselves.</div>}
         </div>
         <div className="form-field">
           <label htmlFor="os-product">Product type</label>

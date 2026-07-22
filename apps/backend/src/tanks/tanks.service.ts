@@ -87,7 +87,10 @@ export class TanksService {
   // Also updates Tank.lastDipReading/lastDipAt (existing schema fields,
   // already surfaced read-only by DashboardService.getTankStock()) so that
   // KPI reflects the latest DIP, not a permanently-null placeholder.
-  async recordDipReading(tankId: string, dto: CreateDipReadingDto) {
+  // Finding A1 — staffId is not a DTO field; TanksController derives it
+  // from req.user.staffId and passes it as its own argument (see
+  // CreateDipReadingDto's comment).
+  async recordDipReading(tankId: string, dto: CreateDipReadingDto, staffId: string) {
     await this.findOne(tankId);
 
     try {
@@ -103,7 +106,7 @@ export class TanksService {
         const created = await tx.dipReading.create({
           data: {
             tankId,
-            recordedById: dto.staffId,
+            recordedById: staffId,
             reading: dto.reading,
             systemStockAtReading,
             variance,
@@ -121,16 +124,16 @@ export class TanksService {
 
         // Section 7.3 — when a density/quality reading rides along with this
         // DIP check, it's linked (dipReadingId) and created atomically in
-        // the same transaction. staffId doubles as the DensityLog's
-        // recordedById — see CreateDipReadingDto's comment for why there's
-        // no separate field.
+        // the same transaction. The same actor staffId doubles as the
+        // DensityLog's recordedById — see CreateDipReadingDto's comment for
+        // why there's no separate field.
         if (dto.densityValue !== undefined) {
           await tx.densityLog.create({
             data: {
               tankId,
               densityValue: dto.densityValue,
               ppmValue: dto.ppmValue,
-              recordedById: dto.staffId,
+              recordedById: staffId,
               dipReadingId: created.id,
               flagged: computeDensityFlag(tank.productType, dto.densityValue),
             },
@@ -140,7 +143,7 @@ export class TanksService {
         return created;
       });
     } catch (error) {
-      this.handlePrismaError(error, dto.staffId);
+      this.handlePrismaError(error, staffId);
     }
   }
 

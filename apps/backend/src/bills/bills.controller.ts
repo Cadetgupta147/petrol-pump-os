@@ -10,10 +10,11 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { BillsService } from './bills.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
-import { DeleteBillDto } from './dto/delete-bill.dto';
 import { ListBillsQueryDto } from './dto/list-bills-query.dto';
 
 // Section 3.2 — manual bill entry / bill register (create, read, edit,
@@ -34,8 +35,8 @@ export class BillsController {
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Post()
-  create(@Body() dto: CreateBillDto) {
-    return this.billsService.create(dto);
+  create(@Body() dto: CreateBillDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.billsService.create(dto, user.staffId);
   }
 
   @Get()
@@ -49,8 +50,12 @@ export class BillsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateBillDto) {
-    return this.billsService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateBillDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.billsService.update(id, dto, user.staffId);
   }
 
   // remove() is Owner-only — deletion of billing history is treated as more
@@ -58,7 +63,7 @@ export class BillsController {
   // edit/delete parity language.
   @Roles(Role.OWNER)
   @Delete(':id')
-  remove(@Param('id') id: string, @Body() dto: DeleteBillDto) {
-    return this.billsService.remove(id, dto);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.billsService.remove(id, user.staffId);
   }
 }

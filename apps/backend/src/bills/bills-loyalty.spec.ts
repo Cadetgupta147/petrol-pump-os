@@ -82,7 +82,6 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
     amount: 1000,
     litres: 20,
     productType: 'petrol',
-    enteredById: 'staff-1',
     entryChannel: EntryChannel.WEB,
     paymentLines: [
       {
@@ -166,7 +165,9 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
   // tenant-scoping.extension.ts's "known limitation" comment) — every call
   // needs an active tenant context, not just the quick-add test.
   function create(dto: CreateBillDto) {
-    return runInTenantContext({ pumpId: 'default_pump' }, () => service.create(dto));
+    return runInTenantContext({ pumpId: 'default_pump' }, () =>
+      service.create(dto, 'staff-1'),
+    );
   }
 
   it('rupee basis: credits (amount/100) × defaultRate and writes the LoyaltyTransaction in the same tx', async () => {

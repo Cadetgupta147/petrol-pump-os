@@ -1,11 +1,25 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Role } from '@prisma/client';
 import { MeterReadingsService } from './meter-readings.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+
+const dsmCaller: AuthenticatedUser = {
+  staffId: 's1',
+  pumpId: 'pump-1',
+  role: Role.DSM,
+};
+const managerCaller: AuthenticatedUser = {
+  staffId: 'manager-1',
+  pumpId: 'pump-1',
+  role: Role.MANAGER,
+};
 
 // Section 3.3 (pre-existing, previously untested — this file closes that
 // pre-existing gap, per the task spec) + Section 7.2 step 2 (tank
@@ -66,12 +80,15 @@ describe('MeterReadingsService', () => {
         productType: 'petrol',
       });
 
-      await service.openShift({
-        nozzleId: 'n1',
-        staffId: 's1',
-        openingReading: 100,
-        productType: 'petrol',
-      });
+      await service.openShift(
+        {
+          nozzleId: 'n1',
+          staffId: 's1',
+          openingReading: 100,
+          productType: 'petrol',
+        },
+        dsmCaller,
+      );
 
       expect(prisma.meterReading.create).toHaveBeenCalledWith({
         data: {
@@ -81,6 +98,44 @@ describe('MeterReadingsService', () => {
           productType: 'petrol',
         },
       });
+    });
+
+    // Finding A1 (docs/production-readiness.md) — resolveAssignableActorId()
+    // coverage, same pattern as AttendanceService/CashCustodyService.
+    it('defaults staffId to the caller when omitted', async () => {
+      prisma.meterReading.create.mockResolvedValue({ id: 'mr-1' });
+
+      await service.openShift(
+        { nozzleId: 'n1', openingReading: 100, productType: 'petrol' },
+        dsmCaller,
+      );
+
+      expect(prisma.meterReading.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ staffId: 's1' }) }),
+      );
+    });
+
+    it('rejects a DSM caller opening a shift assigned to a different staff member', async () => {
+      await expect(
+        service.openShift(
+          { nozzleId: 'n1', staffId: 'other-staff', openingReading: 100, productType: 'petrol' },
+          dsmCaller,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.meterReading.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a non-DSM caller to open a shift assigned to a different staff member', async () => {
+      prisma.meterReading.create.mockResolvedValue({ id: 'mr-1' });
+
+      await service.openShift(
+        { nozzleId: 'n1', staffId: 'other-staff', openingReading: 100, productType: 'petrol' },
+        managerCaller,
+      );
+
+      expect(prisma.meterReading.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ staffId: 'other-staff' }) }),
+      );
     });
   });
 

@@ -12,6 +12,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { PurchasesService } from './purchases.service';
 import { CreatePurchaseEntryDto } from './dto/create-purchase-entry.dto';
 import { OcrService } from '../ocr/ocr.service';
@@ -38,8 +40,11 @@ export class PurchasesController {
   ) {}
 
   @Post()
-  create(@Body() dto: CreatePurchaseEntryDto) {
-    return this.purchasesService.create(dto);
+  create(
+    @Body() dto: CreatePurchaseEntryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.purchasesService.create(dto, user.staffId);
   }
 
   @Get()

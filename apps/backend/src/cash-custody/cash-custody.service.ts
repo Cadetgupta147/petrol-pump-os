@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { CashCustodyLog, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
 import { CreateCashCustodyLogDto } from './dto/create-cash-custody-log.dto';
 
 // Section 8 — Day-End Cash Reconciliation & Custody. This is money-handling
@@ -24,7 +26,13 @@ export class CashCustodyService {
   // Section 8.1 step 1 (day-end 3-way split) + step 2 (next-day
   // "brought back" settlement) in one call — see the DTO's top comment for
   // why these aren't split into two endpoints/entities.
-  async create(dto: CreateCashCustodyLogDto) {
+  // Finding A1 (docs/production-readiness.md) — handledById is resolved via
+  // resolveAssignableActorId() (see that function's header comment): omitted
+  // -> the caller; explicitly set to someone else -> allowed for non-DSM
+  // callers only.
+  async create(dto: CreateCashCustodyLogDto, user: AuthenticatedUser) {
+    const handledById = resolveAssignableActorId(user, dto.handledById);
+
     // --- 3-way split validation (Section 8.1 step 1) ---
     // Enforced server-side per CLAUDE.md — never rely on the UI disabling a
     // Save button. Float-safe comparison via a small epsilon, same pattern
@@ -51,11 +59,11 @@ export class CashCustodyService {
     // now, mirroring BillAuditLog/RateHistory's "correction is a new dated
     // row" philosophy) rather than have two same-day rows for one person.
     const duplicateForDate = await this.prisma.cashCustodyLog.findFirst({
-      where: { handledById: dto.handledById, date },
+      where: { handledById, date },
     });
     if (duplicateForDate) {
       throw new ConflictException(
-        `A cash custody entry already exists for staff ${dto.handledById} on ${dto.date} (id ${duplicateForDate.id})`,
+        `A cash custody entry already exists for staff ${handledById} on ${dto.date} (id ${duplicateForDate.id})`,
       );
     }
 
@@ -67,7 +75,7 @@ export class CashCustodyService {
     // day") because it's the running carried-through balance from the whole
     // chain, not literally the prior calendar day's figure.
     const priorLog = await this.prisma.cashCustodyLog.findFirst({
-      where: { handledById: dto.handledById, date: { lt: date } },
+      where: { handledById, date: { lt: date } },
       orderBy: { date: 'desc' },
     });
     const cumulativeOutstandingBeforeToday = priorLog?.newOutstanding ?? 0;
@@ -105,11 +113,11 @@ export class CashCustodyService {
           cumulativeOutstandingBeforeToday,
           broughtBackToday,
           newOutstanding,
-          handledById: dto.handledById,
+          handledById,
         },
       });
     } catch (error) {
-      this.handlePrismaError(error, dto.handledById);
+      this.handlePrismaError(error, handledById);
     }
   }
 

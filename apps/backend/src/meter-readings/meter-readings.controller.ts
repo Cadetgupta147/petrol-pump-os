@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { MeterReadingsService } from './meter-readings.service';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
@@ -22,8 +24,8 @@ export class MeterReadingsController {
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Post()
-  openShift(@Body() dto: OpenShiftDto) {
-    return this.meterReadingsService.openShift(dto);
+  openShift(@Body() dto: OpenShiftDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.meterReadingsService.openShift(dto, user);
   }
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)

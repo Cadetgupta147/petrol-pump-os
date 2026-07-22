@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { CashCustodyService } from './cash-custody.service';
 import { CreateCashCustodyLogDto } from './dto/create-cash-custody-log.dto';
 
@@ -20,8 +22,11 @@ export class CashCustodyController {
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.MANAGER, Role.DSM)
   @Post()
-  create(@Body() dto: CreateCashCustodyLogDto) {
-    return this.cashCustodyService.create(dto);
+  create(
+    @Body() dto: CreateCashCustodyLogDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cashCustodyService.create(dto, user);
   }
 
   @Get()

@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { TanksService } from './tanks.service';
 import { CreateTankDto } from './dto/create-tank.dto';
 import { UpdateTankDto } from './dto/update-tank.dto';
@@ -54,8 +56,9 @@ export class TanksController {
   recordDipReading(
     @Param('id') id: string,
     @Body() dto: CreateDipReadingDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.tanksService.recordDipReading(id, dto);
+    return this.tanksService.recordDipReading(id, dto, user.staffId);
   }
 
   @Get(':id/dip-readings')

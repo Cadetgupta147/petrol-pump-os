@@ -112,13 +112,17 @@ export interface BillsListResponse {
 
 // Mirrors apps/backend/src/bills/dto/update-bill.dto.ts — any subset of
 // vehicleNumber/customerName/amount/litres/productType/rateApplied/
-// customerId/paymentLines (PartialType of CreateBillDto minus enteredById/
-// entryChannel, which stay immutable after creation), plus a required
-// editedById (no auth-derived actor yet, so the caller passes staff.id
-// explicitly — same pattern as CreateBillRequest's enteredById would be).
-// paymentLines, if provided, is a FULL REPLACEMENT of the bill's existing
-// payment lines, not a merge (see BillsService.update()) — this page only
-// edits the scalar fields, so paymentLines is deliberately omitted here.
+// customerId/paymentLines (PartialType of CreateBillDto minus entryChannel,
+// which stays immutable after creation). paymentLines, if provided, is a
+// FULL REPLACEMENT of the bill's existing payment lines, not a merge (see
+// BillsService.update()) — this page only edits the scalar fields, so
+// paymentLines is deliberately omitted here.
+//
+// Finding A1 (docs/production-readiness.md) — editedById is NOT sent here
+// anymore. BillsController.update() now derives the actor from the
+// authenticated caller's JWT (req.user.staffId) server-side; a client-
+// supplied value would be rejected outright by the global ValidationPipe's
+// forbidNonWhitelisted.
 export interface UpdateBillRequest {
   vehicleNumber?: string;
   customerName?: string;
@@ -126,7 +130,6 @@ export interface UpdateBillRequest {
   litres?: number;
   productType?: string;
   rateApplied?: number;
-  editedById: string;
 }
 
 export interface MeterReading {
@@ -151,9 +154,14 @@ export interface MeterReading {
 }
 
 // Mirrors apps/backend/src/meter-readings/dto/open-shift.dto.ts.
+//
+// Finding A1 (docs/production-readiness.md) — staffId is OPTIONAL and
+// defaults server-side to the authenticated caller when omitted; a non-DSM
+// caller may still set it to assign the shift to a different staff member
+// (resolveAssignableActorId()).
 export interface OpenShiftRequest {
   nozzleId: string;
-  staffId: string;
+  staffId?: string;
   openingReading: number;
   productType: string;
 }
@@ -519,13 +527,18 @@ export interface CashCustodyLog {
 // cumulativeOutstandingBeforeToday/newOutstanding are deliberately absent —
 // CashCustodyService resolves both server-side so a caller can't spoof away
 // an outstanding balance (see that DTO's own top comment).
+//
+// Finding A1 (docs/production-readiness.md) — handledById is optional:
+// omitted, it defaults server-side to the authenticated caller; a non-DSM
+// caller may still set it to record for someone else
+// (resolveAssignableActorId()).
 export interface CreateCashCustodyLogRequest {
   date: string;
   totalCashCollected: number;
   depositedToBank: number;
   keptInLocker: number;
   takenHome: number;
-  handledById: string;
+  handledById?: string;
   broughtBackToday?: number;
 }
 

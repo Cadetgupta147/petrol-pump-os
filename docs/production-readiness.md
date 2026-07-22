@@ -12,7 +12,7 @@ Severity legend: **BLOCKER** = do not take real customer money/data until fixed.
 
 ## Quick-reference: Blockers (fix these first)
 
-1. Staff identity on money/audit-trail writes is client-supplied, not derived from the logged-in session (backend)
+1. ~~Staff identity on money/audit-trail writes is client-supplied, not derived from the logged-in session (backend)~~ — **fixed**, see A1
 2. No rate limiting/lockout on staff login (`/auth/login`, `/auth/pin-login`)
 3. UPI webhook signature check is a placeholder algorithm, not a real provider's scheme **[tracked in plan §17/§18]**
 4. Editing/deleting a bill doesn't reverse the loyalty points it earned **[tracked in plan §17.13/§18.1]**
@@ -26,10 +26,12 @@ Severity legend: **BLOCKER** = do not take real customer money/data until fixed.
 
 ## A. Backend (`apps/backend`, `prisma/`)
 
-### A1. Staff identity on money/audit-trail actions is spoofable — BLOCKER
-**Files:** `apps/backend/src/bills/bills.controller.ts:35,50,59`, `bills.service.ts` (`enteredById`/`editedById`/`deletedById`), `cash-custody/cash-custody.controller.ts:23` (`handledById`), `attendance/attendance.controller.ts:26` (`staffId`), plus `recordedById` on `DipReading`/`DensityLog`.
+### A1. Staff identity on money/audit-trail actions is spoofable — BLOCKER — **FIXED 2026-07-22**
+**Files:** `apps/backend/src/bills/bills.controller.ts`, `bills.service.ts` (`enteredById`/`editedById`/`deletedById`), `cash-custody/*` (`handledById`), `attendance/*` (`staffId`), `tanks/*`/`density-logs/*`/`purchases/*` (`recordedById`), `meter-readings/*` (`staffId`).
 
-Only 2 of 26 controllers read `req.user` for "who did this." Everywhere else — bill entry/edit/delete, cash custody handover, attendance clock-in, DIP/density readings — the acting staff member's ID comes straight from the request body. Any authenticated staff account (including a DSM) can currently submit another staff member's ID and the API accepts it without checking it matches the caller. This breaks the audit trail the plan explicitly calls out as non-negotiable (§3.2) and CLAUDE.md's "never trust the frontend" rule extends naturally to "never trust a client-supplied actor ID either." A malicious or buggy client could pin cash-custody debt or a bad bill on the wrong person.
+Fixed as multi-tenancy Phase 4 — see `docs/multi-tenancy-plan.md`'s progress log for the full writeup, including the reasoning behind splitting these into two different rules (pure-actor fields with no override at all vs. "assignable" fields like `CashCustodyLog.handledById` where a supervisor may legitimately record on behalf of someone else — a real flow the original one-size-fits-all prompt below didn't account for). Verified with new unit tests plus a live end-to-end pass against the real dev DB. Frontend (`apps/web-portal`, `apps/dsm-app`) updated in the same commit to stop sending the now-removed fields.
+
+Original finding (kept for history):
 
 ```
 Use the backend-agent. In apps/backend, every write endpoint that records "who performed this action" 

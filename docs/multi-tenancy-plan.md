@@ -368,6 +368,63 @@ required for isolation itself.
   credential, which only the user has — **flagged to the user, not
   guessed/fixed**. A working `.env` value is needed before this endpoint
   can process a real webhook delivery.
-- [ ] Phase 4 — Audit-trail actor fix (finding A1)
+- [x] Phase 4 — Audit-trail actor fix (finding A1) (2026-07-22). Every
+  write endpoint that records "who performed this action" now derives that
+  id from the authenticated caller (`req.user.staffId`) instead of trusting
+  a client-supplied DTO field. Two different rules, depending on what the
+  field actually means:
+  - **Pure actor fields** (no override, ever): `Bill.enteredById/
+    editedById/deletedById`, `DipReading.recordedById`,
+    `DensityLog.recordedById` (including the linked one created inline by
+    `PurchasesService.create()`), `BillAuditLog.performedById`. These
+    record who performed THIS API call — removed entirely from their DTOs;
+    controllers pull `req.user.staffId` via a new `@CurrentUser()` param
+    decorator (`auth/decorators/current-user.decorator.ts`) and pass it to
+    the service as an explicit argument.
+  - **Assignable fields** (a supervisor may legitimately record on behalf
+    of someone else — real flows the product spec relies on, e.g. an
+    Accountant filing the day-end cash split for the Owner who actually
+    took the cash home, or a Manager marking a DSM present):
+    `CashCustodyLog.handledById`, `AttendanceLog.staffId` (clock-in),
+    `MeterReading.staffId` (openShift). Each DTO field is now OPTIONAL;
+    `resolveAssignableActorId()` (`common/resolve-assignable-actor.ts`)
+    resolves it — omitted → the caller; explicitly set to someone else →
+    allowed for any non-DSM caller, `ForbiddenException` (403) for a DSM
+    caller. This was a judgment call, not explicit in either finding A1's
+    prompt or master-plan.md — flagged here per CLAUDE.md's "flag
+    conflicts instead of silently picking one" rather than blindly forcing
+    every one of these fields to the caller, which would have broken the
+    legitimate supervisor-records-for-someone-else flow.
+
+  Frontend fallout, fixed in the same commit (`forbidNonWhitelisted: true`
+  on the global ValidationPipe means a client still sending a now-removed
+  field gets a hard 400, not a silent ignore): `apps/web-portal` — dropped
+  `editedById`/`deletedById` from the bill edit/delete request types and
+  call sites, made `OpenShiftRequest.staffId`/`CreateCashCustodyLogRequest.
+  handledById` optional, added a UX-only DSM self-lock on the two
+  "assignable" dropdowns (CashCustodyPage, OpenShiftModal) so a DSM user
+  doesn't hit an avoidable 403 by picking someone else in a select that no
+  longer permits it for their role. `apps/dsm-app` — dropped `enteredById`
+  from the create-bill request type and call site.
+
+  Verified: full backend suite green (42 suites/407 tests — 6 spec files
+  updated for the new signatures, plus new coverage for
+  `resolveAssignableActorId()`'s three branches: default-to-self,
+  non-DSM-override-allowed, DSM-override-forbidden). `apps/web-portal`
+  (`tsc --noEmit` + `vite build`) and `apps/dsm-app` (`tsc --noEmit` +
+  `jest`, 2 suites/10 tests) both clean. Live end-to-end verification
+  against the real Supabase dev DB with a real Owner login and a real
+  temporary DSM staff member (PIN login) covering all 12 cases — bill
+  create/update/delete actor attribution, cash-custody
+  default/DSM-forbidden/owner-override, attendance
+  default/DSM-forbidden, meter-reading openShift
+  default/DSM-forbidden, and dip-reading/density-log pure-actor
+  attribution — every case matched the intended behavior exactly. All test
+  data (temp DSM account+membership, temp bill, temp Rate Master row)
+  cleaned up afterward.
+
+  **Also found and documented, not fixed** (belongs to the human/business
+  side, not code): root `.env`'s `UPI_WEBHOOK_SIGNING_SECRET` is corrupted
+  (Phase 3's finding) — still outstanding, unrelated to this phase.
 - [ ] Phase 5 — Pump provisioning script
 - [ ] Phase 6 — Frontend verification pass

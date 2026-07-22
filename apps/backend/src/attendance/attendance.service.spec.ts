@@ -1,10 +1,24 @@
 import {
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Role } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+
+const dsmCaller: AuthenticatedUser = {
+  staffId: 'dsm-1',
+  pumpId: 'pump-1',
+  role: Role.DSM,
+};
+const managerCaller: AuthenticatedUser = {
+  staffId: 'manager-1',
+  pumpId: 'pump-1',
+  role: Role.MANAGER,
+};
 
 // Section 12 — staff attendance hours-worked summary. Not explicitly called
 // out as "rule-heavy" by the task spec the way aging/loyalty-cost were, but
@@ -48,8 +62,44 @@ describe('AttendanceService', () => {
       prisma.attendanceLog.findFirst.mockResolvedValue({ id: 'existing' });
 
       await expect(
-        service.clockIn({ staffId: 'staff-1' }),
+        service.clockIn({ staffId: 'staff-1' }, managerCaller),
       ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.attendanceLog.create).not.toHaveBeenCalled();
+    });
+
+    // Finding A1 (docs/production-readiness.md) — resolveAssignableActorId()
+    // coverage: omitted staffId defaults to the caller, a non-DSM caller can
+    // record for someone else, and a DSM caller cannot.
+    it('defaults staffId to the caller when omitted', async () => {
+      prisma.attendanceLog.findFirst.mockResolvedValue(null);
+      prisma.attendanceLog.create.mockResolvedValue({ id: 'log-1' });
+
+      await service.clockIn({}, dsmCaller);
+
+      expect(prisma.attendanceLog.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ staffId: 'dsm-1' }) }),
+      );
+      expect(prisma.attendanceLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ staffId: 'dsm-1' }) }),
+      );
+    });
+
+    it('allows a non-DSM caller to clock in on behalf of a different staff member', async () => {
+      prisma.attendanceLog.findFirst.mockResolvedValue(null);
+      prisma.attendanceLog.create.mockResolvedValue({ id: 'log-1' });
+
+      await service.clockIn({ staffId: 'other-staff' }, managerCaller);
+
+      expect(prisma.attendanceLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ staffId: 'other-staff' }) }),
+      );
+    });
+
+    it('rejects a DSM caller trying to clock in a different staff member', async () => {
+      await expect(
+        service.clockIn({ staffId: 'other-staff' }, dsmCaller),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.attendanceLog.findFirst).not.toHaveBeenCalled();
       expect(prisma.attendanceLog.create).not.toHaveBeenCalled();
     });
   });

@@ -70,11 +70,7 @@ describe('DensityLogsService', () => {
       prisma.tank.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.create({
-          tankId: 'nope',
-          densityValue: 0.75,
-          recordedById: 's1',
-        }),
+        service.create({ tankId: 'nope', densityValue: 0.75 }, 's1'),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.densityLog.create).not.toHaveBeenCalled();
     });
@@ -86,14 +82,16 @@ describe('DensityLogsService', () => {
       });
       prisma.densityLog.create.mockResolvedValue({ id: 'dl-1' });
 
-      await service.create({
-        tankId: 'tank-1',
-        densityValue: 0.5, // below MS range -> flagged
-        ppmValue: 10,
-        recordedById: 's1',
-        purchaseEntryId: 'pe-1',
-        dipReadingId: 'dip-1',
-      });
+      await service.create(
+        {
+          tankId: 'tank-1',
+          densityValue: 0.5, // below MS range -> flagged
+          ppmValue: 10,
+          purchaseEntryId: 'pe-1',
+          dipReadingId: 'dip-1',
+        },
+        's1',
+      );
 
       expect(prisma.densityLog.create).toHaveBeenCalledWith({
         data: {

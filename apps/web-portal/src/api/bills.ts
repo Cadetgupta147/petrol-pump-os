@@ -38,11 +38,10 @@ export function updateBill(id: string, dto: UpdateBillRequest): Promise<Bill> {
 
 // DELETE /bills/:id — Owner-only server-side (method-level @Roles(Role.OWNER)
 // override on remove(), deliberately narrower than PATCH — see the comment
-// on BillsController.remove()). Soft-delete: the body carries deletedById
-// per DeleteBillDto, same actor-attribution pattern as editedById above.
-export function deleteBill(id: string, deletedById: string): Promise<Bill> {
+// on BillsController.remove()). Soft-delete: the actor is derived server-side
+// from the caller's JWT (finding A1, docs/production-readiness.md) — no body.
+export function deleteBill(id: string): Promise<Bill> {
   return apiFetch<Bill>(`/bills/${id}`, {
     method: 'DELETE',
-    body: JSON.stringify({ deletedById }),
   });
 }

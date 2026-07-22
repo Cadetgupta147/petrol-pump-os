@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PurchasesService } from './purchases.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -56,7 +56,7 @@ describe('PurchasesService', () => {
   it('rejects when no Tank exists for the stated productType (hard block, not a warning)', async () => {
     prisma.tank.findFirst.mockResolvedValue(null);
 
-    await expect(service.create(baseDto)).rejects.toBeInstanceOf(
+    await expect(service.create(baseDto, 'staff-1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -68,7 +68,7 @@ describe('PurchasesService', () => {
     const createdEntry = { id: 'pe-1', ...baseDto, ocrExtracted: false };
     prisma.$transaction.mockResolvedValue([createdEntry, {}]);
 
-    const result = await service.create(baseDto);
+    const result = await service.create(baseDto, 'staff-1');
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(prisma.purchaseEntry.create).toHaveBeenCalledWith({
@@ -99,7 +99,7 @@ describe('PurchasesService', () => {
     prisma.tank.findFirst.mockResolvedValue({ id: 'tank-1', productType: 'petrol' });
     prisma.$transaction.mockResolvedValue([{ id: 'pe-2' }, {}]);
 
-    await service.create({ ...baseDto, ocrExtracted: true });
+    await service.create({ ...baseDto, ocrExtracted: true }, 'staff-1');
 
     const calls = prisma.purchaseEntry.create.mock.calls as Array<
       [{ data: { ocrExtracted: boolean } }]
@@ -114,7 +114,7 @@ describe('PurchasesService', () => {
     });
     prisma.$transaction.mockResolvedValue([{ id: 'pe-1' }, {}]);
 
-    await service.create(baseDto);
+    await service.create(baseDto, 'staff-1');
 
     expect(prisma.tank.findFirst).toHaveBeenCalledWith({
       where: { productType: 'petrol' },
@@ -130,26 +130,26 @@ describe('PurchasesService', () => {
   });
 
   describe('Section 7.3 density linkage', () => {
-    it('rejects densityValue without recordedById, before touching the DB', async () => {
-      await expect(
-        service.create({ ...baseDto, densityValue: 0.75 }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(prisma.tank.findFirst).not.toHaveBeenCalled();
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-    });
-
+    // Finding A1 (docs/production-readiness.md) — recordedById is no longer
+    // a DTO field / no longer conditionally required; PurchasesController
+    // always derives it from req.user.staffId and passes it to create()
+    // whenever densityValue rides along with the delivery, so the old
+    // "reject densityValue without recordedById" DTO-shaped validation no
+    // longer applies.
     it('creates a linked DensityLog in the same transaction when densityValue is provided, flagged via computeDensityFlag', async () => {
       const tank = { id: 'tank-1', productType: 'petrol' };
       prisma.tank.findFirst.mockResolvedValue(tank);
       const createdEntry = { id: 'pe-1', ...baseDto };
       prisma.$transaction.mockResolvedValue([createdEntry, {}, {}]);
 
-      await service.create({
-        ...baseDto,
-        densityValue: 0.5, // below the MS range -> flagged
-        ppmValue: 12,
-        recordedById: 'staff-1',
-      });
+      await service.create(
+        {
+          ...baseDto,
+          densityValue: 0.5, // below the MS range -> flagged
+          ppmValue: 12,
+        },
+        'staff-1',
+      );
 
       expect(prisma.densityLog.create).toHaveBeenCalledWith({
         data: {
@@ -176,7 +176,7 @@ describe('PurchasesService', () => {
       });
       prisma.$transaction.mockResolvedValue([{ id: 'pe-1' }, {}]);
 
-      await service.create(baseDto);
+      await service.create(baseDto, 'staff-1');
 
       expect(prisma.densityLog.create).not.toHaveBeenCalled();
       const transactionCalls = prisma.$transaction.mock.calls as unknown[][];

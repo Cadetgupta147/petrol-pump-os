@@ -1,27 +1,24 @@
 import { PartialType, OmitType } from '@nestjs/mapped-types';
-import { IsNumber, IsOptional, IsPositive, IsString } from 'class-validator';
+import { IsNumber, IsOptional, IsPositive } from 'class-validator';
 import { CreateBillDto } from './create-bill.dto';
 
 // PATCH /bills/:id — any subset of vehicleNumber, customerName, amount,
 // litres, productType, rateApplied, customerId, paymentLines.
 //
-// enteredById and entryChannel record original attribution and must stay
-// immutable after creation — omitted from what's editable here.
+// entryChannel records original attribution and must stay immutable after
+// creation — omitted from what's editable here. editedById is NOT a DTO
+// field (finding A1, docs/production-readiness.md) — BillsController.update()
+// derives it from req.user.staffId and passes it to BillsService.update()
+// as a separate argument.
 //
 // paymentLines, if provided, is a FULL REPLACEMENT of the bill's existing
 // payment lines (not a merge/patch of individual lines) — see
 // BillsService.update().
 class EditableCreateBillDto extends OmitType(CreateBillDto, [
-  'enteredById',
   'entryChannel',
 ] as const) {}
 
 export class UpdateBillDto extends PartialType(EditableCreateBillDto) {
-  // Who is performing this edit — no auth yet, so the actor must be passed
-  // explicitly, same pattern as enteredById on create / deletedById on delete.
-  @IsString()
-  editedById!: string;
-
   // Section 7.4 — rateApplied is NOT on CreateBillDto anymore (the server
   // resolves it authoritatively from Rate Master at create() time — see that
   // DTO's comment), so it doesn't come along via EditableCreateBillDto and

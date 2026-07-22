@@ -8,7 +8,6 @@ interface BillFormModalProps {
   // parity) — there's no "add" mode here, unlike CustomerFormModal. Manual
   // bill *creation* isn't wired up on this page.
   bill: Bill;
-  editedById: string;
   onClose: () => void;
   onSaved: (bill: Bill) => void;
 }
@@ -17,7 +16,7 @@ interface BillFormModalProps {
 // omits customerId and paymentLines — this page edits the scalar fields
 // only; changing which customer a bill is linked to or replacing its split
 // payment lines isn't in scope here (see UpdateBillRequest in api/types.ts).
-export function BillFormModal({ bill, editedById, onClose, onSaved }: BillFormModalProps) {
+export function BillFormModal({ bill, onClose, onSaved }: BillFormModalProps) {
   const [vehicleNumber, setVehicleNumber] = useState(bill.vehicleNumber ?? '');
   const [customerName, setCustomerName] = useState(bill.customerName ?? '');
   const [amount, setAmount] = useState(String(bill.amount));
@@ -42,7 +41,6 @@ export function BillFormModal({ bill, editedById, onClose, onSaved }: BillFormMo
         litres: Number(litres),
         productType: productType.trim(),
         rateApplied: Number(rateApplied),
-        editedById,
       });
 
       onSaved(saved);

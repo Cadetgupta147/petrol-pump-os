@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, PurchaseEntry } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePurchaseEntryDto } from './dto/create-purchase-entry.dto';
@@ -35,19 +35,11 @@ import { computeDensityFlag } from '../density-logs/density-logs.service';
 export class PurchasesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreatePurchaseEntryDto) {
-    // Section 7.3 — "at least one of X/Y" validation style, same as
-    // BillsService.create()'s vehicleNumber/customerName check: densityValue
-    // without recordedById would create a DensityLog row with no known actor,
-    // which DipReading/DensityLog's existing schema conventions don't allow
-    // (recordedById is a required FK) — reject up front instead of letting
-    // it surface as an opaque FK/validation error later.
-    if (dto.densityValue !== undefined && !dto.recordedById) {
-      throw new BadRequestException(
-        'recordedById is required when densityValue is provided',
-      );
-    }
-
+  // Finding A1 (docs/production-readiness.md) — recordedById is not a DTO
+  // field; PurchasesController derives it from req.user.staffId and passes
+  // it as its own argument, used only when a densityValue rides along with
+  // this delivery.
+  async create(dto: CreatePurchaseEntryDto, recordedById: string) {
     // Match Tank by exact productType string equality — same loose
     // string-typed-product convention Bill/RateHistory already use (no typed
     // Product enum exists in this schema to join against instead).
@@ -101,7 +93,7 @@ export class PurchasesService {
             tankId: tank.id,
             densityValue: dto.densityValue,
             ppmValue: dto.ppmValue,
-            recordedById: dto.recordedById!,
+            recordedById,
             purchaseEntryId,
             flagged: computeDensityFlag(dto.productType, dto.densityValue),
           },

@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
 import { ClockInDto } from './dto/clock-in.dto';
 import { DateRangeQueryDto } from '../common/dto/date-range-query.dto';
 import { parseDateRangeStrings } from '../common/date-range.util';
@@ -38,25 +40,30 @@ import { parseDateRangeStrings } from '../common/date-range.util';
 export class AttendanceService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async clockIn(dto: ClockInDto) {
+  // Finding A1 — staffId is resolved via resolveAssignableActorId() (see
+  // that function's header comment): omitted -> the caller; explicitly set
+  // to someone else -> allowed for non-DSM callers only.
+  async clockIn(dto: ClockInDto, user: AuthenticatedUser) {
+    const staffId = resolveAssignableActorId(user, dto.staffId);
+
     // Same "no two open sessions" guard as
     // MeterReadingsService.openShift()'s "no two open shifts per nozzle" —
     // scoped per staff member here instead of per nozzle.
     const existingOpen = await this.prisma.attendanceLog.findFirst({
-      where: { staffId: dto.staffId, clockOut: null },
+      where: { staffId, clockOut: null },
     });
     if (existingOpen) {
       throw new ConflictException(
-        `Staff ${dto.staffId} is already clocked in (attendanceLogId: ${existingOpen.id}) — clock out before clocking in again`,
+        `Staff ${staffId} is already clocked in (attendanceLogId: ${existingOpen.id}) — clock out before clocking in again`,
       );
     }
 
     try {
       return await this.prisma.attendanceLog.create({
-        data: { staffId: dto.staffId, clockIn: new Date() },
+        data: { staffId, clockIn: new Date() },
       });
     } catch (error) {
-      this.handlePrismaError(error, dto.staffId);
+      this.handlePrismaError(error, staffId);
     }
   }
 

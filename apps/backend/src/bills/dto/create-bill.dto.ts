@@ -62,9 +62,6 @@ export class CreateBillDto {
   @IsString()
   productType!: string;
 
-  @IsString()
-  enteredById!: string;
-
   @IsEnum(EntryChannel)
   entryChannel!: EntryChannel;
 

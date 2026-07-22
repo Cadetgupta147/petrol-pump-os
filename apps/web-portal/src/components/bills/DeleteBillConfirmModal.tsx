@@ -5,7 +5,6 @@ import type { Bill } from '../../api/types';
 
 interface DeleteBillConfirmModalProps {
   bill: Bill;
-  deletedById: string;
   onClose: () => void;
   onDeleted: (bill: Bill) => void;
 }
@@ -16,7 +15,7 @@ interface DeleteBillConfirmModalProps {
 // modal-actions look as BillFormModal/CustomerFormModal rather than a
 // native window.confirm(), since there's no existing dedicated confirm
 // dialog component in this codebase yet.
-export function DeleteBillConfirmModal({ bill, deletedById, onClose, onDeleted }: DeleteBillConfirmModalProps) {
+export function DeleteBillConfirmModal({ bill, onClose, onDeleted }: DeleteBillConfirmModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -24,7 +23,7 @@ export function DeleteBillConfirmModal({ bill, deletedById, onClose, onDeleted }
     setError(null);
     setSubmitting(true);
     try {
-      const deleted = await deleteBill(bill.id, deletedById);
+      const deleted = await deleteBill(bill.id);
       onDeleted(deleted);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Can't reach the backend.");

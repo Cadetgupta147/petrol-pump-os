@@ -34,6 +34,12 @@ function toNumber(value: string): number {
 export function CashCustodyPage() {
   const { staff } = useAuth();
   const canSubmit = staff?.role !== 'READ_ONLY';
+  // Finding A1 (docs/production-readiness.md) — CashCustodyService.create()
+  // now rejects (403) a DSM caller submitting a handledById other than their
+  // own (resolveAssignableActorId()); a DSM is only allowed to record for
+  // themselves, so the dropdown below is locked to self for that role
+  // instead of letting them pick someone else and hit an avoidable error.
+  const isDsm = staff?.role === 'DSM';
 
   const [date, setDate] = useState(todayIsoDate());
   // Defaults to the logged-in user's own staff id (self-entry, the common
@@ -242,7 +248,7 @@ export function CashCustodyPage() {
                   value={handledById}
                   onChange={(e) => setHandledById(e.target.value)}
                   required
-                  disabled={!staffList}
+                  disabled={!staffList || isDsm}
                 >
                   <option value="" disabled>
                     {staffList ? 'Select a staff member' : 'Loading staff list…'}
@@ -253,6 +259,9 @@ export function CashCustodyPage() {
                     </option>
                   ))}
                 </select>
+                {isDsm && (
+                  <div className="card-sub">DSM staff can only file an entry for themselves.</div>
+                )}
                 {staffListError && <div className="card-sub">{staffListError}</div>}
               </div>
             </div>

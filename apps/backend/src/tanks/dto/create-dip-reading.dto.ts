@@ -1,21 +1,24 @@
-import { IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsPositive, Min } from 'class-validator';
 
 // POST /tanks/:id/dip-readings — Section 7.2 step 3 (daily physical DIP
-// reading). staffId is taken as a body field rather than pulled off the JWT,
-// matching OpenShiftDto's existing convention for "who performed this
-// physical action" fields in this codebase.
+// reading).
+//
+// Finding A1 (docs/production-readiness.md) — staffId is NOT a DTO field.
+// A DIP reading is a direct physical measurement the caller either did or
+// didn't do themselves — unlike CashCustodyLog.handledById/AttendanceLog.
+// staffId, there's no legitimate "recording on behalf of someone else" flow
+// here, so TanksController.recordDipReading() derives it unconditionally
+// from req.user.staffId and passes it to TanksService as its own argument.
 //
 // Section 7.3 — densityValue/ppmValue are optional: a DIP check doesn't
 // always come with an on-the-spot quality reading. When densityValue IS
-// provided, staffId doubles as the recording staff for the linked
-// DensityLog too — no duplicate field, see TanksService.recordDipReading().
+// provided, the same actor staffId doubles as the recording staff for the
+// linked DensityLog too — no duplicate field, see
+// TanksService.recordDipReading().
 export class CreateDipReadingDto {
   @IsNumber()
   @Min(0)
   reading!: number;
-
-  @IsString()
-  staffId!: string;
 
   @IsOptional()
   @IsNumber()

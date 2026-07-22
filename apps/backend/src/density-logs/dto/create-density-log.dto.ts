@@ -2,9 +2,12 @@ import { IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator
 
 // POST /density-logs — Section 7.3 (density/quality check), optionally
 // linked to the delivery (purchaseEntryId) or physical stock check
-// (dipReadingId) that prompted it. recordedById is taken as a body field
-// rather than pulled off the JWT, matching CreateDipReadingDto's staffId
-// convention for "who performed this physical action" fields.
+// (dipReadingId) that prompted it.
+//
+// Finding A1 (docs/production-readiness.md) — recordedById is NOT a DTO
+// field. Same reasoning as CreateDipReadingDto: a density/quality reading
+// is a direct physical measurement, so DensityLogsController.create()
+// derives the actor unconditionally from req.user.staffId.
 export class CreateDensityLogDto {
   @IsString()
   tankId!: string;
@@ -19,9 +22,6 @@ export class CreateDensityLogDto {
   @IsNumber()
   @Min(0)
   ppmValue?: number;
-
-  @IsString()
-  recordedById!: string;
 
   @IsOptional()
   @IsString()

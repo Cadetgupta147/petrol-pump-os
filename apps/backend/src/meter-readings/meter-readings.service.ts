@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Prisma, MeterReading } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
 
@@ -41,7 +43,12 @@ const VARIANCE_TOLERANCE_LITRES = 0.5;
 export class MeterReadingsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async openShift(dto: OpenShiftDto) {
+  // Finding A1 — staffId is resolved via resolveAssignableActorId() (see
+  // that function's header comment): omitted -> the caller; explicitly set
+  // to someone else -> allowed for non-DSM callers only.
+  async openShift(dto: OpenShiftDto, user: AuthenticatedUser) {
+    const staffId = resolveAssignableActorId(user, dto.staffId);
+
     // A nozzle shouldn't have two concurrently-open shifts (closingReading
     // still null means the shift hasn't been closed out yet).
     const existingOpenShift = await this.prisma.meterReading.findFirst({
@@ -57,14 +64,14 @@ export class MeterReadingsService {
       const created = await this.prisma.meterReading.create({
         data: {
           nozzleId: dto.nozzleId,
-          staffId: dto.staffId,
+          staffId,
           openingReading: dto.openingReading,
           productType: dto.productType,
         },
       });
       return this.withComputedLitresSold(created);
     } catch (error) {
-      this.handlePrismaError(error, dto.staffId);
+      this.handlePrismaError(error, staffId);
     }
   }
 

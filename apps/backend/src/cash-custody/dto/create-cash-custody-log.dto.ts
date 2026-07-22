@@ -11,6 +11,17 @@ import { IsDateString, IsNumber, IsOptional, IsString, Min } from 'class-validat
 // cumulativeOutstandingBeforeToday and newOutstanding are NOT accepted here —
 // both are server-resolved/computed (see CashCustodyService), never
 // client-supplied, so a caller can't spoof away an outstanding balance.
+//
+// Finding A1 (docs/production-readiness.md) — handledById is OPTIONAL and
+// defaults to the authenticated caller when omitted (see
+// resolveAssignableActorId(), used by CashCustodyService.create()). It CAN
+// still be set to someone else — an Accountant entering the day-end split
+// on behalf of the Owner/Manager who actually took cash home is a real,
+// intended flow (Section 8.1) — but only a non-DSM caller may do so; a DSM
+// submitting can only record for themselves. This is deliberately different
+// from Bill's enteredById/editedById/deletedById, which are always the
+// caller with no override — see resolveAssignableActorId()'s header comment
+// for the full reasoning.
 export class CreateCashCustodyLogDto {
   @IsDateString()
   date!: string;
@@ -31,8 +42,9 @@ export class CreateCashCustodyLogDto {
   @Min(0)
   takenHome!: number;
 
+  @IsOptional()
   @IsString()
-  handledById!: string;
+  handledById?: string;
 
   // How much of a PRIOR outstanding balance this person is settling today.
   // Optional/defaults to 0 — most day-end entries have nothing to bring

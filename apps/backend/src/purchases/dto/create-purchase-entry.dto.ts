@@ -9,12 +9,15 @@ import { IsBoolean, IsNumber, IsOptional, IsPositive, IsString, Min } from 'clas
 // Defaults to false (manual entry) when omitted; the service persists
 // whatever is sent rather than hardcoding it.
 //
-// Section 7.3 — densityValue/ppmValue/recordedById are optional: a delivery
-// doesn't always come with an on-the-spot quality check. Cross-field
-// validation NOT expressible via decorators alone (if densityValue is
-// present, recordedById must also be present — same "at least one of X/Y"
-// validation style as BillsService.create()'s vehicleNumber/customerName
-// check) lives in PurchasesService.create().
+// Section 7.3 — densityValue/ppmValue are optional: a delivery doesn't
+// always come with an on-the-spot quality check.
+//
+// Finding A1 (docs/production-readiness.md) — recordedById is NOT a DTO
+// field (it used to be, gating on "if densityValue is present, recordedById
+// must also be present" — that requirement no longer applies, since
+// PurchasesController now always derives the actor from req.user.staffId
+// and passes it to PurchasesService.create() as its own argument whenever
+// densityValue is provided).
 export class CreatePurchaseEntryDto {
   @IsString()
   supplierName!: string;
@@ -64,8 +67,4 @@ export class CreatePurchaseEntryDto {
   @IsNumber()
   @Min(0)
   ppmValue?: number;
-
-  @IsOptional()
-  @IsString()
-  recordedById?: string;
 }

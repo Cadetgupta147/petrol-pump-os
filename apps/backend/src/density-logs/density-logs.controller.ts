@@ -1,6 +1,8 @@
 import { Controller, Body, Get, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { DensityLogsService } from './density-logs.service';
 import { CreateDensityLogDto } from './dto/create-density-log.dto';
 
@@ -16,8 +18,8 @@ export class DensityLogsController {
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Post()
-  create(@Body() dto: CreateDensityLogDto) {
-    return this.densityLogsService.create(dto);
+  create(@Body() dto: CreateDensityLogDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.densityLogsService.create(dto, user.staffId);
   }
 
   @Get()

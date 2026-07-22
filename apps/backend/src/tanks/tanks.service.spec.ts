@@ -61,7 +61,7 @@ describe('TanksService', () => {
       prisma.tank.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.recordDipReading('nope', { reading: 100, staffId: 's1' }),
+        service.recordDipReading('nope', { reading: 100 }, 's1'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -80,7 +80,7 @@ describe('TanksService', () => {
       });
       prisma.tank.update.mockResolvedValue({});
 
-      await service.recordDipReading('tank-1', { reading: 4990, staffId: 's1' });
+      await service.recordDipReading('tank-1', { reading: 4990 }, 's1');
 
       expect(prisma.dipReading.create).toHaveBeenCalledWith({
         data: {
@@ -112,10 +112,11 @@ describe('TanksService', () => {
       );
       prisma.tank.update.mockResolvedValue({});
 
-      await service.recordDipReading('tank-1', {
-        reading: readingAtBoundary,
-        staffId: 's1',
-      });
+      await service.recordDipReading(
+        'tank-1',
+        { reading: readingAtBoundary },
+        's1',
+      );
 
       expect(prisma.dipReading.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -137,10 +138,11 @@ describe('TanksService', () => {
       );
       prisma.tank.update.mockResolvedValue({});
 
-      await service.recordDipReading('tank-1', {
-        reading: readingJustPast,
-        staffId: 's1',
-      });
+      await service.recordDipReading(
+        'tank-1',
+        { reading: readingJustPast },
+        's1',
+      );
 
       expect(prisma.dipReading.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -159,10 +161,11 @@ describe('TanksService', () => {
       );
       prisma.tank.update.mockResolvedValue({});
 
-      await service.recordDipReading('tank-1', {
-        reading: readingWayOver,
-        staffId: 's1',
-      });
+      await service.recordDipReading(
+        'tank-1',
+        { reading: readingWayOver },
+        's1',
+      );
 
       expect(prisma.dipReading.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -186,12 +189,15 @@ describe('TanksService', () => {
         prisma.tank.update.mockResolvedValue({});
         prisma.densityLog.create.mockResolvedValue({ id: 'dl-1' });
 
-        await service.recordDipReading('tank-1', {
-          reading: 4990,
-          staffId: 's1',
-          densityValue: 0.5, // below the MS range -> flagged
-          ppmValue: 5,
-        });
+        await service.recordDipReading(
+          'tank-1',
+          {
+            reading: 4990,
+            densityValue: 0.5, // below the MS range -> flagged
+            ppmValue: 5,
+          },
+          's1',
+        );
 
         expect(prisma.densityLog.create).toHaveBeenCalledWith({
           data: {
@@ -214,10 +220,7 @@ describe('TanksService', () => {
         });
         prisma.tank.update.mockResolvedValue({});
 
-        await service.recordDipReading('tank-1', {
-          reading: 4990,
-          staffId: 's1',
-        });
+        await service.recordDipReading('tank-1', { reading: 4990 }, 's1');
 
         expect(prisma.densityLog.create).not.toHaveBeenCalled();
       });

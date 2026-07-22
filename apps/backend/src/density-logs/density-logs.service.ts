@@ -62,7 +62,9 @@ export function computeDensityFlag(
 export class DensityLogsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateDensityLogDto) {
+  // Finding A1 — recordedById is not a DTO field; DensityLogsController
+  // derives it from req.user.staffId and passes it as its own argument.
+  async create(dto: CreateDensityLogDto, recordedById: string) {
     const tank = await this.prisma.tank.findUnique({
       where: { id: dto.tankId },
     });
@@ -77,7 +79,7 @@ export class DensityLogsService {
         tankId: dto.tankId,
         densityValue: dto.densityValue,
         ppmValue: dto.ppmValue,
-        recordedById: dto.recordedById,
+        recordedById,
         purchaseEntryId: dto.purchaseEntryId,
         dipReadingId: dto.dipReadingId,
         flagged,

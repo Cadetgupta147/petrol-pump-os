@@ -7,6 +7,7 @@ import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
 import { getStaffList } from '../api/staff';
 import { getTanks } from '../api/tanks';
 import { ApiError } from '../api/client';
+import { useAuth } from '../context/useAuth';
 import { formatDateTime, formatLitres, formatSignedLitres } from '../utils/format';
 import type { MeterReading, MeterVariance, StaffListItem, Tank } from '../api/types';
 
@@ -25,6 +26,7 @@ type StatusFilter = 'all' | 'open' | 'closed';
 // so client-side filtering here is a reasonable scope, not a shortcut around
 // a real scaling gap.
 export function MeterReadingsPage() {
+  const { staff: currentStaff } = useAuth();
   const [readings, setReadings] = useState<MeterReading[] | null>(null);
   const [staff, setStaff] = useState<StaffListItem[]>([]);
   const [tanks, setTanks] = useState<Tank[]>([]);
@@ -283,7 +285,13 @@ export function MeterReadingsPage() {
         )}
 
         {openingShift && (
-          <OpenShiftModal staff={staff} tanks={tanks} onClose={() => setOpeningShift(false)} onSaved={handleShiftSaved} />
+          <OpenShiftModal
+            staff={staff}
+            tanks={tanks}
+            currentStaff={currentStaff}
+            onClose={() => setOpeningShift(false)}
+            onSaved={handleShiftSaved}
+          />
         )}
         {closingShift && (
           <CloseShiftModal reading={closingShift} onClose={() => setClosingShift(null)} onSaved={handleShiftSaved} />

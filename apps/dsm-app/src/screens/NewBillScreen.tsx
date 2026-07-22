@@ -355,7 +355,6 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
           amount,
           litres,
           productType,
-          enteredById: staff.id,
           entryChannel: 'DSM_APP',
           paymentLines: lines.map(({ paymentType, amount: lineAmount, direction }) => ({
             paymentType,

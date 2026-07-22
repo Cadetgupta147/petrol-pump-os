@@ -153,7 +153,6 @@ export function BillDetailPage() {
             {editing && staff && (
               <BillFormModal
                 bill={bill}
-                editedById={staff.id}
                 onClose={() => setEditing(false)}
                 onSaved={handleSaved}
               />
@@ -161,7 +160,6 @@ export function BillDetailPage() {
             {confirmingDelete && staff && (
               <DeleteBillConfirmModal
                 bill={bill}
-                deletedById={staff.id}
                 onClose={() => setConfirmingDelete(false)}
                 onDeleted={handleDeleted}
               />

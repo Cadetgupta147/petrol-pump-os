@@ -32,7 +32,11 @@ export interface CreateBillInput {
   // (apps/backend/src/bills/dto/create-bill.dto.ts); the global
   // ValidationPipe has forbidNonWhitelisted on, so sending it here would
   // reject the whole request, not just be ignored.
-  enteredById: string;
+  //
+  // Finding A1 (docs/production-readiness.md) — enteredById is likewise NOT
+  // sent by the client anymore. BillsController.create() now derives the
+  // actor from the authenticated caller's JWT server-side; sending it here
+  // would be rejected by the same forbidNonWhitelisted rule.
   entryChannel: 'DSM_APP';
   paymentLines: BillPaymentLineInput[];
 }
