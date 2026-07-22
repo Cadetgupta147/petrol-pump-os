@@ -266,8 +266,71 @@ required for isolation itself.
   every existing endpoint are unchanged, so no frontend (web portal, DSM
   app, customer app) changes were needed.
 - [ ] Phase 0.3 — flip pumpId to required
-- [ ] Phase 1 — Auth JWT/membership resolution
-- [ ] Phase 2 — AsyncLocalStorage + Prisma Client Extension tenant scoping
+- [x] Phase 1 — Auth JWT/membership resolution. Folded into Phase 0.2's work
+  (auth.service.ts and customer-auth.service.ts already resolve accounts →
+  memberships and stamp pumpId into both JWTs as part of that commit) — no
+  separate work needed.
+- [x] Phase 2 — AsyncLocalStorage + Prisma Client Extension tenant scoping
+  (2026-07-22). Built `apps/backend/src/common/tenant-context.ts`
+  (AsyncLocalStorage store + `getTenantContext()`/`requireTenantContext()`/
+  `runInTenantContext()`), `tenant-context.interceptor.ts` (global
+  `APP_INTERCEPTOR`, populates context from `req.user` after the auth
+  guards run), and `apps/backend/src/prisma/tenant-scoping.extension.ts` (a
+  Prisma Client Extension — **not** `$use` middleware, which turned out to
+  be fully removed as of Prisma 5, confirmed against this project's 6.19.3
+  client). `PrismaService`'s constructor now returns the `$extends()`-ed
+  client (with `onModuleInit`/`onModuleDestroy` manually re-attached)
+  instead of `this`, so all ~26 existing services keep injecting/using
+  `PrismaService` completely unchanged.
+
+  **Two non-obvious findings from live empirical testing against the real
+  dev DB** (not just assumed from docs):
+  1. The callback passed to `tenantContextStorage.run()` **must** be an
+     `async` function that internally `await`s — a bare arrow function that
+     just *returns* a promise silently loses AsyncLocalStorage context
+     somewhere inside Prisma's query dispatch. `runInTenantContext()`
+     enforces the working pattern; the interceptor converts `next.handle()`
+     (an Observable) via `lastValueFrom` so it can be awaited inside that
+     required async callback.
+  2. The extension only intercepts **top-level** model operations — a
+     nested relation write (`bill.create({ data: { paymentLines: { create:
+     [...] } } })`) does not route each nested row through
+     `$allOperations`. Found live: `BillPaymentLine.pumpId` stayed `null`
+     on bills created through the real API. Fixed by stamping `pumpId`
+     explicitly on the two nested-write call sites in `bills.service.ts`
+     (the only nested-relation-create pattern in the whole backend);
+     documented as a "known limitation" in the extension's own header
+     comment for any future nested-write call site on a tenant-scoped
+     model.
+
+  Also fixed, discovered only once Phase 2 was live: the four singleton-
+  config services (`CreditConfigService`, `BusinessProfileService`,
+  `LoyaltyService`, `member-id.ts`) still pinned a hardcoded global id
+  (`'singleton'`) — the moment a second pump existed, its upsert collided
+  with the first pump's row on that same primary key (P2002, caught live).
+  `id` is now a normal auto-generated cuid on all four; `@@unique([pumpId])`
+  (already added in Phase 0.1) is the real per-pump key, with the
+  extension's auto-injection making `where: {}`/`create: {}` (cast via a
+  small `EMPTY_UNIQUE_WHERE` constant, since TypeScript can't see the
+  runtime injection) resolve correctly. Also removed the hardcoded
+  `'default_pump'` literals left over from Phase 0.2 in
+  `customers.service.ts`, `staff-management.service.ts`, and
+  `bills.service.ts`'s quick-add path — those now read the real pump from
+  `requireTenantContext()`/rely on the extension's auto-injection, closing
+  the loop Phase 0.2 explicitly deferred to "once Phase 2 exists."
+
+  Verified: full backend test suite green (42 suites/397 tests — ~6 spec
+  files updated to establish a tenant context via `runInTenantContext()`
+  before calling into now-context-dependent service methods, plus 2 new
+  spec files for the extension itself and its pure `scopeArgs()`
+  transformation function). Live smoke test against the real Supabase dev
+  DB with **two actual Pump rows** end-to-end through real HTTP requests
+  (not just direct Prisma calls): login, bill creation, rate master, staff
+  management, and both singleton configs all independently verified
+  isolated in both directions (Pump A's owner never sees Pump B's data and
+  vice versa), including inside a `$transaction` interactive callback and
+  through the real `TenantContextInterceptor`/`lastValueFrom` path (not
+  just direct `PrismaService` calls). All test data cleaned up afterward.
 - [ ] Phase 3 — UPI webhook pump resolution
 - [ ] Phase 4 — Audit-trail actor fix (finding A1)
 - [ ] Phase 5 — Pump provisioning script

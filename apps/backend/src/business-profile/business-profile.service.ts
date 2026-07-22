@@ -1,36 +1,43 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateBusinessProfileDto } from './dto/update-business-profile.dto';
 
+// TypeScript can't see that tenant-scoping.extension.ts injects `pumpId`
+// into `where` at runtime (satisfying the `@@unique([pumpId])` constraint)
+// — this cast documents that deliberately, rather than lying with `as any`.
+const EMPTY_UNIQUE_WHERE = {} as Prisma.BusinessProfileWhereUniqueInput;
+
 // Section 3.9 — business profile, GSTIN, pump license details.
 //
-// Singleton pattern, same as CreditConfigService: pinned to a fixed, known
-// id, every read/write goes through upsert() against that id, which is
-// atomic at the DB level (id has a unique constraint via @id).
+// Singleton-PER-PUMP pattern: at most one row per pump. Phase 2
+// (docs/multi-tenancy-plan.md) — see CreditConfigService's comment for the
+// full story: this used to be pinned to a single hardcoded global id
+// ('singleton'), which broke the moment a second pump existed. `id` is now
+// a normal auto-generated cuid; `@@unique([pumpId])` is the real per-pump
+// uniqueness guarantee, transparently enforced by tenant-scoping.extension.ts
+// injecting `pumpId` into the (visually empty) where/create below.
 //
 // Auth/role guards do exist and apply here: the global JwtAuthGuard
 // (app.module.ts) requires a valid JWT on every route, and
 // BusinessProfileController carries @Roles(Role.OWNER) on the mutation
 // route (PATCH) — see that controller's comment for why.
-const BUSINESS_PROFILE_ID = 'singleton';
-
 @Injectable()
 export class BusinessProfileService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOrCreate() {
     return this.prisma.businessProfile.upsert({
-      where: { id: BUSINESS_PROFILE_ID },
-      create: { id: BUSINESS_PROFILE_ID },
+      where: EMPTY_UNIQUE_WHERE,
+      create: {},
       update: {},
     });
   }
 
   async update(dto: UpdateBusinessProfileDto) {
     return this.prisma.businessProfile.upsert({
-      where: { id: BUSINESS_PROFILE_ID },
+      where: EMPTY_UNIQUE_WHERE,
       create: {
-        id: BUSINESS_PROFILE_ID,
         ...(dto.businessName !== undefined && { businessName: dto.businessName }),
         ...(dto.gstin !== undefined && { gstin: dto.gstin }),
         ...(dto.pumpLicenseNo !== undefined && { pumpLicenseNo: dto.pumpLicenseNo }),

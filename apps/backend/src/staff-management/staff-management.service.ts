@@ -7,11 +7,6 @@ import { UpdateStaffDto } from './dto/update-staff.dto';
 
 const SALT_ROUNDS = 10;
 
-// Phase 0.2 (docs/multi-tenancy-plan.md): hardcoded until Phase 2's
-// AsyncLocalStorage tenant context exists — same interim pattern used
-// across every service touched in that phase.
-const DEFAULT_PUMP_ID = 'default_pump';
-
 // Never select pinHash/passwordHash out of the DB for this screen — the
 // management UI needs to know a staff member exists and what role they
 // have, never their credential hash. Phase 0.2 split the credential off
@@ -66,6 +61,10 @@ export class StaffManagementService {
   // linked to the SAME account (not built here — this endpoint always
   // creates a brand-new account, since there's no "add an existing person
   // to this pump" flow yet).
+  //
+  // Phase 2 — pumpId is deliberately NOT set explicitly on the
+  // tx.staff.create() below: tenant-scoping.extension.ts auto-stamps it
+  // from the request's tenant context (Staff is in TENANT_SCOPED_MODELS).
   async create(dto: CreateStaffDto) {
     const { pinHash, passwordHash } = await this.resolveCredential(dto.role, {
       pin: dto.pin,
@@ -80,7 +79,6 @@ export class StaffManagementService {
         const membership = await tx.staff.create({
           data: {
             accountId: account.id,
-            pumpId: DEFAULT_PUMP_ID,
             name: dto.name,
             role: dto.role,
           },

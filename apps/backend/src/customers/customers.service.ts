@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
@@ -20,12 +21,6 @@ import { allocateQrMemberId, isValidQrMemberId } from './member-id';
 // form — reused here rather than re-implemented, so the two call sites can
 // never drift apart.
 import { normalizeIndianMobile } from '../customer-auth/phone.util';
-
-// Phase 0.2 (docs/multi-tenancy-plan.md): every pump-scoped write below is
-// hardcoded to DEFAULT_PUMP_ID until Phase 2's AsyncLocalStorage tenant
-// context exists — same interim pattern used across every service touched
-// in this phase.
-const DEFAULT_PUMP_ID = 'default_pump';
 
 // Customer master CRUD + ledger — Section 3.4. Outstanding balance is
 // deliberately NOT stored on Customer: it's derived on read from the
@@ -51,6 +46,13 @@ export class CustomersService {
     // create() for the same phone AT THIS SAME PUMP still fails (P2002 on
     // Customer's @@unique([accountId, pumpId])), preserving today's
     // "customer already exists" behavior.
+    //
+    // Phase 2 — pumpId is deliberately NOT set explicitly in the
+    // tx.customer.create() data below: tenant-scoping.extension.ts
+    // auto-stamps it from the request's tenant context. allocateQrMemberId()
+    // still needs pumpId passed explicitly, since Pump/MemberIdCounter
+    // lookups aren't tenant-scoped the same way (Pump IS the tenant root).
+    const { pumpId } = requireTenantContext();
     return this.prisma
       .$transaction(async (tx) => {
         const normalizedPhone = normalizeIndianMobile(dto.phone);
@@ -59,11 +61,10 @@ export class CustomersService {
           update: {},
           create: { phone: normalizedPhone, name: dto.name },
         });
-        const qrMemberId = await allocateQrMemberId(tx, DEFAULT_PUMP_ID);
+        const qrMemberId = await allocateQrMemberId(tx, pumpId);
         return tx.customer.create({
           data: {
             accountId: account.id,
-            pumpId: DEFAULT_PUMP_ID,
             name: dto.name,
             phone: normalizedPhone,
             vehicleNumber: dto.vehicleNumber,

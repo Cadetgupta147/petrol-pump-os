@@ -4,27 +4,36 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { EarningBasis } from '@prisma/client';
+import { EarningBasis, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertLoyaltyConfigDto } from './dto/upsert-loyalty-config.dto';
 import { CalculatePointsDto } from './dto/calculate-points.dto';
 
+// TypeScript can't see that tenant-scoping.extension.ts injects `pumpId`
+// into `where` at runtime (satisfying the `@@unique([pumpId])` constraint)
+// — this cast documents that deliberately, rather than lying with `as any`.
+const EMPTY_UNIQUE_WHERE = {} as Prisma.LoyaltyConfigWhereUniqueInput;
+
 // Section 6.2 — dealer-level loyalty earning config + the points formula.
 //
-// Singleton pattern for LoyaltyConfig, identical to CreditConfigService: the
-// row is pinned to a fixed id and written via upsert(), so at most one row
-// can ever exist. UNLIKE CreditConfig there is deliberately NO getOrCreate()
-// with defaults — the launch earning basis and rate are open decisions
-// (Section 17), so until the dealer explicitly PUTs a config, getConfig()
-// returns null and calculatePoints() refuses with a 409 rather than
-// inventing a rate.
+// Singleton-PER-PUMP pattern for LoyaltyConfig, identical to
+// CreditConfigService — see that file's comment for the full story (Phase
+// 2, docs/multi-tenancy-plan.md): `id` used to be pinned to a single
+// hardcoded global value, which broke the moment a second pump existed.
+// `id` is now a normal auto-generated cuid; `@@unique([pumpId])` is the
+// real per-pump uniqueness guarantee, transparently enforced by
+// tenant-scoping.extension.ts injecting `pumpId` into the (visually empty)
+// where/create below. UNLIKE CreditConfig there is deliberately NO
+// getOrCreate() with defaults — the launch earning basis and rate are open
+// decisions (Section 17), so until the dealer explicitly PUTs a config,
+// getConfig() returns null and calculatePoints() refuses with a 409 rather
+// than inventing a rate.
 //
 // Auth/role guards do exist and apply here: the global JwtAuthGuard
 // (app.module.ts) requires a valid JWT on every route, and the two
 // controllers in this module carry @Roles(...) enforced by the global
 // RolesGuard — config writes are Owner-only per Section 2 ("Accountant
 // cannot change loyalty rates").
-const LOYALTY_CONFIG_ID = 'singleton';
 
 export type LoyaltyRateSource = 'CUSTOMER_OVERRIDE' | 'DEALER_DEFAULT';
 
@@ -89,7 +98,7 @@ export class LoyaltyService {
   // frontend renders that as "not configured", it is not an error.
   getConfig() {
     return this.prisma.loyaltyConfig.findUnique({
-      where: { id: LOYALTY_CONFIG_ID },
+      where: EMPTY_UNIQUE_WHERE,
     });
   }
 
@@ -114,8 +123,8 @@ export class LoyaltyService {
       }),
     };
     return this.prisma.loyaltyConfig.upsert({
-      where: { id: LOYALTY_CONFIG_ID },
-      create: { id: LOYALTY_CONFIG_ID, ...data },
+      where: EMPTY_UNIQUE_WHERE,
+      create: data,
       update: data,
     });
   }

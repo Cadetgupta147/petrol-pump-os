@@ -11,6 +11,7 @@ import { CreditConfigService } from '../credit-config/credit-config.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { CreateBillDto } from './dto/create-bill.dto';
+import { runInTenantContext } from '../common/tenant-context';
 
 // Section 6.3 step 5 — points credited atomically with bill creation.
 // Money/points-touching logic (CLAUDE.md): covers credit-on-create for both
@@ -159,6 +160,15 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
     service = module.get(BillsService);
   });
 
+  // Phase 2 (docs/multi-tenancy-plan.md): BillsService.create() now reads
+  // requireTenantContext().pumpId (both for the quick-add member-id
+  // allocation and to stamp BillPaymentLine.pumpId on nested writes — see
+  // tenant-scoping.extension.ts's "known limitation" comment) — every call
+  // needs an active tenant context, not just the quick-add test.
+  function create(dto: CreateBillDto) {
+    return runInTenantContext({ pumpId: 'default_pump' }, () => service.create(dto));
+  }
+
   it('rupee basis: credits (amount/100) × defaultRate and writes the LoyaltyTransaction in the same tx', async () => {
     prisma.loyaltyConfig.findUnique.mockResolvedValue(rupeeConfig);
     prisma.customer.findUnique.mockResolvedValue({
@@ -167,7 +177,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       creditLimit: 0,
     });
 
-    const result = await service.create({ ...baseDto, customerId: 'cust-1' });
+    const result = await create({ ...baseDto, customerId: 'cust-1' });
 
     expect(prisma.bill.create).toHaveBeenCalledWith(
       containing({
@@ -197,7 +207,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       creditLimit: 0,
     });
 
-    await service.create({ ...baseDto, customerId: 'cust-1' });
+    await create({ ...baseDto, customerId: 'cust-1' });
 
     expect(prisma.bill.create).toHaveBeenCalledWith(
       containing({
@@ -222,7 +232,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       creditLimit: 0,
     });
 
-    await service.create({ ...baseDto, customerId: 'cust-1' });
+    await create({ ...baseDto, customerId: 'cust-1' });
 
     expect(prisma.loyaltyTransaction.create).toHaveBeenCalledWith(
       containing({
@@ -234,7 +244,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
   it('walk-in bill (no customer): earns nothing, no LoyaltyTransaction', async () => {
     prisma.loyaltyConfig.findUnique.mockResolvedValue(rupeeConfig);
 
-    const result = await service.create({ ...baseDto });
+    const result = await create({ ...baseDto });
 
     expect(prisma.bill.create).toHaveBeenCalledWith(
       containing({
@@ -256,7 +266,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       creditLimit: 0,
     });
 
-    const result = await service.create({ ...baseDto, customerId: 'cust-1' });
+    const result = await create({ ...baseDto, customerId: 'cust-1' });
 
     expect(prisma.bill.create).toHaveBeenCalledWith(
       containing({
@@ -276,7 +286,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
   it('no LoyaltyConfig + walk-in: no warning (nothing could ever have been credited)', async () => {
     prisma.loyaltyConfig.findUnique.mockResolvedValue(null);
 
-    const result = await service.create({ ...baseDto });
+    const result = await create({ ...baseDto });
 
     expect(result).not.toHaveProperty('loyaltyWarning');
   });
@@ -289,7 +299,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       creditLimit: 0,
     });
 
-    const result = await service.create({ ...baseDto, customerId: 'cust-1' });
+    const result = await create({ ...baseDto, customerId: 'cust-1' });
 
     expect(prisma.bill.create).toHaveBeenCalledWith(
       containing({
@@ -307,17 +317,19 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
   it('quick-add credit customer: allocates a formatted member id and credits at the dealer default', async () => {
     prisma.loyaltyConfig.findUnique.mockResolvedValue(rupeeConfig);
 
-    await service.create({
-      ...baseDto,
-      quickAddCustomer: { name: 'Quick Added', vehicleNumber: 'KA02CD5678' },
-      paymentLines: [
-        {
-          paymentType: PaymentType.CREDIT,
-          amount: 1000,
-          direction: PaymentDirection.IN,
-        },
-      ],
-    });
+    await runInTenantContext({ pumpId: 'default_pump' }, () =>
+      create({
+        ...baseDto,
+        quickAddCustomer: { name: 'Quick Added', vehicleNumber: 'KA02CD5678' },
+        paymentLines: [
+          {
+            paymentType: PaymentType.CREDIT,
+            amount: 1000,
+            direction: PaymentDirection.IN,
+          },
+        ],
+      }),
+    );
 
     expect(prisma.customer.create).toHaveBeenCalledWith(
       containing({
@@ -350,7 +362,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
     );
 
     await expect(
-      service.create({ ...baseDto, customerId: 'cust-1' }),
+      create({ ...baseDto, customerId: 'cust-1' }),
     ).rejects.toThrow('simulated ledger write failure');
 
     // The rejection surfaced from INSIDE $transaction's callback, so with

@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
@@ -12,6 +12,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { TenantContextInterceptor } from '../common/tenant-context.interceptor';
 
 // Section 3.4/6.1 — the concrete cross-module regression this slice fixes:
 // a customer created by a dealer through the web portal (POST /customers,
@@ -49,7 +50,14 @@ class FakePrisma {
   customer = {
     create: ({ data }: { data: Record<string, unknown> }) => {
       const id = `cust-${this.nextCustomerSeq++}`;
-      const row = { id, qrMemberId: null, ...data };
+      // Phase 2: the real tenant-scoping.extension.ts auto-stamps pumpId
+      // from the request's tenant context when it's not explicitly set in
+      // `data` (CustomersService.create() deliberately omits it, relying on
+      // that injection) — this fake doesn't run the real extension, so it
+      // mimics that one behavior directly rather than silently leaving
+      // pumpId unset, which would make verifyOtp()'s !customer.pumpId
+      // guard incorrectly treat every customer as unregistered.
+      const row = { id, qrMemberId: null, pumpId: 'pump-1', ...data };
       this.customers.set(id, row);
       return Promise.resolve(row);
     },
@@ -223,6 +231,7 @@ describe('Web-portal-created customer can OTP-login with a differently-formatted
       providers: [
         { provide: APP_GUARD, useClass: JwtAuthGuard },
         { provide: APP_GUARD, useClass: RolesGuard },
+        { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
       ],
     })
       .overrideProvider(PrismaService)

@@ -13,6 +13,7 @@ import {
   CreditEnforcementMode,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { requireTenantContext } from '../common/tenant-context';
 import { CreditConfigService } from '../credit-config/credit-config.service';
 import {
   computeLoyaltyPoints,
@@ -174,22 +175,24 @@ export class BillsService {
         let resolvedCustomerId = dto.customerId;
 
         if (isQuickAdd) {
+          // Phase 2 (docs/multi-tenancy-plan.md) — pumpId is deliberately
+          // NOT set explicitly in `data` below: tenant-scoping.extension.ts
+          // auto-stamps it from the request's tenant context. No accountId
+          // — a quick-add customer has no phone (Section 3.4A), so there's
+          // nothing to link an account to yet; the verification upgrade
+          // path (CustomersService.update()) creates/links one once a
+          // phone is added. allocateQrMemberId() still needs pumpId passed
+          // explicitly, since Pump/MemberIdCounter lookups aren't
+          // tenant-scoped the same way (Pump IS the tenant root).
           const quickAddedCustomer = await tx.customer.create({
             data: {
-              // Phase 0.2 (docs/multi-tenancy-plan.md): hardcoded until
-              // Phase 2's tenant context exists. No accountId — a quick-add
-              // customer has no phone (Section 3.4A), so there's nothing to
-              // link an account to yet; the verification upgrade path
-              // (CustomersService.update()) creates/links one once a phone
-              // is added.
-              pumpId: 'default_pump',
               name: dto.quickAddCustomer!.name,
               vehicleNumber: dto.quickAddCustomer!.vehicleNumber,
               verificationStatus: 'INFORMAL',
               creditLimit: creditConfig.defaultInformalCreditLimit,
               // Section 6.1/6.7 — same member-id generator as the normal
               // /customers onboarding path, same transaction as the create.
-              qrMemberId: await allocateQrMemberId(tx, 'default_pump'),
+              qrMemberId: await allocateQrMemberId(tx, requireTenantContext().pumpId),
             },
           });
           resolvedCustomerId = quickAddedCustomer.id;
@@ -209,6 +212,15 @@ export class BillsService {
               })
             : null;
 
+        // Phase 2 (docs/multi-tenancy-plan.md) — a KNOWN NUANCE of the
+        // tenant-scoping extension, found live against the real dev DB: it
+        // intercepts top-level model operations (Bill.create below gets
+        // pumpId auto-stamped correctly), but NOT nested relation writes
+        // performed as part of that same call — Prisma resolves
+        // `paymentLines: { create: [...] }` internally without routing each
+        // nested row through $allOperations as its own BillPaymentLine
+        // "create". So BillPaymentLine.pumpId is stamped explicitly here.
+        const pumpId = requireTenantContext().pumpId;
         const created = await tx.bill.create({
           data: {
             customerId: resolvedCustomerId,
@@ -224,6 +236,7 @@ export class BillsService {
             loyaltyBasisUsed: loyaltyCalc?.basis ?? null,
             paymentLines: {
               create: dto.paymentLines.map((line) => ({
+                pumpId,
                 paymentType: line.paymentType,
                 amount: line.amount,
                 direction: line.direction,
@@ -481,10 +494,15 @@ export class BillsService {
             customerId: effective.customerId,
             lastEditedById: dto.editedById,
             lastEditedAt: new Date(),
+            // Phase 2 (docs/multi-tenancy-plan.md) — pumpId is stamped
+            // explicitly here for the same reason as create() above:
+            // nested relation writes don't route through the tenant-
+            // scoping extension's per-model interception.
             ...(dto.paymentLines
               ? {
                   paymentLines: {
                     create: dto.paymentLines.map((line) => ({
+                      pumpId: requireTenantContext().pumpId,
                       paymentType: line.paymentType,
                       amount: line.amount,
                       direction: line.direction,

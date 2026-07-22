@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { resolve } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './health/health.controller';
@@ -32,6 +32,7 @@ import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
+import { TenantContextInterceptor } from './common/tenant-context.interceptor';
 
 // .env lives at the repo root (npm workspace), not inside apps/backend.
 //
@@ -94,6 +95,12 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     // out of authentication entirely — currently just /auth/login and /health.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Phase 2 (docs/multi-tenancy-plan.md) — runs after the guards above
+    // (Nest always runs Guards before Interceptors, regardless of provider
+    // registration order), populating the AsyncLocalStorage tenant context
+    // that tenant-scoping.middleware.ts reads to auto-scope every
+    // tenant-owned model's queries by pumpId.
+    { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
   ],
 })
 export class AppModule {}

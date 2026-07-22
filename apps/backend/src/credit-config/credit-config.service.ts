@@ -1,42 +1,51 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateCreditConfigDto } from './dto/update-credit-config.dto';
+
+// TypeScript can't see that tenant-scoping.extension.ts injects `pumpId`
+// into `where` at runtime (satisfying the `@@unique([pumpId])` constraint)
+// — this cast documents that deliberately, rather than lying with `as any`.
+const EMPTY_UNIQUE_WHERE = {} as Prisma.CreditConfigWhereUniqueInput;
 
 // Section 3.4A — dealer-configurable credit limit enforcement mode
 // (NOTIFY default / BLOCK) and the default credit limit auto-applied to
 // quick-added (informal) customers.
 //
-// Singleton pattern: only one row is ever really meant to matter. This is
-// pinned to a fixed, known id (CREDIT_CONFIG_ID) and every read/write goes
-// through Prisma's upsert() against that id, which is atomic at the DB
-// level (id has a unique constraint via @id) — this guarantees at most one
-// row can ever exist, with no race window between concurrent first-ever
-// calls.
+// Singleton-PER-POOL pattern: at most one row per pump. Phase 2
+// (docs/multi-tenancy-plan.md) — this used to be pinned to a single
+// hardcoded global id ('singleton'), atomic via Prisma's upsert(). That
+// broke the moment a second pump existed (every pump's upsert tried to
+// claim the SAME id, a P2002 unique-constraint collision against the first
+// pump's row — caught live against the real dev DB, see the Phase 2
+// progress log). Now `id` is a normal auto-generated cuid, and the
+// per-pump uniqueness guarantee is `@@unique([pumpId])` — `where: {}` /
+// `create: {}` below look empty because tenant-scoping.extension.ts
+// (registered on PrismaService) transparently injects `pumpId` from the
+// request's AsyncLocalStorage context into both, the same way it does for
+// every other tenant-scoped model.
 //
 // Auth/role guards do exist and apply here: the global JwtAuthGuard
 // (app.module.ts) requires a valid JWT on every route, and
 // CreditConfigController carries @Roles(Role.OWNER), enforced by the
 // global RolesGuard. No staff outside that role can reach this service via
 // HTTP.
-const CREDIT_CONFIG_ID = 'singleton';
-
 @Injectable()
 export class CreditConfigService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOrCreate() {
     return this.prisma.creditConfig.upsert({
-      where: { id: CREDIT_CONFIG_ID },
-      create: { id: CREDIT_CONFIG_ID },
+      where: EMPTY_UNIQUE_WHERE,
+      create: {},
       update: {},
     });
   }
 
   async update(dto: UpdateCreditConfigDto) {
     return this.prisma.creditConfig.upsert({
-      where: { id: CREDIT_CONFIG_ID },
+      where: EMPTY_UNIQUE_WHERE,
       create: {
-        id: CREDIT_CONFIG_ID,
         ...(dto.enforcementMode !== undefined && {
           enforcementMode: dto.enforcementMode,
         }),

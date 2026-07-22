@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CustomersService } from './customers.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { runInTenantContext } from '../common/tenant-context';
 
 // jest's asymmetric matchers are typed `any`; these wrappers give them an
 // `unknown` type so they can sit inside object-literal expectations without
@@ -69,11 +70,13 @@ describe('CustomersService — phone normalization', () => {
     it('stores a +91-prefixed phone as the bare 10-digit canonical form', async () => {
       prisma.customer.create.mockResolvedValue({ id: 'cust-1' });
 
-      await service.create({
-        name: 'Ramesh',
-        phone: '+919876543210',
-        creditLimit: 0,
-      });
+      await runInTenantContext({ pumpId: 'default_pump' }, () =>
+        service.create({
+          name: 'Ramesh',
+          phone: '+919876543210',
+          creditLimit: 0,
+        }),
+      );
 
       expect(prisma.customerAccount.upsert).toHaveBeenCalledWith(
         containing({ where: { phone: '9876543210' } }),
@@ -88,11 +91,13 @@ describe('CustomersService — phone normalization', () => {
     it('stores a spaced/dashed phone as the bare 10-digit canonical form', async () => {
       prisma.customer.create.mockResolvedValue({ id: 'cust-2' });
 
-      await service.create({
-        name: 'Suresh',
-        phone: '+91 98765-43210',
-        creditLimit: 0,
-      });
+      await runInTenantContext({ pumpId: 'default_pump' }, () =>
+        service.create({
+          name: 'Suresh',
+          phone: '+91 98765-43210',
+          creditLimit: 0,
+        }),
+      );
 
       expect(prisma.customer.create).toHaveBeenCalledWith(
         containing({
