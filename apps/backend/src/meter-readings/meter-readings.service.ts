@@ -366,11 +366,18 @@ export class MeterReadingsService {
     return tankWarning ? { ...withLitres, tankWarning } : withLitres;
   }
 
-  async findAll() {
+  // staffId is an optional filter — Owner/Accountant may pass it or omit it
+  // (omitted = every reading, the existing behavior). The controller forces
+  // it to the caller's own staffId for a DSM caller regardless of what (if
+  // anything) was passed, so a DSM can see their own shift history (needed
+  // for the DSM app's shift-summary screen) without ever being able to
+  // enumerate any other staff member's readings.
+  async findAll(staffId?: string) {
     // Section 3.3/4 — nozzle included so callers (web portal table, DSM
     // app) can show the dealer-facing label/productType instead of a raw
     // FK id, without a second round trip per row.
     const readings = await this.prisma.meterReading.findMany({
+      where: staffId ? { staffId } : undefined,
       orderBy: { shiftStart: 'desc' },
       include: { nozzle: true },
     });

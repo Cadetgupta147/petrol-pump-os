@@ -1,0 +1,44 @@
+# Applies to the backend Dockerfile build context (repo root — see
+# apps/backend/Dockerfile's header comment for the build command).
+# Keeps the context sent to the Docker daemon small; the Dockerfile itself
+# only ever COPYs specific paths it actually needs.
+
+node_modules
+**/node_modules
+**/dist
+**/build
+**/coverage
+
+.git
+.github
+
+# Secrets — never bake into an image
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+*.log
+npm-debug.log*
+
+# Mobile / Expo — irrelevant to the backend image
+.expo
+.expo-shared
+ios
+android
+**/*.jks
+**/*.p8
+**/*.p12
+**/*.mobileprovision
+
+# Not needed inside the image
+docs
+*.md
+*.jpeg
+*.jpg
+*.png
+*.svg
+.vscode
+.idea
+.claude

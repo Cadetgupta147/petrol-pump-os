@@ -54,6 +54,7 @@ describe('MeterReadingsService', () => {
   let prisma: {
     meterReading: {
       findFirst: jest.Mock;
+      findMany: jest.Mock;
       findUnique: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
@@ -68,6 +69,7 @@ describe('MeterReadingsService', () => {
     prisma = {
       meterReading: {
         findFirst: jest.fn().mockResolvedValue(null), // no open shift / no prior closed shift by default
+        findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
@@ -571,6 +573,26 @@ describe('MeterReadingsService', () => {
       expect(result.litresSoldFromMeter).toBe(50);
       expect(result.litresBilled).toBe(45);
       expect(result.nozzleLabel).toBe('N1');
+    });
+  });
+
+  describe('findAll', () => {
+    it('with no staffId returns every reading (Owner/Accountant default)', async () => {
+      await service.findAll();
+      expect(prisma.meterReading.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: undefined }),
+      );
+    });
+
+    // Security boundary — findAll(staffId) is what the controller uses to
+    // force-scope a DSM caller to their own readings (see
+    // meter-readings.controller.ts's findAll()); confirms the service half
+    // of that guarantee actually filters rather than silently ignoring it.
+    it('with a staffId filters to that staff member only', async () => {
+      await service.findAll('s1');
+      expect(prisma.meterReading.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { staffId: 's1' } }),
+      );
     });
   });
 });
