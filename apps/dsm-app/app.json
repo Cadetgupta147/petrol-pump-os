@@ -34,7 +34,8 @@
         {
           "cameraPermission": "The camera is used to scan customer QR loyalty cards at bill entry."
         }
-      ]
+      ],
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {

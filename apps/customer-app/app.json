@@ -28,6 +28,10 @@
         "projectId": "b9d7e3b8-91e0-492f-988c-0212aa558e32"
       }
     },
-    "owner": "cadetgupta147"
+    "owner": "cadetgupta147",
+    "plugins": [
+      "expo-sharing",
+      "expo-status-bar"
+    ]
   }
 }
