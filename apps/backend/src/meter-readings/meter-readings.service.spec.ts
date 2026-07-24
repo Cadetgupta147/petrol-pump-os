@@ -124,7 +124,7 @@ describe('MeterReadingsService', () => {
           openingReading: 100, // == activeNozzle.startingReading — no prior closed shift
           productType: 'petrol',
         },
-        include: { nozzle: true },
+        include: { nozzle: { include: { item: true } } },
       });
     });
 

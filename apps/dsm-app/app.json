@@ -18,7 +18,11 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -31,6 +35,12 @@
           "cameraPermission": "The camera is used to scan customer QR loyalty cards at bill entry."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "5639e4f5-a4a2-4666-a707-93ea0484d622"
+      }
+    },
+    "owner": "cadetgupta147"
   }
 }

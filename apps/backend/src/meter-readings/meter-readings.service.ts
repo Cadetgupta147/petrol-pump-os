@@ -100,7 +100,7 @@ export class MeterReadingsService {
           productType: nozzle.item.name,
           ...(shiftStart !== undefined && { shiftStart }),
         },
-        include: { nozzle: true },
+        include: { nozzle: { include: { item: true } } },
       });
       return this.withComputedLitresSold(created);
     } catch (error) {
@@ -145,7 +145,7 @@ export class MeterReadingsService {
   async closeShift(id: string, dto: CloseShiftDto, user: AuthenticatedUser) {
     const existing = await this.prisma.meterReading.findUnique({
       where: { id },
-      include: { nozzle: true },
+      include: { nozzle: { include: { item: true } } },
     });
     if (!existing) {
       throw new NotFoundException(`MeterReading ${id} not found`);
@@ -209,7 +209,7 @@ export class MeterReadingsService {
             meterRolledOver,
             openLockNozzleId: null,
           },
-          include: { nozzle: true },
+          include: { nozzle: { include: { item: true } } },
         });
 
         let warning: string | undefined;
@@ -253,7 +253,7 @@ export class MeterReadingsService {
 
     const existing = await this.prisma.meterReading.findUnique({
       where: { id },
-      include: { nozzle: true },
+      include: { nozzle: { include: { item: true } } },
     });
     if (!existing) {
       throw new NotFoundException(`MeterReading ${id} not found`);
@@ -325,7 +325,7 @@ export class MeterReadingsService {
           correctedById: staffId,
           correctedAt: new Date(),
         },
-        include: { nozzle: true },
+        include: { nozzle: { include: { item: true } } },
       });
 
       let warning: string | undefined;
@@ -379,7 +379,7 @@ export class MeterReadingsService {
     const readings = await this.prisma.meterReading.findMany({
       where: staffId ? { staffId } : undefined,
       orderBy: { shiftStart: 'desc' },
-      include: { nozzle: true },
+      include: { nozzle: { include: { item: true } } },
     });
     return readings.map((reading) => this.withComputedLitresSold(reading));
   }
@@ -387,7 +387,7 @@ export class MeterReadingsService {
   async findOne(id: string) {
     const reading = await this.prisma.meterReading.findUnique({
       where: { id },
-      include: { nozzle: true },
+      include: { nozzle: { include: { item: true } } },
     });
     if (!reading) {
       throw new NotFoundException(`MeterReading ${id} not found`);
@@ -398,7 +398,7 @@ export class MeterReadingsService {
   async checkVariance(id: string) {
     const reading = await this.prisma.meterReading.findUnique({
       where: { id },
-      include: { nozzle: true },
+      include: { nozzle: { include: { item: true } } },
     });
     if (!reading) {
       throw new NotFoundException(`MeterReading ${id} not found`);
