@@ -10,6 +10,7 @@ import { CreditConfigModule } from './credit-config/credit-config.module';
 import { CreditAlertsModule } from './credit-alerts/credit-alerts.module';
 import { ItemsModule } from './items/items.module';
 import { NozzlesModule } from './nozzles/nozzles.module';
+import { ShiftScheduleModule } from './shift-schedule/shift-schedule.module';
 import { MeterReadingsModule } from './meter-readings/meter-readings.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { GiftCatalogModule } from './gift-catalog/gift-catalog.module';
@@ -69,6 +70,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     CreditAlertsModule,
     ItemsModule,
     NozzlesModule,
+    ShiftScheduleModule,
     MeterReadingsModule,
     LoyaltyModule,
     GiftCatalogModule,

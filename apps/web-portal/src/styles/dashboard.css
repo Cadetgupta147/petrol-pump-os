@@ -325,6 +325,69 @@
   font-size: 12px;
 }
 
+/* Meter Readings — Date/Shift picker row (Section 3.3): a dense, single-day
+   grid view inspired by legacy pump-software layouts, restyled with this
+   app's own tokens/components rather than copied wholesale. */
+.meter-date-shift-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.date-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.date-nav input[type='date'] {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-dark);
+}
+
+.date-nav-btn {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dark);
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.date-nav-btn:hover {
+  background: var(--page-bg);
+}
+
+.date-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Gridded variant of .data-table — full cell borders and a shaded header
+   band, closer to the reference spreadsheet-style legacy grid, while
+   keeping this app's existing colors/radius rather than the reference's own
+   styling. */
+.data-table.gridded th,
+.data-table.gridded td {
+  border: 1px solid var(--border);
+}
+
+.data-table.gridded th {
+  background: var(--page-bg);
+  padding: 8px 10px;
+}
+
+.data-table.gridded td {
+  padding: 8px 10px;
+}
+
 .data-table th {
   font-size: 10px;
   letter-spacing: 0.3px;

@@ -24,7 +24,7 @@ interface CloseShiftModalProps {
 //
 // The backdated shiftEnd field is only shown for non-DSM roles — the
 // backend rejects (403) a DSM caller sending shiftEnd at all
-// (assertNonDsmOverride()), same as OpenShiftModal's shiftStart.
+// (assertNonDsmOverride()).
 export function CloseShiftModal({ reading, currentStaff, onClose, onSaved }: CloseShiftModalProps) {
   const isDsm = currentStaff?.role === 'DSM';
   const [closingReading, setClosingReading] = useState('');

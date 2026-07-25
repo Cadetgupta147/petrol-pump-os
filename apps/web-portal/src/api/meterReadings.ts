@@ -1,24 +1,11 @@
 import { apiFetch } from './client';
 import type {
+  BatchCloseReadingRequest,
   CloseShiftRequest,
   CorrectMeterReadingRequest,
   MeterReading,
   MeterVariance,
-  OpenShiftRequest,
 } from './types';
-
-// POST /meter-readings — Section 3.3/4 shift-start entry: pick a nozzleId
-// (from GET /nozzles); openingReading/productType are server-derived (the
-// carry-forward rule), never sent here. This page's manual-entry fallback
-// (the same call the DSM app's shift-start flow makes) — Owner/Accountant/
-// DSM server-side, but only Owner/Accountant reach this page (Section 2: DSM
-// has no web portal access).
-export function openShift(dto: OpenShiftRequest): Promise<MeterReading> {
-  return apiFetch<MeterReading>('/meter-readings', {
-    method: 'POST',
-    body: JSON.stringify(dto),
-  });
-}
 
 // PATCH /meter-readings/:id/close — shift-end closing reading entry. Section
 // 7.2's auto tank-deduct happens server-side; a non-blocking tankWarning may
@@ -41,6 +28,18 @@ export function correctMeterReading(
   return apiFetch<MeterReading>(`/meter-readings/${id}/correct`, {
     method: 'PATCH',
     body: JSON.stringify(dto),
+  });
+}
+
+// POST /meter-readings/batch-close — Meter Reading redesign (Section 3.3):
+// submit closing readings for every active nozzle at once, in one request.
+// Replaces opening a shift as a separate step — see BatchCloseReadingRequest's
+// comment. Returns one updated MeterReading per submitted nozzle, each
+// possibly carrying its own tankWarning.
+export function batchCloseMeterReadings(readings: BatchCloseReadingRequest[]): Promise<MeterReading[]> {
+  return apiFetch<MeterReading[]>('/meter-readings/batch-close', {
+    method: 'POST',
+    body: JSON.stringify({ readings }),
   });
 }
 

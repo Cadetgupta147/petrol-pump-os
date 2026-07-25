@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { runInTenantContext } from '../common/tenant-context';
 import type { OpenShiftDto } from './dto/open-shift.dto';
+import type { BatchCloseDto } from './dto/batch-close.dto';
 
 const dsmCaller: AuthenticatedUser = {
   staffId: 's1',
@@ -62,6 +63,7 @@ describe('MeterReadingsService', () => {
     nozzle: { findUnique: jest.Mock };
     tank: { findFirst: jest.Mock; update: jest.Mock };
     bill: { aggregate: jest.Mock };
+    shiftSalesSummary: { findFirst: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -77,6 +79,7 @@ describe('MeterReadingsService', () => {
       nozzle: { findUnique: jest.fn().mockResolvedValue(activeNozzle) },
       tank: { findFirst: jest.fn(), update: jest.fn() },
       bill: { aggregate: jest.fn().mockResolvedValue({ _sum: { litres: null } }) },
+      shiftSalesSummary: { findFirst: jest.fn().mockResolvedValue(null) }, // no walk-in reconciliation logged by default
       $transaction: jest.fn((cb: TxCallback) => cb(prisma)),
     };
 
@@ -96,6 +99,10 @@ describe('MeterReadingsService', () => {
   // active tenant context.
   function openShift(dto: OpenShiftDto, user: AuthenticatedUser) {
     return runInTenantContext({ pumpId: 'pump-1' }, () => service.openShift(dto, user));
+  }
+
+  function batchClose(dto: BatchCloseDto, user: AuthenticatedUser) {
+    return runInTenantContext({ pumpId: 'pump-1' }, () => service.batchClose(dto, user));
   }
 
   describe('openShift', () => {
@@ -546,7 +553,7 @@ describe('MeterReadingsService', () => {
   });
 
   describe('checkVariance', () => {
-    it('prefers an exact nozzleId match, falling back to staffId+time-window for bills without one', async () => {
+    function mockReading(overrides: Record<string, unknown> = {}) {
       prisma.meterReading.findUnique.mockResolvedValue({
         id: 'mr-1',
         nozzleId: 'n1',
@@ -557,7 +564,12 @@ describe('MeterReadingsService', () => {
         shiftEnd: new Date('2026-07-20T14:00:00Z'),
         meterRolledOver: false,
         nozzle: activeNozzle,
+        ...overrides,
       });
+    }
+
+    it('prefers an exact nozzleId match, falling back to staffId+time-window for bills without one', async () => {
+      mockReading();
       prisma.bill.aggregate.mockResolvedValue({ _sum: { litres: 45 } });
 
       const result = await service.checkVariance('mr-1');
@@ -573,6 +585,74 @@ describe('MeterReadingsService', () => {
       expect(result.litresSoldFromMeter).toBe(50);
       expect(result.litresBilled).toBe(45);
       expect(result.nozzleLabel).toBe('N1');
+    });
+
+    // Section 8A.2 fix — a positive gap (meter shows more than was billed)
+    // is expected on any pump with real walk-in cash trade, not itself
+    // fraud. See ShiftSalesSummary.walkInLitres, which computes this exact
+    // same gap independently once a shift's walk-in sales are reconciled.
+    it('does not flag a positive gap as fraud when no walk-in reconciliation exists yet — surfaces it as pending instead', async () => {
+      mockReading(); // litresSoldFromMeter 50, litresBilled 45 -> rawGap 5
+      prisma.bill.aggregate.mockResolvedValue({ _sum: { litres: 45 } });
+      // shiftSalesSummary.findFirst already defaults to null in beforeEach.
+
+      const result = await service.checkVariance('mr-1');
+
+      expect(result.variance).toBe(5);
+      expect(result.walkInLitresReconciled).toBeNull();
+      expect(result.flagged).toBe(false);
+      expect(result.reconciliationPending).toBe(true);
+    });
+
+    it('does not mark reconciliation pending when the raw gap is already within tolerance', async () => {
+      mockReading(); // litresSoldFromMeter 50
+      prisma.bill.aggregate.mockResolvedValue({ _sum: { litres: 49.8 } }); // rawGap 0.2, within the 0.5L tolerance
+
+      const result = await service.checkVariance('mr-1');
+
+      expect(result.flagged).toBe(false);
+      expect(result.reconciliationPending).toBe(false);
+    });
+
+    it('nets out ShiftSalesSummary.walkInLitres before flagging once walk-in sales are reconciled', async () => {
+      mockReading(); // litresSoldFromMeter 50
+      prisma.bill.aggregate.mockResolvedValue({ _sum: { litres: 20 } }); // rawGap 30
+      prisma.shiftSalesSummary.findFirst.mockResolvedValue({ id: 'sss-1', walkInLitres: 30 });
+
+      const result = await service.checkVariance('mr-1');
+
+      expect(prisma.shiftSalesSummary.findFirst).toHaveBeenCalledWith({ where: { shiftId: 'mr-1' } });
+      expect(result.walkInLitresReconciled).toBe(30);
+      expect(result.variance).toBe(0); // fully explained by the reconciled walk-in figure
+      expect(result.flagged).toBe(false);
+      expect(result.reconciliationPending).toBe(false);
+    });
+
+    it('still flags a genuine leftover after netting out a reconciled walk-in figure', async () => {
+      mockReading(); // litresSoldFromMeter 50
+      prisma.bill.aggregate.mockResolvedValue({ _sum: { litres: 10 } }); // rawGap 40
+      prisma.shiftSalesSummary.findFirst.mockResolvedValue({ id: 'sss-1', walkInLitres: 30 }); // only explains 30 of the 40
+
+      const result = await service.checkVariance('mr-1');
+
+      expect(result.variance).toBe(10); // 40 - 30, still unexplained
+      expect(result.flagged).toBe(true);
+      expect(result.reconciliationPending).toBe(false);
+    });
+
+    it('always flags a negative gap (billed more than the meter shows dispensed), reconciled or not — walk-in can never explain that direction', async () => {
+      mockReading(); // litresSoldFromMeter 50
+      prisma.bill.aggregate.mockResolvedValue({ _sum: { litres: 70 } }); // rawGap -20
+
+      const result = await service.checkVariance('mr-1');
+
+      expect(result.variance).toBe(-20);
+      expect(result.walkInLitresReconciled).toBeNull();
+      expect(result.flagged).toBe(true);
+      expect(result.reconciliationPending).toBe(false);
+      // Never even needs to check for a walk-in summary — that direction of
+      // gap isn't something walk-in reconciliation could explain anyway.
+      expect(prisma.shiftSalesSummary.findFirst).not.toHaveBeenCalled();
     });
   });
 
@@ -593,6 +673,149 @@ describe('MeterReadingsService', () => {
       expect(prisma.meterReading.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { staffId: 's1' } }),
       );
+    });
+  });
+
+  // Meter Reading redesign (Section 3.3) — replaces the two-step "Open
+  // Shift" then "Close Shift" DSM flow with one batch submission covering
+  // every nozzle at once. Everything here runs inside the shared
+  // $transaction mock (`cb(prisma)` — see beforeEach above), so `tx` and
+  // `this.prisma` are the same mock object in these tests.
+  describe('batchClose', () => {
+    const openReading = {
+      id: 'mr-open',
+      nozzleId: 'n1',
+      staffId: 's1',
+      openingReading: 100,
+      closingReading: null,
+      shiftStart: new Date(Date.now() - 60 * 60 * 1000), // an hour ago — always before "now"
+      shiftEnd: null,
+      meterRolledOver: false,
+      productType: 'petrol',
+      nozzle: activeNozzle,
+    };
+
+    it('auto-creates then closes a nozzle with no open shift, and auto-reopens the next shift carrying the closing reading forward', async () => {
+      prisma.meterReading.findFirst
+        .mockResolvedValueOnce(null) // "does this nozzle have an open shift?" — no
+        .mockResolvedValueOnce(null); // resolveOpeningReading()'s "last closed shift" lookup — none, falls back to startingReading
+      prisma.meterReading.create
+        .mockResolvedValueOnce({ ...openReading, id: 'mr-auto-opened' }) // the auto-opened shift
+        .mockResolvedValueOnce({ id: 'mr-reopened' }); // the auto-reopen after closing
+      prisma.meterReading.update.mockResolvedValue({
+        ...openReading,
+        id: 'mr-auto-opened',
+        closingReading: 150,
+      });
+      prisma.tank.findFirst.mockResolvedValue({ id: 'tank-1', currentStockLitres: 1000 });
+
+      const dto: BatchCloseDto = { readings: [{ nozzleId: 'n1', closingReading: 150 }] };
+      const [result] = await batchClose(dto, dsmCaller);
+
+      expect(result.litresSold).toBe(50); // 150 - 100
+      expect(result.tankWarning).toBeUndefined();
+
+      // First create() opened the shift (carry-forward opening = startingReading, no prior closed shift)
+      expect(prisma.meterReading.create).toHaveBeenNthCalledWith(1, {
+        data: {
+          pumpId: 'pump-1',
+          nozzleId: 'n1',
+          openLockNozzleId: 'n1',
+          staffId: 's1',
+          openingReading: 100,
+          productType: 'petrol',
+        },
+        include: { nozzle: { include: { item: true } } },
+      });
+      // Second create() auto-reopens the next shift, carrying the just-submitted closing forward.
+      expect(prisma.meterReading.create).toHaveBeenNthCalledWith(2, {
+        data: {
+          pumpId: 'pump-1',
+          nozzleId: 'n1',
+          openLockNozzleId: 'n1',
+          staffId: 's1',
+          openingReading: 150,
+          productType: 'petrol',
+        },
+      });
+      expect(prisma.tank.update).toHaveBeenCalledWith({
+        where: { id: 'tank-1' },
+        data: { currentStockLitres: { decrement: 50 } },
+      });
+    });
+
+    it('closes an already-open shift directly, without auto-creating one first', async () => {
+      prisma.meterReading.findFirst.mockResolvedValueOnce(openReading);
+      prisma.meterReading.create.mockResolvedValue({ id: 'mr-reopened' });
+      prisma.meterReading.update.mockResolvedValue({ ...openReading, closingReading: 150 });
+      prisma.tank.findFirst.mockResolvedValue({ id: 'tank-1' });
+
+      await batchClose({ readings: [{ nozzleId: 'n1', closingReading: 150 }] }, dsmCaller);
+
+      // Only the auto-REOPEN create() should fire — no auto-open, since a
+      // shift was already open and found on the first findFirst() lookup.
+      expect(prisma.meterReading.create).toHaveBeenCalledTimes(1);
+      expect(prisma.meterReading.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'mr-open' } }),
+      );
+    });
+
+    it('resolves staffId independently per nozzle row — a non-DSM caller may assign a different staffId per row', async () => {
+      const nozzle2 = { ...activeNozzle, id: 'n2', label: 'N2' };
+      prisma.nozzle.findUnique
+        .mockResolvedValueOnce(activeNozzle)
+        .mockResolvedValueOnce(nozzle2);
+      prisma.meterReading.findFirst.mockResolvedValue(null); // no open shift, no prior closed shift, for either nozzle
+      prisma.meterReading.create.mockImplementation((args: { data: { nozzleId: string; staffId: string } }) =>
+        Promise.resolve({ ...openReading, id: `mr-${args.data.nozzleId}`, staffId: args.data.staffId, nozzle: args.data.nozzleId === 'n1' ? activeNozzle : nozzle2 }),
+      );
+      prisma.meterReading.update.mockImplementation((args: { where: { id: string } }) =>
+        Promise.resolve({ ...openReading, ...args.where, closingReading: 150, nozzle: activeNozzle }),
+      );
+      prisma.tank.findFirst.mockResolvedValue(null); // no tank configured — tankWarning path, irrelevant here
+
+      const dto: BatchCloseDto = {
+        readings: [
+          { nozzleId: 'n1', closingReading: 150, staffId: 'staff-A' },
+          { nozzleId: 'n2', closingReading: 150, staffId: 'staff-B' },
+        ],
+      };
+      await batchClose(dto, accountantCaller);
+
+      // Call order: n1's auto-open, n1's auto-reopen, n2's auto-open, n2's
+      // auto-reopen — each nozzle's pair carries its OWN resolved staffId,
+      // not whichever staffId a different row in the same batch used.
+      const calls = prisma.meterReading.create.mock.calls as Array<[{ data: { staffId: string } }]>;
+      expect(calls[0][0].data.staffId).toBe('staff-A');
+      expect(calls[1][0].data.staffId).toBe('staff-A');
+      expect(calls[2][0].data.staffId).toBe('staff-B');
+      expect(calls[3][0].data.staffId).toBe('staff-B');
+    });
+
+    it('rejects a DSM caller attributing a different nozzle row to someone else, aborting the whole batch', async () => {
+      const dto: BatchCloseDto = {
+        readings: [{ nozzleId: 'n1', closingReading: 150, staffId: 'someone-else' }],
+      };
+      await expect(batchClose(dto, dsmCaller)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.meterReading.create).not.toHaveBeenCalled();
+      expect(prisma.meterReading.update).not.toHaveBeenCalled();
+    });
+
+    it('aborts the whole batch when any single row fails validation (closingReading < opening without meterRolledOver)', async () => {
+      prisma.meterReading.findFirst.mockResolvedValueOnce(openReading);
+
+      const dto: BatchCloseDto = {
+        readings: [{ nozzleId: 'n1', closingReading: 50 }], // < openingReading (100), no meterRolledOver
+      };
+      await expect(batchClose(dto, dsmCaller)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.meterReading.update).not.toHaveBeenCalled();
+    });
+
+    it('404s when a submitted nozzleId does not exist', async () => {
+      prisma.nozzle.findUnique.mockResolvedValueOnce(null);
+
+      const dto: BatchCloseDto = { readings: [{ nozzleId: 'does-not-exist', closingReading: 150 }] };
+      await expect(batchClose(dto, dsmCaller)).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

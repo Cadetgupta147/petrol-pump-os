@@ -7,6 +7,7 @@ import { MeterReadingsService } from './meter-readings.service';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
 import { CorrectMeterReadingDto } from './dto/correct-meter-reading.dto';
+import { BatchCloseDto } from './dto/batch-close.dto';
 
 // Section 3.3 — Meter Reading Management (manual entry / fallback + web
 // corrections, per-shift/per-nozzle view, and the litres-sold-vs-billed
@@ -46,6 +47,17 @@ export class MeterReadingsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.meterReadingsService.closeShift(id, dto, user);
+  }
+
+  // Meter Reading redesign (Section 3.3) — the new primary DSM app flow:
+  // closing readings for every active nozzle at once, no separate "open"
+  // step. Same role set as openShift/closeShift (Owner/Accountant/Manager
+  // fallback is still the single-nozzle openShift/closeShift pair above,
+  // kept unchanged).
+  @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
+  @Post('batch-close')
+  batchClose(@Body() dto: BatchCloseDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.meterReadingsService.batchClose(dto, user);
   }
 
   @Patch(':id/correct')

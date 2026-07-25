@@ -111,6 +111,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'CreditLimitAlert',
       'Item',
       'Nozzle',
+      'ShiftDefinition',
       'MeterReading',
       'Tank',
       'DipReading',

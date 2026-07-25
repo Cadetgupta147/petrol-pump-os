@@ -23,6 +23,11 @@ export interface MeterReading {
   // True when this shift's meter physically rolled over to zero — see
   // closeShift()'s meterRolledOver param / Nozzle.rolloverAt.
   meterRolledOver: boolean;
+  // Present only on a close/batch-close response, mirroring the web
+  // portal's own MeterReading.tankWarning — the shift still closes
+  // successfully, but tank stock wasn't auto-deducted (no productType, or no
+  // matching Tank configured).
+  tankWarning?: string;
 }
 
 // Thrown for both "server reachable but rejected the request" (e.g. 409 —
@@ -132,6 +137,35 @@ export async function closeShift(
 export async function listMeterReadings(accessToken: string): Promise<MeterReading[]> {
   return request<MeterReading[]>('/meter-readings', {
     method: 'GET',
+    accessToken,
+  });
+}
+
+// One nozzle's entry within a batch-close submission — see batchClose()'s
+// own comment for the overall flow this replaces.
+export interface BatchCloseReadingParams {
+  nozzleId: string;
+  closingReading: number;
+  meterRolledOver?: boolean;
+  // Omitted -> the caller (a DSM can only ever attribute themselves — see
+  // resolveAssignableActorId() server-side). Set only when a non-DSM caller
+  // picked a different staff member for this row.
+  staffId?: string;
+}
+
+// POST /meter-readings/batch-close — Meter Reading redesign (Section 3.3).
+// Replaces the old two-step "Open Shift" then "Close Shift" flow: MeterReadingScreen
+// now submits closing readings for every active nozzle at once, in one call.
+// There is no separate "open" request anymore — opening a nozzle's very
+// first shift, and re-opening its next one after this closes, both happen
+// server-side automatically (see meter-readings.service.ts's batchClose()).
+export async function batchClose(
+  readings: BatchCloseReadingParams[],
+  accessToken: string,
+): Promise<MeterReading[]> {
+  return request<MeterReading[]>('/meter-readings/batch-close', {
+    method: 'POST',
+    body: { readings },
     accessToken,
   });
 }

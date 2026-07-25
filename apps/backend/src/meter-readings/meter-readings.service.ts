@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, MeterReading, Nozzle } from '@prisma/client';
+import { Prisma, MeterReading, Nozzle, Item } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
@@ -13,6 +13,15 @@ import { requireTenantContext } from '../common/tenant-context';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
 import { CorrectMeterReadingDto } from './dto/correct-meter-reading.dto';
+import { BatchCloseDto } from './dto/batch-close.dto';
+
+// Shared shape for the nozzle relation every meter-reading query includes —
+// used to type the tx-parameterized helpers below (resolveOpeningReading()/
+// closeOneReading()) that both closeShift() (passing `this.prisma`) and
+// batchClose() (passing its transaction's `tx`) call identically.
+type NozzleWithItem = Nozzle & { item: Item };
+type MeterReadingWithNozzle = MeterReading & { nozzle: NozzleWithItem };
+type MeterReadingWithLitres = MeterReadingWithNozzle & { litresSold: number | null };
 
 // Section 3.3 — Meter Reading Management: opening/closing meter reading
 // entry per nozzle per shift, auto-calculated litres sold, and a variance
@@ -87,7 +96,7 @@ export class MeterReadingsService {
       );
     }
 
-    const openingReading = await this.resolveOpeningReading(nozzle);
+    const openingReading = await this.resolveOpeningReading(nozzle, this.prisma);
 
     try {
       const created = await this.prisma.meterReading.create({
@@ -114,10 +123,18 @@ export class MeterReadingsService {
   // OpenShiftDto's comment for why. Mirrors NozzlesService's own
   // withNextOpeningReading() (kept separate rather than shared: that one is
   // a read-only preview allowed to run even with an open shift in progress,
-  // this one only ever runs after openShift() has already confirmed there
-  // is NO open shift for this nozzle).
-  private async resolveOpeningReading(nozzle: Nozzle): Promise<number> {
-    const lastClosed = await this.prisma.meterReading.findFirst({
+  // this one only ever runs after confirming there is NO open shift for this
+  // nozzle).
+  //
+  // Takes the Prisma client explicitly (rather than always using
+  // `this.prisma`) so batchClose() can call this identical logic from
+  // inside its own `$transaction`'s `tx` — see that method's comment for why
+  // this can't just call openShift() directly.
+  private async resolveOpeningReading(
+    nozzle: Nozzle,
+    client: Prisma.TransactionClient,
+  ): Promise<number> {
+    const lastClosed = await client.meterReading.findFirst({
       where: { nozzleId: nozzle.id, closingReading: { not: null } },
       orderBy: { shiftEnd: 'desc' },
     });
@@ -154,16 +171,54 @@ export class MeterReadingsService {
       throw new ConflictException(`MeterReading ${id} is already closed`);
     }
 
+    let shiftEnd: Date | undefined;
+    if (dto.shiftEnd !== undefined) {
+      assertNonDsmOverride(user, 'shiftEnd');
+      shiftEnd = new Date(dto.shiftEnd);
+    }
+
+    const { updated, tankWarning } = await this.prisma.$transaction(async (tx) =>
+      this.closeOneReading(
+        existing,
+        { closingReading: dto.closingReading, meterRolledOver: dto.meterRolledOver, shiftEnd },
+        tx,
+      ),
+    );
+
+    const withLitres = this.withComputedLitresSold(updated);
+    return tankWarning ? { ...withLitres, tankWarning } : withLitres;
+  }
+
+  // Section 7.2 step 2's actual close+tank-auto-deduct logic, extracted so
+  // both closeShift() (passing `this.prisma`, wrapped in its own single-
+  // reading `$transaction`) and batchClose() (passing its own transaction's
+  // `tx`, covering every nozzle in the batch) run the IDENTICAL code path —
+  // see batchClose()'s comment for why calling closeShift() itself from
+  // inside a shared transaction isn't possible.
+  //
+  // shiftEnd defaults to now() when omitted (batchClose() never passes one —
+  // there is no backdating override on the batch DTO, matching the product
+  // decision that exact clock-time precision doesn't matter for this
+  // feature). The shiftEnd-in-the-future / shiftEnd-before-shiftStart checks
+  // live here (pure value validation, no user-role dependency) rather than
+  // in closeShift(), unlike the assertNonDsmOverride() check above, which
+  // stays there since only closeShift()'s single-reading DTO ever offers a
+  // backdated shiftEnd at all.
+  private async closeOneReading(
+    existing: MeterReadingWithNozzle,
+    input: { closingReading: number; meterRolledOver?: boolean; shiftEnd?: Date },
+    client: Prisma.TransactionClient,
+  ): Promise<{ updated: MeterReadingWithNozzle; tankWarning?: string }> {
     // Rollover handling (a physical meter resetting to zero) — see the
     // schema comment on Nozzle.rolloverAt. Below openingReading is only
     // ever legitimate with BOTH meterRolledOver:true AND a configured
     // rolloverAt; above (or equal to) openingReading, meterRolledOver makes
     // no sense (nothing rolled over) and is rejected rather than silently
     // ignored.
-    if (dto.closingReading < existing.openingReading) {
-      if (!dto.meterRolledOver) {
+    if (input.closingReading < existing.openingReading) {
+      if (!input.meterRolledOver) {
         throw new BadRequestException(
-          `closingReading (${dto.closingReading}) cannot be less than openingReading (${existing.openingReading}) — the meter only counts up. If this nozzle's meter physically rolled over to zero mid-shift, resubmit with meterRolledOver: true.`,
+          `closingReading (${input.closingReading}) cannot be less than openingReading (${existing.openingReading}) — the meter only counts up. If this nozzle's meter physically rolled over to zero mid-shift, resubmit with meterRolledOver: true.`,
         );
       }
       if (existing.nozzle.rolloverAt == null) {
@@ -171,71 +226,185 @@ export class MeterReadingsService {
           `Nozzle ${existing.nozzleId} has no configured rollover point (Nozzle.rolloverAt) — set one in Settings before closing a shift across a meter rollover.`,
         );
       }
-    } else if (dto.meterRolledOver) {
+    } else if (input.meterRolledOver) {
       throw new BadRequestException(
-        `meterRolledOver was set but closingReading (${dto.closingReading}) is not less than openingReading (${existing.openingReading}) — there's nothing to roll over here.`,
+        `meterRolledOver was set but closingReading (${input.closingReading}) is not less than openingReading (${existing.openingReading}) — there's nothing to roll over here.`,
       );
     }
 
-    let shiftEnd = new Date();
-    if (dto.shiftEnd !== undefined) {
-      assertNonDsmOverride(user, 'shiftEnd');
-      shiftEnd = new Date(dto.shiftEnd);
-      if (shiftEnd.getTime() < existing.shiftStart.getTime()) {
-        throw new BadRequestException(
-          `shiftEnd cannot be before this shift's shiftStart (${existing.shiftStart.toISOString()}).`,
-        );
-      }
-      if (shiftEnd.getTime() > Date.now()) {
-        throw new BadRequestException('shiftEnd cannot be in the future.');
+    const shiftEnd = input.shiftEnd ?? new Date();
+    if (shiftEnd.getTime() < existing.shiftStart.getTime()) {
+      throw new BadRequestException(
+        `shiftEnd cannot be before this shift's shiftStart (${existing.shiftStart.toISOString()}).`,
+      );
+    }
+    if (shiftEnd.getTime() > Date.now()) {
+      throw new BadRequestException('shiftEnd cannot be in the future.');
+    }
+
+    const meterRolledOver = input.meterRolledOver ?? false;
+    const litresSold = this.computeLitresSold(
+      existing.openingReading,
+      input.closingReading,
+      meterRolledOver,
+      existing.nozzle.rolloverAt,
+    ) as number; // never null here — input.closingReading is always provided
+
+    const updatedReading = await client.meterReading.update({
+      where: { id: existing.id },
+      data: {
+        closingReading: input.closingReading,
+        shiftEnd,
+        meterRolledOver,
+        openLockNozzleId: null,
+      },
+      include: { nozzle: { include: { item: true } } },
+    });
+
+    let tankWarning: string | undefined;
+    if (!existing.productType) {
+      tankWarning =
+        'This shift has no productType recorded (legacy shift) — tank stock was not auto-deducted.';
+    } else {
+      const tank = await client.tank.findFirst({
+        where: { productType: existing.productType },
+      });
+      if (!tank) {
+        tankWarning = `No tank configured for product ${existing.productType} — tank stock was not auto-deducted.`;
+      } else {
+        await client.tank.update({
+          where: { id: tank.id },
+          data: { currentStockLitres: { decrement: litresSold } },
+        });
       }
     }
 
-    const meterRolledOver = dto.meterRolledOver ?? false;
-    const litresSold = this.computeLitresSold(
-      existing.openingReading,
-      dto.closingReading,
-      meterRolledOver,
-      existing.nozzle.rolloverAt,
-    ) as number; // never null here — dto.closingReading is always provided
+    return { updated: updatedReading, tankWarning };
+  }
 
-    const { updated, tankWarning } = await this.prisma.$transaction(
+  // POST /meter-readings/batch-close — Meter Reading redesign (Section 3.3).
+  // Replaces the old two-step "Open Shift" then "Close Shift" DSM flow: a
+  // caller submits closing readings for every nozzle they're covering at
+  // once, and this does — per nozzle, inside ONE shared transaction — what
+  // openShift()+closeShift() already do:
+  //   1. Resolve staffId via resolveAssignableActorId() (same as every other
+  //      assignable-actor field in this codebase).
+  //   2. If this nozzle currently has no open shift (first-ever entry, or
+  //      nothing auto-reopened since the last MANUAL close via
+  //      CloseShiftModal — see below), auto-create one first, using the
+  //      exact same carry-forward + productType derivation openShift() uses.
+  //   3. Close it via closeOneReading() (shared with closeShift()).
+  //   4. Immediately auto-open the NEXT shift for this nozzle — openingReading
+  //      = the closingReading just submitted, shiftStart = now() — so the
+  //      nozzle is always left in "has exactly one open shift" state,
+  //      preserving openLockNozzleId's DB-level guarantee with no schema
+  //      change to MeterReading itself.
+  //
+  // IMPORTANT: this cannot just call this.openShift()/this.closeShift() —
+  // both are hard-wired to `this.prisma`, and closeShift() opens its OWN
+  // inner `$transaction`. Calling them from inside this method's outer `tx`
+  // would run two uncoordinated transactions, breaking the atomicity a
+  // batch needs (a failure on nozzle 3 must roll back nozzles 1-2 too) and
+  // risking deadlocks under Postgres row locking. Instead, both this method
+  // and closeShift() call the same tx-parameterized private helpers
+  // (resolveOpeningReading(), closeOneReading()) — the one true code path.
+  //
+  // The kept-as-is manual closeShift() (Owner/Accountant/Manager fallback,
+  // web portal's CloseShiftModal) does NOT auto-reopen the next shift — so
+  // step 2's auto-create-if-missing branch is load-bearing every time a
+  // manual close happens in between batch runs, not just a first-run edge
+  // case.
+  //
+  // One failure anywhere in the batch (e.g. a bad rollover input on one
+  // nozzle) aborts the WHOLE transaction — the thrown exception (already
+  // nozzle-specific, e.g. "Nozzle X not found...") propagates out of the
+  // `$transaction` callback and rolls everything back, exactly like any
+  // other exception thrown inside this codebase's existing multi-step
+  // transactions.
+  async batchClose(dto: BatchCloseDto, user: AuthenticatedUser) {
+    const pumpId = requireTenantContext().pumpId;
+
+    return this.prisma.$transaction(
       async (tx) => {
-        const updatedReading = await tx.meterReading.update({
-          where: { id },
-          data: {
-            closingReading: dto.closingReading,
-            shiftEnd,
-            meterRolledOver,
-            openLockNozzleId: null,
-          },
-          include: { nozzle: { include: { item: true } } },
-        });
+        const results: Array<MeterReadingWithLitres & { tankWarning?: string }> = [];
 
-        let warning: string | undefined;
-        if (!existing.productType) {
-          warning =
-            'This shift has no productType recorded (legacy shift) — tank stock was not auto-deducted.';
-        } else {
-          const tank = await tx.tank.findFirst({
-            where: { productType: existing.productType },
-          });
-          if (!tank) {
-            warning = `No tank configured for product ${existing.productType} — tank stock was not auto-deducted.`;
-          } else {
-            await tx.tank.update({
-              where: { id: tank.id },
-              data: { currentStockLitres: { decrement: litresSold } },
+        for (const entry of dto.readings) {
+          let staffId: string | undefined;
+          try {
+            staffId = resolveAssignableActorId(user, entry.staffId);
+
+            const nozzle = await tx.nozzle.findUnique({
+              where: { id: entry.nozzleId },
+              include: { item: true },
             });
+            if (!nozzle || !nozzle.isActive) {
+              throw new NotFoundException(
+                `Nozzle ${entry.nozzleId} not found — pick a nozzle from the configured list (Settings).`,
+              );
+            }
+
+            let existing = await tx.meterReading.findFirst({
+              where: { nozzleId: entry.nozzleId, closingReading: null },
+              include: { nozzle: { include: { item: true } } },
+            });
+
+            if (!existing) {
+              const openingReading = await this.resolveOpeningReading(nozzle, tx);
+              existing = await tx.meterReading.create({
+                data: {
+                  pumpId,
+                  nozzleId: entry.nozzleId,
+                  openLockNozzleId: entry.nozzleId,
+                  staffId,
+                  openingReading,
+                  productType: nozzle.item.name,
+                },
+                include: { nozzle: { include: { item: true } } },
+              });
+            }
+
+            const { updated, tankWarning } = await this.closeOneReading(
+              existing,
+              { closingReading: entry.closingReading, meterRolledOver: entry.meterRolledOver },
+              tx,
+            );
+
+            // Auto-reopen — see this method's class-level comment. Only
+            // reachable once closeOneReading() above has already nulled out
+            // `updated`'s openLockNozzleId, so this create() never collides
+            // with the unique constraint it just freed.
+            await tx.meterReading.create({
+              data: {
+                pumpId,
+                nozzleId: entry.nozzleId,
+                openLockNozzleId: entry.nozzleId,
+                staffId,
+                openingReading: entry.closingReading,
+                productType: nozzle.item.name,
+              },
+            });
+
+            const withLitres = this.withComputedLitresSold(updated);
+            results.push(tankWarning ? { ...withLitres, tankWarning } : withLitres);
+          } catch (error) {
+            this.handlePrismaError(error, staffId ?? entry.staffId ?? user.staffId);
           }
         }
 
-        return { updated: updatedReading, tankWarning: warning };
+        return results;
       },
+      // A batch can cover many nozzles, each needing several sequential
+      // round trips (nozzle lookup, open-shift lookup, maybe an auto-open
+      // create, the close update, a tank lookup/update, the auto-reopen
+      // create) — over a remote connection (Supabase, not localhost) that
+      // can comfortably exceed Prisma's default 5s interactive-transaction
+      // timeout once there's more than a couple of nozzles, throwing an
+      // unhandled P2028 that isn't one of the two codes handlePrismaError()
+      // recognizes (surfaces as a bare 500 instead of a real error). No
+      // other transaction in this codebase loops over a caller-controlled
+      // list like this, so none of them needed this override.
+      { timeout: 30_000 },
     );
-
-    const withLitres = this.withComputedLitresSold(updated);
-    return tankWarning ? { ...withLitres, tankWarning } : withLitres;
   }
 
   // PATCH /meter-readings/:id/correct — Owner/Accountant only (see
@@ -395,6 +564,25 @@ export class MeterReadingsService {
     return this.withComputedLitresSold(reading);
   }
 
+  // Section 8A.2 fix — this used to compare the meter's litresSold against
+  // ONLY itemized Bill.litres, which meant any pump with real walk-in cash
+  // trade (fuel sold without an individual Bill record) would show a
+  // permanent, large "variance" that was never actually fraud — just
+  // ordinary uncaptured walk-in volume. ShiftSalesSummary (Section 8A.2)
+  // already computes that exact same gap independently, as `walkInLitres`,
+  // whenever a shift's walk-in sales get reconciled — this now nets that
+  // out before flagging, instead of double-counting it as unexplained.
+  //
+  // Direction matters: a NEGATIVE gap (more billed than the meter shows was
+  // physically dispensed) can never be explained by walk-in volume — walk-in
+  // only ever ADDS unbilled litres on top of what's billed, it can't make
+  // billed litres exceed metered ones. That direction stays flagged
+  // regardless of whether a ShiftSalesSummary exists.
+  //
+  // A POSITIVE gap with no ShiftSalesSummary yet is NOT flagged as fraud —
+  // `reconciliationPending: true` is a reminder to log the walk-in summary
+  // (Section 8A.2), not an accusation. Once that summary exists, the
+  // leftover after netting it out is what actually gets flagged.
   async checkVariance(id: string) {
     const reading = await this.prisma.meterReading.findUnique({
       where: { id },
@@ -433,9 +621,28 @@ export class MeterReadingsService {
       },
     });
     const litresBilled = billedAgg._sum.litres ?? 0;
+    const rawGap = litresSoldFromMeter - litresBilled;
 
-    const variance = litresSoldFromMeter - litresBilled;
-    const flagged = Math.abs(variance) > VARIANCE_TOLERANCE_LITRES;
+    let walkInLitresReconciled: number | null = null;
+    let variance = rawGap;
+    let flagged: boolean;
+    let reconciliationPending = false;
+
+    if (rawGap < -VARIANCE_TOLERANCE_LITRES) {
+      flagged = true;
+    } else {
+      const walkInSummary = await this.prisma.shiftSalesSummary.findFirst({
+        where: { shiftId: reading.id },
+      });
+      if (walkInSummary) {
+        walkInLitresReconciled = walkInSummary.walkInLitres;
+        variance = rawGap - walkInSummary.walkInLitres;
+        flagged = Math.abs(variance) > VARIANCE_TOLERANCE_LITRES;
+      } else {
+        flagged = false;
+        reconciliationPending = rawGap > VARIANCE_TOLERANCE_LITRES;
+      }
+    }
 
     return {
       meterReadingId: reading.id,
@@ -446,9 +653,11 @@ export class MeterReadingsService {
       shiftEnd: reading.shiftEnd,
       litresSoldFromMeter,
       litresBilled,
+      walkInLitresReconciled,
       variance,
       toleranceLitres: VARIANCE_TOLERANCE_LITRES,
       flagged,
+      reconciliationPending,
     };
   }
 

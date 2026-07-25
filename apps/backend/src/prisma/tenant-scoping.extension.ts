@@ -19,6 +19,7 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'CreditLimitAlert',
   'Item',
   'Nozzle',
+  'ShiftDefinition',
   'MeterReading',
   'Tank',
   'DipReading',

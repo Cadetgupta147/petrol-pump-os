@@ -118,8 +118,9 @@ Every feature below includes **what it does, why it exists, and how it works** �
 
 **What it does:** tracks opening/closing meter readings per nozzle per shift, and catches discrepancies.
 
-- View readings by shift/DSM/nozzle
-- Manual entry option — fallback if the DSM app fails, or for corrections
+- View readings by shift/DSM/nozzle, filterable by date and by shift (Section 3.3.3)
+- **DSM app flow (redesigned): batch-close every active nozzle at once, no separate "open shift" step.** A DSM (or Owner/Accountant/Manager) only ever enters closing readings — opening a nozzle's very first shift, and re-opening its next one the instant this one closes, both happen server-side automatically. See Section 3.3.3 for the Owner-configurable shift schedule this labels against, and Section 4's DSM app table for the actual screen.
+- Manual single-nozzle open/close entry stays available on the web portal — the fallback if the DSM app fails, or for corrections
 - Auto-calculated litres sold = closing reading − opening reading
 - **Variance flag**: fires when litres sold (from meter) ≠ litres billed (from bills) — this catches DSM entry mistakes or pilferage before it becomes a pattern
 
@@ -162,6 +163,16 @@ Every feature below includes **what it does, why it exists, and how it works** �
 **Deliberately NOT a full migration:** Tank, PurchaseEntry, RateHistory, and Bill still store their own product field as a plain string, not an `item_id` foreign key — those are already-stable, heavily-tested modules, and migrating all of them in the same pass as introducing the Item Master was judged too large a change to make safely in one slice. That remains a natural follow-up once the Item Master has been in use for a while.
 
 **Database entity:** `Item { id, pump_id, name, category, unit, is_active }`.
+
+#### 3.3.3 Shift Schedule (Settings) — new, resolved
+
+**What it does:** a Settings-level configuration screen (Owner/Accountant — same access as Nozzle Master) where the dealer defines the pump's shift windows (e.g. "Shift 1: 06:00–14:00", "Shift 2: 14:00–22:00", "Shift 3: 22:00–06:00"). One pump-wide schedule — every DSM rotates through the same windows, rather than each nozzle or each DSM having its own. It rarely changes, but the Owner can edit it whenever a pump's actual shift pattern is different or changes for a period.
+
+**Why it exists:** researched against the same class of Indian pump ERPs Section 3.3.1 was researched against — shift-wise meter reading against a fixed daily schedule (not a free-form "whoever happens to tap open/close, whenever" event) is the standard pattern, and it's what let the DSM app flow collapse from two steps (open, then later close) down to one (just enter the closing readings — see Section 3.3 and Section 4).
+
+**Deliberately informational only, never a blocking gate:** the configured schedule only labels which shift a batch of closing readings belongs to (e.g. a "Now closing: Shift 2" header on the DSM app screen). It never validates or rejects a submission — a DSM covering for an absent colleague, submitting a few minutes late, or a schedule with a gap or overlap in it, must never turn into an error here. `shiftStart`/`shiftEnd` on each `MeterReading` row stay real submission timestamps regardless of the configured schedule.
+
+**Database entity:** `ShiftDefinition { id, pump_id, label, start_time, end_time, is_active }` — `start_time`/`end_time` are wall-clock "HH:mm" strings (no date, no timezone); `end_time` numerically before `start_time` represents a shift that wraps past midnight (e.g. "22:00"–"06:00").
 
 ### 3.4 Credit Customer Management
 
@@ -240,9 +251,11 @@ Full list in **Section 12**.
 | Feature | What it does | Why / how |
 |---|---|---|
 | PIN or biometric login | Staff logs in with a PIN or fingerprint, not free-text name entry | Ties attendance and every bill to a verifiable credential — you always know exactly who entered what |
-| Shift start: pick nozzle, opening reading shown read-only | DSM picks a nozzle from a dropdown (Section 3.3.1 Nozzle Master, configured in Settings) — the opening reading is carried forward automatically from that nozzle's last closing reading (or its configured starting reading, for a first-ever shift) and shown read-only, never typed | Removes the single biggest DSM data-entry error (typing the wrong opening number) and closes off that number as a manipulation vector |
-| Shift end: closing meter reading | DSM enters closing reading; app auto-calculates litres sold | closing − opening = litres sold, feeds the Variance Flag (3.3) |
-| Shift end: meter rollover | If a nozzle's physical meter is configured with a rollover point (Section 3.3.1 — older mechanical/electronic totalizers that reset to zero), the DSM can check "meter rolled over" instead of being blocked when the closing reading is lower than the opening reading | litres sold = (rollover point − opening) + closing; without this, an older meter physically rolling over would stop the DSM from ever closing that shift |
+| Meter reading: batch-close all nozzles, opening reading shown read-only | No separate "open shift" step. The screen shows one row per active nozzle (Section 3.3.1 Nozzle Master, configured in Settings), each pre-filled with its opening reading — carried forward automatically from that nozzle's last closing reading, or its configured starting reading for a first-ever shift, shown read-only, never typed — and a closing-reading input the DSM edits per nozzle before submitting the whole batch at once | Removes the single biggest DSM data-entry error (typing the wrong opening number), closes off that number as a manipulation vector, and matches how DSMs actually work a shift change — reading every nozzle in one pass, not opening and closing each one as a separate multi-step action |
+| Meter reading: shift schedule label | A header shows which of the Owner-configured shift windows (Section 3.3.1 Shift Schedule, e.g. "Shift 2, 14:00–22:00") this batch is closing, resolved from the current time | Purely informational context for the DSM — never blocks a submission even if it runs early, late, or the schedule has a gap (see Section 3.3.1) |
+| Meter reading: per-nozzle staff attribution | Each nozzle's reading still records who covered it — a DSM can only ever attribute their own name; an Owner/Accountant/Manager using this app may assign a different staff member per nozzle row | Staff rotate across nozzles during a shift, so attribution has to stay per-nozzle, not one name for the whole batch — otherwise the Variance Flag (3.3) couldn't tell you which DSM's nozzle actually went missing litres |
+| Meter reading: an untouched nozzle submits "no change" | A nozzle nobody actually ran that shift is left at its pre-filled default (closing = opening), submitting cleanly as 0 litres sold | If it genuinely wasn't run, 0 is correct; if it actually was run and someone forgot to update it, the Variance Flag (3.3) still catches the mismatch against any bills entered for that nozzle |
+| Meter reading: meter rollover | If a nozzle's physical meter is configured with a rollover point (Section 3.3.1 — older mechanical/electronic totalizers that reset to zero), the DSM can check "meter rolled over" for that row instead of being blocked when the closing reading is lower than the opening reading | litres sold = (rollover point − opening) + closing; without this, an older meter physically rolling over would stop the DSM from ever closing that nozzle's shift |
 | New Bill screen | QR scan → auto-fills customer name, vehicle, loyalty rate → DSM enters amount/litres → saves | This is the core transaction screen — see the full flow in Section 6.3 |
 | Payment type selection | Cash / Card / UPI / Credit | Every bill must be tagged so cash reconciliation (Section 8) and reports (Section 12) can split correctly |
 | Shift-end cash handover entry | Mirrors the web app's Day-End entry (Section 8): deposited / locker / taken home | Captures cash custody at the point of handover, not hours later from memory |
@@ -609,11 +622,13 @@ Build the **Tally XML export** in Phase 2 (right after the core web app MVP), no
 
 High-level entity list — expand each into full tables with your ORM's migration tool once you start building.
 
-`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | Items | Nozzles | MeterReadings | Tanks | PurchaseEntries | LubricantItems | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents`
+`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | Items | Nozzles | ShiftDefinitions | MeterReadings | Tanks | PurchaseEntries | LubricantItems | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents`
 
 **Item** row should store: `pump_id, name, category (fuel/lubricant/other), unit (litre/kg/piece), is_active` — Section 3.3.2.
 
 **Nozzle** row should store: `pump_id, label, item_id, starting_reading, rollover_at (nullable), is_active` — Section 3.3.1. `MeterReading.nozzle_id` is a foreign key to this table (a real Nozzle Master, not free text) — `MeterReading.opening_reading` is always server-derived (carried forward from the nozzle's last closed shift, or `Nozzle.starting_reading` for its first) and never client-supplied.
+
+**ShiftDefinition** row should store: `pump_id, label, start_time (HH:mm), end_time (HH:mm), is_active` — Section 3.3.3. Not referenced by a foreign key from `MeterReading` — purely informational, used to label which configured shift window a batch of closing readings belongs to, never to validate or block one.
 
 **Bill** row should store: `customer_id (nullable), vehicle_number (nullable), customer_name (nullable), amount, litres, product_type, nozzle_id (nullable — Section 3.3.1), rate_applied (from Rate Master), entered_by (staff_id), entry_channel (web/dsm_app), timestamp, loyalty_points_earned, loyalty_basis_used (rupee/litre)`. Note: `payment_type` is no longer a single field on Bill — it's derived from the bill's `BillPaymentLines` (Section 5A), since a bill can now be split across multiple methods.
 
@@ -919,13 +934,13 @@ Before this system takes real customer money or real customer data, work through
 - **J — Journal / Ledger:** every points transaction and cash movement logged with a full audit trail (§6.7, §8)
 - **K — KYC-lite Customer Profile:** phone-number-based customer identity, no heavy documentation to join loyalty (§6.1)
 - **L — Loyalty Program:** the full QR-based points system, litre/rupee basis, cash and gift redemption (§6)
-- **M — Meter Reading, Monorepo:** entered by DSM at shift start/end, auto-calculates litres sold (§3.3, §4); recommended repo structure for a 2-person Claude-Code-driven build (§16.2)
+- **M — Meter Reading, Monorepo:** closing readings batch-entered per nozzle against an Owner-configured shift schedule, auto-calculates litres sold (§3.3, §3.3.3, §4); recommended repo structure for a 2-person Claude-Code-driven build (§16.2)
 - **N — Notifications:** push-first, SMS/WhatsApp-fallback, sent on every bill and redemption (§11)
 - **O — OCR:** used only for printed supplier/purchase invoices, not customer bills (§9)
 - **P — Purchase Entry, PWA, Partial Payments, PhonePe/Paytm Business:** supplier purchase logging, manual + OCR (§9); the installable web portal that serves as both dealer app and accountant portal (§1.2); split-payment bills across cash/card/UPI/credit with cash-change handling (§5A); the free merchant APIs used to auto-capture UPI sales (§8A.3, §15.6A)
 - **Q — QR Code:** the core loyalty mechanism — encodes only a customer ID, never balance or rate (§6.1, §6.7)
 - **R — Redemption, Reorder Alert, Rate Master:** how customers spend points, cash or gift, and whether the customer even gets to choose (§6.4); automatic low-stock alerts including gift stock (§7.2); date-wise fuel pricing history (§7.4)
-- **S — Staff Management, Supplier Ledger, ShiftSalesSummary, Split Payments:** staff master and roles (§2, §3.7); amounts owed to fuel suppliers (§7); the aggregate walk-in sales entity (§8A.2); multi-method bill payment (§5A)
+- **S — Staff Management, Supplier Ledger, ShiftSalesSummary, Shift Schedule, Split Payments:** staff master and roles (§2, §3.7); amounts owed to fuel suppliers (§7); the aggregate walk-in sales entity (§8A.2); the Owner-configured shift windows a batch of closing readings is labeled against (§3.3.3); multi-method bill payment (§5A)
 - **T — Tank Stock, Tech Stack, Tally Integration, Timeline:** live fuel levels (§7); full technology choices (§15); export to Tally accounting (§10); rough phase-by-phase project timeline (§16.6)
 - **U — UPI Sales, User Roles, UPI Auto-Capture:** payment lines tracked on every bill (§3.2, §5A); the five-role permission model (§2); automated UPI capture via merchant webhook, so DSMs don't manually total it (§8A.3)
 - **V — Variance Report, Vehicle Number Validation:** stock discrepancy detection, now also at the aggregate walk-in level (§3.3, §7.2, §8A.2); the rule requiring vehicle number OR customer name on every itemized bill (§4)

@@ -98,6 +98,7 @@ model Pump {
   creditLimitAlerts      CreditLimitAlert[]
   items                  Item[]
   nozzles                Nozzle[]
+  shiftDefinitions       ShiftDefinition[]
   meterReadings          MeterReading[]
   tanks                  Tank[]
   dipReadings            DipReading[]
@@ -531,6 +532,38 @@ model Nozzle {
 
   meterReadings MeterReading[]
   bills         Bill[]
+
+  @@unique([pumpId, label])
+}
+
+// Meter Reading redesign (Section 3.3) — the Owner-configurable shift
+// schedule (e.g. "Shift 1: 06:00-14:00", "Shift 2: 14:00-22:00"), one pump-
+// wide list all DSMs rotate through together. Deliberately just a flat
+// dealer-managed list (like Nozzle/Item), not a singleton config — see
+// ShiftScheduleService.
+//
+// startTime/endTime are wall-clock "HH:mm" (24h) strings — no date, no
+// timezone. This is intentional: the schedule only ever LABELS which shift a
+// batch-closing-readings submission belongs to (see
+// resolve-current-shift-window.ts and MeterReadingsService.batchClose()) —
+// it is never used to validate or block a submission, so there's no need
+// for exact timezone-safe date math here, matching the product decision
+// that exact clock-time precision doesn't matter for this feature.
+// endTime may be numerically "less than" startTime to represent a shift
+// that wraps past midnight (e.g. "22:00"-"06:00").
+//
+// Deliberately NO overlap/gap validation, and no stored sort order — display
+// order is just startTime ascending, which sorts correctly as plain strings
+// even across a wrapping shift.
+model ShiftDefinition {
+  id        String   @id @default(cuid())
+  pump      Pump     @relation(fields: [pumpId], references: [id])
+  pumpId    String
+  label     String // dealer-chosen, e.g. "Shift 1"
+  startTime String // "HH:mm" 24h wall-clock time-of-day
+  endTime   String // "HH:mm" — may wrap past midnight if numerically before startTime
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   @@unique([pumpId, label])
 }

@@ -8,6 +8,7 @@ import { useAuth } from '../context/useAuth';
 import { todayIsoDate } from '../utils/format';
 import { ItemSettings } from '../components/settings/ItemSettings';
 import { NozzleSettings } from '../components/settings/NozzleSettings';
+import { ShiftScheduleSettings } from '../components/settings/ShiftScheduleSettings';
 import type { BusinessProfile } from '../api/types';
 
 const ROLE_REFERENCE: { role: string; canDo: string; cannotDo: string }[] = [
@@ -176,6 +177,8 @@ export function SettingsPage() {
         <ItemSettings canManage={canManageItems} />
 
         <NozzleSettings canManage={canManageNozzles} />
+
+        <ShiftScheduleSettings canManage={canManageNozzles} />
 
         <div className="section">
           <div className="section-title">

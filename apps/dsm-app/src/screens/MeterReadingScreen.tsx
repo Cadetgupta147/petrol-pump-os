@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -15,12 +15,14 @@ import {
 import type { StaffSummary } from '../api/authApi';
 import { listNozzles, NozzlesApiError, type Nozzle } from '../api/nozzlesApi';
 import {
-  closeShift,
+  batchClose,
   listMeterReadings,
-  openShift,
   MeterReadingsApiError,
+  type BatchCloseReadingParams,
   type MeterReading,
 } from '../api/meterReadingsApi';
+import { getCurrentShiftWindow, ShiftScheduleApiError } from '../api/shiftScheduleApi';
+import { listStaff, StaffApiError, type StaffListItem } from '../api/staffApi';
 
 interface Props {
   staff: StaffSummary;
@@ -28,142 +30,165 @@ interface Props {
   onBack: () => void;
 }
 
-// Section 3.3 / Section 4 — "Shift start: opening meter reading" and "Shift
-// end: closing meter reading" (litres sold auto-computed by the backend).
+interface RowState {
+  openingReading: number;
+  closingReadingInput: string;
+  meterRolledOver: boolean;
+  staffId: string;
+}
+
+// Meter Reading redesign (Section 3.3) — replaces the old two-step "pick a
+// nozzle, Open Shift, later come back and Close Shift" flow with a single
+// batch screen: one row per active nozzle, a closing-reading input
+// pre-filled with that nozzle's current opening reading (so an untouched
+// row submits "no change" — 0 litres sold — rather than an invalid empty
+// value), and ONE submit covering every nozzle at once.
 //
-// Section 3.3/4 Nozzle master rework: nozzleId is now picked from a real
-// dropdown (GET /nozzles, dealer-configured under Settings on the web
-// portal) instead of a free-typed field — a DSM can no longer mistype a
-// nozzle id. Picking a nozzle immediately checks for an open shift on it
-// (no separate "Check Nozzle" button anymore — see handleSelectNozzle()).
-// Opening reading is NEVER a form field here: it's shown read-only
-// (nozzle.nextOpeningReading, the carry-forward rule's result — this
-// nozzle's last closed shift's closingReading, or its configured
-// startingReading if it's never had one) and the backend derives the real
-// value itself when the shift is actually opened.
+// There is no "Open Shift" step anywhere in this screen anymore — opening a
+// nozzle's very first shift, and re-opening its next one right after this
+// closes it, both happen server-side automatically (see
+// MeterReadingsService.batchClose()). Opening reading is still always
+// read-only here, exactly like before.
+//
+// Staff attribution stays PER NOZZLE, not once for the whole screen — see
+// batchClose()'s own comment. A DSM caller can only ever attribute
+// themselves (resolveAssignableActorId() enforces this server-side
+// regardless of what this screen sends), so the per-row staff picker only
+// renders for a non-DSM caller (Owner/Accountant/Manager using this app —
+// see authApi.ts's note that login here is not actually restricted to DSM).
 export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
+  const isDsm = staff.role === 'DSM';
+
   const [nozzles, setNozzles] = useState<Nozzle[] | null>(null);
-  const [nozzlesError, setNozzlesError] = useState<string | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [selectedNozzleId, setSelectedNozzleId] = useState<string | null>(null);
+  const [staffList, setStaffList] = useState<StaffListItem[]>([]);
+  const [currentShiftLabel, setCurrentShiftLabel] = useState<string | null>(null);
 
-  const [checking, setChecking] = useState(false);
-  const [checkError, setCheckError] = useState<string | null>(null);
-  // undefined = not checked yet; null = checked, no open shift found;
-  // MeterReading = checked, open shift found.
-  const [openShiftForNozzle, setOpenShiftForNozzle] = useState<MeterReading | null | undefined>(
-    undefined,
-  );
+  const [rows, setRows] = useState<Record<string, RowState>>({});
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [initialError, setInitialError] = useState<string | null>(null);
 
-  const [opening, setOpening] = useState(false);
-  const [openError, setOpenError] = useState<string | null>(null);
+  const [staffPickerForNozzleId, setStaffPickerForNozzleId] = useState<string | null>(null);
 
-  const [closingReadingInput, setClosingReadingInput] = useState('');
-  const [meterRolledOver, setMeterRolledOver] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const [closeError, setCloseError] = useState<string | null>(null);
-  const [closedResult, setClosedResult] = useState<MeterReading | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [results, setResults] = useState<MeterReading[] | null>(null);
+
+  function updateRow(nozzleId: string, patch: Partial<RowState>) {
+    setRows((prev) => ({ ...prev, [nozzleId]: { ...prev[nozzleId], ...patch } }));
+  }
+
+  // Builds each nozzle's row from its current open shift if one exists
+  // (openingReading = that shift's own), or its server-computed
+  // nextOpeningReading preview otherwise (nozzle never had a shift, or the
+  // last one was closed manually via the web portal and nothing has
+  // auto-reopened it yet) — same fallback the old screen used.
+  function buildRows(nozzleList: Nozzle[], readings: MeterReading[]): Record<string, RowState> {
+    const openByNozzle = new Map<string, MeterReading>();
+    for (const reading of readings) {
+      if (reading.closingReading === null) openByNozzle.set(reading.nozzleId, reading);
+    }
+    const next: Record<string, RowState> = {};
+    for (const nozzle of nozzleList) {
+      const open = openByNozzle.get(nozzle.id);
+      const openingReading = open ? open.openingReading : nozzle.nextOpeningReading;
+      next[nozzle.id] = {
+        openingReading,
+        closingReadingInput: String(openingReading),
+        meterRolledOver: false,
+        staffId: staff.id,
+      };
+    }
+    return next;
+  }
 
   useEffect(() => {
     let cancelled = false;
-    listNozzles(accessToken)
-      .then((result) => {
-        if (!cancelled) setNozzles(result);
-      })
-      .catch((error) => {
+
+    Promise.all([listNozzles(accessToken), listMeterReadings(accessToken)])
+      .then(([nozzleList, readings]) => {
         if (cancelled) return;
-        setNozzlesError(
-          error instanceof NozzlesApiError ? error.message : 'Something went wrong. Please try again.',
-        );
+        setNozzles(nozzleList);
+        setRows(buildRows(nozzleList, readings));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const message =
+          error instanceof NozzlesApiError || error instanceof MeterReadingsApiError
+            ? error.message
+            : 'Something went wrong. Please try again.';
+        setInitialError(message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingInitial(false);
       });
+
+    // Both of these are advisory-only — a failure here must never block the
+    // screen, so failures are swallowed rather than surfaced as a blocking
+    // error (see getCurrentShiftWindow()'s and this screen's own comments).
+    getCurrentShiftWindow(accessToken)
+      .then((window) => {
+        if (cancelled) return;
+        setCurrentShiftLabel(
+          window ? `${window.shiftDefinition.label} (${window.shiftDefinition.startTime}–${window.shiftDefinition.endTime})` : null,
+        );
+      })
+      .catch(() => undefined);
+
+    if (!isDsm) {
+      listStaff(accessToken)
+        .then((result) => {
+          if (!cancelled) setStaffList(result);
+        })
+        .catch(() => undefined);
+    }
+
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
-  const selectedNozzle = nozzles?.find((n) => n.id === selectedNozzleId) ?? null;
+  const canSubmit = useMemo(() => {
+    if (!nozzles || nozzles.length === 0 || submitting) return false;
+    return nozzles.every((nozzle) => {
+      const row = rows[nozzle.id];
+      if (!row) return false;
+      const value = Number(row.closingReadingInput);
+      return row.closingReadingInput.trim().length > 0 && !Number.isNaN(value) && value >= 0;
+    });
+  }, [nozzles, rows, submitting]);
 
-  async function handleSelectNozzle(nozzle: Nozzle) {
-    setPickerOpen(false);
-    setSelectedNozzleId(nozzle.id);
-    setOpenShiftForNozzle(undefined);
-    setCheckError(null);
-    setOpenError(null);
-    setCloseError(null);
-    setClosedResult(null);
-    setClosingReadingInput('');
-    setMeterRolledOver(false);
-
-    setChecking(true);
+  async function handleSubmit() {
+    if (!nozzles) return;
+    setSubmitError(null);
+    setSubmitting(true);
     try {
-      const readings = await listMeterReadings(accessToken);
-      // Newest first per the backend contract — the first match for this
-      // nozzle that's still open is the current open shift, if any.
-      const openShiftMatch =
-        readings.find((reading) => reading.nozzleId === nozzle.id && reading.closingReading === null) ??
-        null;
-      setOpenShiftForNozzle(openShiftMatch);
+      const readings: BatchCloseReadingParams[] = nozzles.map((nozzle) => {
+        const row = rows[nozzle.id];
+        return {
+          nozzleId: nozzle.id,
+          closingReading: Number(row.closingReadingInput),
+          ...(row.meterRolledOver && { meterRolledOver: true }),
+          ...(row.staffId !== staff.id && { staffId: row.staffId }),
+        };
+      });
+      const updated = await batchClose(readings, accessToken);
+      setResults(updated);
+
+      // Reload so the next round's opening readings reflect the shifts that
+      // were just auto-reopened server-side.
+      const readingsAfter = await listMeterReadings(accessToken);
+      setRows(buildRows(nozzles, readingsAfter));
     } catch (error) {
       const message =
-        error instanceof MeterReadingsApiError ? error.message : 'Something went wrong. Please try again.';
-      setCheckError(message);
-      setOpenShiftForNozzle(undefined);
+        error instanceof MeterReadingsApiError || error instanceof ShiftScheduleApiError || error instanceof StaffApiError
+          ? error.message
+          : 'Something went wrong. Please try again.';
+      setSubmitError(message);
     } finally {
-      setChecking(false);
+      setSubmitting(false);
     }
   }
-
-  const handleOpenShift = async () => {
-    if (!selectedNozzleId) return;
-    setOpening(true);
-    setOpenError(null);
-    try {
-      const created = await openShift({ nozzleId: selectedNozzleId, staffId: staff.id }, accessToken);
-      // Immediately reflect the newly-opened shift so the DSM can close it
-      // later in the same session without re-checking.
-      setOpenShiftForNozzle(created);
-    } catch (error) {
-      const message =
-        error instanceof MeterReadingsApiError ? error.message : 'Something went wrong. Please try again.';
-      setOpenError(message);
-    } finally {
-      setOpening(false);
-    }
-  };
-
-  const handleCloseShift = async () => {
-    if (!openShiftForNozzle) return;
-    const closingReading = Number(closingReadingInput);
-    if (!closingReadingInput.trim() || Number.isNaN(closingReading) || closingReading < 0) {
-      setCloseError('Enter a valid closing reading (0 or more).');
-      return;
-    }
-    // Mirror the server's own rule client-side for immediate feedback — the
-    // server remains the real authority (it re-checks this on the request).
-    // Skipped when meterRolledOver is checked — a lower closing reading is
-    // exactly what a physical meter rollover looks like.
-    if (!meterRolledOver && closingReading < openShiftForNozzle.openingReading) {
-      setCloseError(
-        `Closing reading (${closingReading}) cannot be less than opening reading (${openShiftForNozzle.openingReading}). If this nozzle's meter physically rolled over to zero, check "meter rolled over" below.`,
-      );
-      return;
-    }
-    setClosing(true);
-    setCloseError(null);
-    try {
-      const closed = await closeShift(openShiftForNozzle.id, closingReading, accessToken, meterRolledOver);
-      setClosedResult(closed);
-      setOpenShiftForNozzle(null);
-      setClosingReadingInput('');
-      setMeterRolledOver(false);
-    } catch (error) {
-      const message =
-        error instanceof MeterReadingsApiError ? error.message : 'Something went wrong. Please try again.';
-      setCloseError(message);
-    } finally {
-      setClosing(false);
-    }
-  };
 
   return (
     <KeyboardAvoidingView
@@ -172,155 +197,140 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
     >
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Meter Reading</Text>
-
-        <Text style={styles.label}>Nozzle</Text>
-        {nozzlesError ? (
-          <Text style={styles.error} testID="nozzles-error">
-            {nozzlesError}
+        {currentShiftLabel ? (
+          <Text style={styles.shiftLabel} testID="current-shift-label">
+            Now closing: {currentShiftLabel}
           </Text>
-        ) : !nozzles ? (
-          <ActivityIndicator style={{ marginBottom: 12 }} />
-        ) : nozzles.length === 0 ? (
+        ) : null}
+
+        {initialError ? (
+          <Text style={styles.error} testID="initial-error">
+            {initialError}
+          </Text>
+        ) : loadingInitial ? (
+          <ActivityIndicator style={{ marginBottom: 16 }} />
+        ) : nozzles && nozzles.length === 0 ? (
           <Text style={styles.error}>
             No nozzles are configured yet — ask the owner/accountant to add this pump&rsquo;s nozzles under
             Settings on the web portal.
           </Text>
         ) : (
-          <Pressable
-            style={styles.picker}
-            onPress={() => setPickerOpen(true)}
-            testID="nozzle-picker-button"
-          >
-            <Text style={selectedNozzle ? styles.pickerValue : styles.pickerPlaceholder}>
-              {selectedNozzle ? `${selectedNozzle.label} · ${selectedNozzle.item.name}` : 'Select nozzle'}
-            </Text>
-          </Pressable>
-        )}
+          nozzles?.map((nozzle) => {
+            const row = rows[nozzle.id];
+            if (!row) return null;
+            const staffName = staffList.find((s) => s.id === row.staffId)?.name ?? staff.name;
+            return (
+              <View key={nozzle.id} style={styles.row} testID={`nozzle-row-${nozzle.label}`}>
+                <Text style={styles.rowLabel}>
+                  {nozzle.label} &middot; {nozzle.item.name}
+                </Text>
+                <Text style={styles.hint}>Opening reading (not editable): {row.openingReading.toFixed(1)}</Text>
 
-        <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
-          <Pressable style={styles.modalOverlay} onPress={() => setPickerOpen(false)}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Select nozzle</Text>
-              <FlatList
-                data={nozzles ?? []}
-                keyExtractor={(nozzle) => nozzle.id}
-                renderItem={({ item: nozzle }) => (
+                <Text style={styles.label}>Closing reading</Text>
+                <TextInput
+                  style={styles.input}
+                  value={row.closingReadingInput}
+                  onChangeText={(text) => updateRow(nozzle.id, { closingReadingInput: text })}
+                  keyboardType="decimal-pad"
+                  editable={!submitting}
+                  testID={`closing-input-${nozzle.label}`}
+                />
+
+                {nozzle.rolloverAt != null && (
                   <Pressable
-                    style={styles.modalOption}
-                    onPress={() => {
-                      void handleSelectNozzle(nozzle);
-                    }}
-                    testID={`nozzle-option-${nozzle.label}`}
+                    style={styles.checkboxRow}
+                    onPress={() => updateRow(nozzle.id, { meterRolledOver: !row.meterRolledOver })}
+                    testID={`rollover-toggle-${nozzle.label}`}
                   >
-                    <Text style={styles.modalOptionText}>
-                      {nozzle.label} · {nozzle.item.name}
+                    <View style={[styles.checkbox, row.meterRolledOver && styles.checkboxChecked]}>
+                      {row.meterRolledOver ? <Text style={styles.checkboxMark}>✓</Text> : null}
+                    </View>
+                    <Text style={styles.checkboxLabel}>
+                      Meter rolled over this shift (rollover point: {nozzle.rolloverAt.toFixed(2)})
                     </Text>
                   </Pressable>
                 )}
-              />
-            </View>
-          </Pressable>
-        </Modal>
 
-        {checking ? <ActivityIndicator style={{ marginVertical: 12 }} color="#1a73e8" /> : null}
+                {isDsm ? (
+                  <Text style={styles.hint}>Staff: {staff.name}</Text>
+                ) : (
+                  <Pressable
+                    style={styles.staffPicker}
+                    onPress={() => setStaffPickerForNozzleId(nozzle.id)}
+                    testID={`staff-picker-${nozzle.label}`}
+                  >
+                    <Text style={styles.staffPickerText}>Staff: {staffName}</Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          })
+        )}
 
-        {checkError ? (
-          <Text style={styles.error} testID="check-error">
-            {checkError}
+        {submitError ? (
+          <Text style={styles.error} testID="submit-error">
+            {submitError}
           </Text>
         ) : null}
 
-        {closedResult ? (
-          <View style={styles.resultBox} testID="close-result">
-            <Text style={styles.resultTitle}>Shift closed</Text>
-            <Text style={styles.resultLine}>Opening reading: {closedResult.openingReading}</Text>
-            <Text style={styles.resultLine}>Closing reading: {closedResult.closingReading}</Text>
-            <Text style={styles.resultLine}>Litres sold: {closedResult.litresSold}</Text>
+        {results ? (
+          <View style={styles.resultBox} testID="batch-results">
+            <Text style={styles.resultTitle}>Closed {results.length} nozzle{results.length === 1 ? '' : 's'}</Text>
+            {results.map((reading) => (
+              <Text key={reading.id} style={styles.resultLine}>
+                {reading.nozzle.label}: {reading.litresSold} L
+                {reading.tankWarning ? ` — ${reading.tankWarning}` : ''}
+              </Text>
+            ))}
           </View>
         ) : null}
 
-        {!checking && openShiftForNozzle === undefined
-          ? null
-          : !checking && openShiftForNozzle === null && selectedNozzle ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionHeading}>No open shift for this nozzle</Text>
-                <Text style={styles.resultLine}>
-                  Opening reading (carried forward — not editable): {selectedNozzle.nextOpeningReading.toFixed(1)}
-                </Text>
-                <Text style={styles.hint}>
-                  This is the previous shift&rsquo;s closing reading, or this nozzle&rsquo;s configured starting
-                  reading if it&rsquo;s never had a shift.
-                </Text>
-                {openError ? (
-                  <Text style={styles.error} testID="open-error">
-                    {openError}
-                  </Text>
-                ) : null}
-                <Pressable
-                  style={[styles.button, opening && styles.buttonDisabled]}
-                  onPress={() => {
-                    void handleOpenShift();
-                  }}
-                  disabled={opening}
-                  testID="open-shift-button"
-                >
-                  {opening ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Open Shift</Text>}
-                </Pressable>
-              </View>
-            ) : !checking && openShiftForNozzle ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionHeading}>Open shift found</Text>
-                <Text style={styles.resultLine}>Opening reading: {openShiftForNozzle.openingReading}</Text>
-                <Text style={styles.resultLine}>
-                  Shift start: {new Date(openShiftForNozzle.shiftStart).toLocaleString()}
-                </Text>
-                <Text style={styles.label}>Closing Reading</Text>
-                <TextInput
-                  style={styles.input}
-                  value={closingReadingInput}
-                  onChangeText={setClosingReadingInput}
-                  placeholder="e.g. 12400.2"
-                  keyboardType="decimal-pad"
-                  editable={!closing}
-                  testID="closing-reading-input"
-                />
-                {openShiftForNozzle.nozzle.rolloverAt != null && (
-                  <Pressable
-                    style={styles.checkboxRow}
-                    onPress={() => setMeterRolledOver((prev) => !prev)}
-                    testID="meter-rolled-over-toggle"
-                  >
-                    <View style={[styles.checkbox, meterRolledOver && styles.checkboxChecked]}>
-                      {meterRolledOver ? <Text style={styles.checkboxMark}>✓</Text> : null}
-                    </View>
-                    <Text style={styles.checkboxLabel}>
-                      This meter physically rolled over to zero this shift (rollover point:{' '}
-                      {openShiftForNozzle.nozzle.rolloverAt.toFixed(2)})
-                    </Text>
-                  </Pressable>
-                )}
-                {closeError ? (
-                  <Text style={styles.error} testID="close-error">
-                    {closeError}
-                  </Text>
-                ) : null}
-                <Pressable
-                  style={[styles.button, closing && styles.buttonDisabled]}
-                  onPress={() => {
-                    void handleCloseShift();
-                  }}
-                  disabled={closing}
-                  testID="close-shift-button"
-                >
-                  {closing ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Close Shift</Text>}
-                </Pressable>
-              </View>
-            ) : null}
+        {nozzles && nozzles.length > 0 && (
+          <Pressable
+            style={[styles.button, !canSubmit && styles.buttonDisabled]}
+            onPress={() => {
+              void handleSubmit();
+            }}
+            disabled={!canSubmit}
+            testID="submit-batch-button"
+          >
+            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Submit closing readings</Text>}
+          </Pressable>
+        )}
 
         <Pressable style={styles.backButton} onPress={onBack} testID="meter-reading-back-button">
           <Text style={styles.backButtonText}>Back</Text>
         </Pressable>
       </ScrollView>
+
+      <Modal
+        visible={staffPickerForNozzleId !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStaffPickerForNozzleId(null)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setStaffPickerForNozzleId(null)}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Select staff</Text>
+            <FlatList
+              data={staffList}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={styles.modalOption}
+                  onPress={() => {
+                    if (staffPickerForNozzleId) updateRow(staffPickerForNozzleId, { staffId: item.id });
+                    setStaffPickerForNozzleId(null);
+                  }}
+                  testID={`staff-option-${item.name}`}
+                >
+                  <Text style={styles.modalOptionText}>{item.name}</Text>
+                </Pressable>
+              )}
+            />
+          </View>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -337,11 +347,17 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: '700',
-    marginBottom: 24,
+    marginBottom: 8,
     textAlign: 'center',
   },
+  shiftLabel: {
+    fontSize: 13,
+    color: '#555',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#444',
     marginBottom: 6,
   },
@@ -352,24 +368,67 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
+    marginBottom: 10,
+  },
+  error: {
+    color: '#b00020',
     marginBottom: 12,
   },
-  picker: {
+  row: {
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  rowLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  hint: {
+    fontSize: 12,
+    color: '#777',
+    marginBottom: 10,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#1a73e8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  checkboxChecked: {
+    backgroundColor: '#1a73e8',
+  },
+  checkboxMark: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  checkboxLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: '#333',
+  },
+  staffPicker: {
     borderWidth: 1,
     borderColor: '#ccc',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 14,
-    marginBottom: 12,
+    paddingVertical: 8,
+    alignSelf: 'flex-start',
   },
-  pickerPlaceholder: {
-    fontSize: 16,
-    color: '#999',
-  },
-  pickerValue: {
-    fontSize: 16,
+  staffPickerText: {
+    fontSize: 13,
     color: '#111',
-    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,
@@ -398,54 +457,6 @@ const styles = StyleSheet.create({
   modalOptionText: {
     fontSize: 16,
   },
-  error: {
-    color: '#b00020',
-    marginBottom: 12,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#1a73e8',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  checkboxChecked: {
-    backgroundColor: '#1a73e8',
-  },
-  checkboxMark: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  checkboxLabel: {
-    flex: 1,
-    fontSize: 13,
-    color: '#333',
-  },
-  hint: {
-    fontSize: 12,
-    color: '#777',
-    marginBottom: 12,
-  },
-  section: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  sectionHeading: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
   resultBox: {
     backgroundColor: '#e8f0fe',
     borderRadius: 8,
@@ -469,6 +480,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
     marginTop: 4,
+    marginBottom: 16,
   },
   buttonDisabled: {
     backgroundColor: '#9db8e8',
@@ -479,7 +491,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   backButton: {
-    marginTop: 24,
     alignItems: 'center',
   },
   backButtonText: {

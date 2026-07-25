@@ -23,8 +23,9 @@ function VarianceSummaryBanner({ readings, varianceByReadingId }: NozzleReadings
 
   const totalVariance = variances.reduce((sum, v) => sum + v.variance, 0);
   const flagged = variances.filter((v) => v.flagged);
+  const pending = variances.filter((v) => v.reconciliationPending);
 
-  if (flagged.length === 0) {
+  if (flagged.length === 0 && pending.length === 0) {
     return (
       <div className="banner ok">
         Aggregate meter-vs-billed variance today: {formatSignedLitres(totalVariance)} across {variances.length}{' '}
@@ -33,11 +34,25 @@ function VarianceSummaryBanner({ readings, varianceByReadingId }: NozzleReadings
     );
   }
 
-  const flaggedNozzles = Array.from(new Set(flagged.map((v) => v.nozzleLabel))).join(', ');
+  if (flagged.length > 0) {
+    const flaggedNozzles = Array.from(new Set(flagged.map((v) => v.nozzleLabel))).join(', ');
+    return (
+      <div className="banner">
+        Aggregate meter-vs-billed variance today: {formatSignedLitres(totalVariance)}, {flagged.length} shift
+        {flagged.length === 1 ? '' : 's'} outside tolerance — driven by {flaggedNozzles} below.
+      </div>
+    );
+  }
+
+  // No genuine flags — just shifts whose walk-in (non-itemized) sales
+  // haven't been reconciled yet (Section 8A.2). Not itself a fraud signal —
+  // ordinary uncaptured walk-in volume, surfaced as a reminder to log it.
+  const pendingNozzles = Array.from(new Set(pending.map((v) => v.nozzleLabel))).join(', ');
   return (
-    <div className="banner">
-      Aggregate meter-vs-billed variance today: {formatSignedLitres(totalVariance)}, {flagged.length} shift
-      {flagged.length === 1 ? '' : 's'} outside tolerance — driven by {flaggedNozzles} below.
+    <div className="banner ok">
+      Aggregate meter-vs-billed variance today: {formatSignedLitres(totalVariance)} across {variances.length}{' '}
+      closed shift{variances.length === 1 ? '' : 's'} — {pending.length} shift{pending.length === 1 ? '' : 's'}{' '}
+      ({pendingNozzles}) still need their walk-in sales reconciled before variance can be fully assessed.
     </div>
   );
 }
@@ -124,7 +139,17 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
                 <td className="num">
                   {variance ? formatLitres(variance.litresBilled) : isOpen ? '—' : 'loading…'}
                 </td>
-                <td className="num" style={{ fontWeight: 700, color: variance?.flagged ? 'var(--red)' : 'var(--text-dark)' }}>
+                <td
+                  className="num"
+                  style={{
+                    fontWeight: 700,
+                    color: variance?.flagged
+                      ? 'var(--red)'
+                      : variance?.reconciliationPending
+                        ? 'var(--amber)'
+                        : 'var(--text-dark)',
+                  }}
+                >
                   {variance ? (
                     <>
                       {formatSignedLitres(variance.variance)}
@@ -138,10 +163,13 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
                   {isOpen ? (
                     <StatusBadge tone="warning" label="Shift open" />
                   ) : variance ? (
-                    <StatusBadge
-                      tone={variance.flagged ? 'critical' : 'good'}
-                      label={variance.flagged ? 'Flagged' : 'Within tolerance'}
-                    />
+                    variance.flagged ? (
+                      <StatusBadge tone="critical" label="Flagged" />
+                    ) : variance.reconciliationPending ? (
+                      <StatusBadge tone="warning" label="Walk-in not reconciled" />
+                    ) : (
+                      <StatusBadge tone="good" label="Within tolerance" />
+                    )
                   ) : (
                     <StatusBadge tone="neutral" label="Loading…" />
                   )}

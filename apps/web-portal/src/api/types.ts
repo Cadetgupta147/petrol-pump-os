@@ -206,6 +206,49 @@ export interface UpdateNozzleRequest {
   isActive?: boolean;
 }
 
+// Meter Reading redesign (Section 3.3) — GET /shift-schedule: the Owner-
+// configurable shift schedule (Settings), a flat dealer-managed list like
+// Nozzle/Item, NOT a singleton config. startTime/endTime are wall-clock
+// "HH:mm" (24h) strings with no date/timezone — endTime may be numerically
+// "before" startTime for a shift that wraps past midnight (e.g.
+// "22:00"-"06:00"). Used PURELY to label which shift a batch-closing-
+// readings submission belongs to (see MeterReading's batch-close flow) —
+// never a blocking gate.
+export interface ShiftDefinition {
+  id: string;
+  label: string;
+  startTime: string;
+  endTime: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+// Mirrors apps/backend/src/shift-schedule/dto/create-shift-definition.dto.ts.
+export interface CreateShiftDefinitionRequest {
+  label: string;
+  startTime: string;
+  endTime: string;
+}
+
+// Mirrors apps/backend/src/shift-schedule/dto/update-shift-definition.dto.ts
+// — any subset, plus isActive (soft-disable).
+export interface UpdateShiftDefinitionRequest {
+  label?: string;
+  startTime?: string;
+  endTime?: string;
+  isActive?: boolean;
+}
+
+// GET /shift-schedule/current — the resolved current/most-recent shift
+// window, for display only (e.g. a header showing "Now closing: Shift 2").
+// null when nothing is configured, or "now" falls in a genuine gap between
+// shifts — never a blocking error, just a missing label.
+export interface CurrentShiftWindow {
+  shiftDefinition: ShiftDefinition;
+  windowStart: string;
+  windowEnd: string;
+}
+
 export interface MeterReading {
   id: string;
   nozzleId: string;
@@ -236,31 +279,30 @@ export interface MeterReading {
   tankWarning?: string;
 }
 
-// Mirrors apps/backend/src/meter-readings/dto/open-shift.dto.ts.
+// One nozzle's entry within POST /meter-readings/batch-close — Meter Reading
+// redesign (Section 3.3). Replaces the old two-step Open/Close flow: every
+// active nozzle's closing reading is submitted at once. Opening a nozzle's
+// very first shift, and re-opening its next one right after this closes,
+// both happen server-side automatically — there is no separate "open"
+// request anymore.
 //
-// openingReading and productType are DELIBERATELY ABSENT — both are now
-// server-derived (the carry-forward rule + the nozzle's linked Item). A
-// caller picks a nozzleId from GET /nozzles and cannot set or edit the
-// opening reading at all; see OpenShiftDto's own comment for why.
-//
-// Finding A1 (docs/production-readiness.md) — staffId is OPTIONAL and
-// defaults server-side to the authenticated caller when omitted; a non-DSM
-// caller may still set it to assign the shift to a different staff member
-// (resolveAssignableActorId()).
-//
-// shiftStart is OPTIONAL and, like staffId, rejected outright (403) if a
-// DSM caller sends it — the manual-entry backdating fallback is Owner/
-// Accountant/Manager only (see assertNonDsmOverride() on the backend).
-export interface OpenShiftRequest {
+// staffId is OPTIONAL and resolved via resolveAssignableActorId() server-side
+// — kept PER ROW (not once for the whole batch) since staff rotate across
+// nozzles; attributing every nozzle to whoever submitted would blur the
+// accountability the variance flag exists to catch.
+export interface BatchCloseReadingRequest {
   nozzleId: string;
+  closingReading: number;
+  meterRolledOver?: boolean;
   staffId?: string;
-  shiftStart?: string;
 }
 
 // Mirrors apps/backend/src/meter-readings/dto/close-shift.dto.ts. shiftEnd
-// is the same non-DSM-only backdating override as OpenShiftRequest.shiftStart.
-// meterRolledOver is only valid when closingReading < openingReading AND
-// the nozzle has a configured rolloverAt — see CloseShiftModal's comment.
+// is a non-DSM-only backdating override (assertNonDsmOverride() on the
+// backend) — the manual single-nozzle close fallback (CloseShiftModal) is
+// Owner/Accountant/Manager only for this field. meterRolledOver is only
+// valid when closingReading < openingReading AND the nozzle has a
+// configured rolloverAt — see CloseShiftModal's comment.
 export interface CloseShiftRequest {
   closingReading: number;
   meterRolledOver?: boolean;
@@ -277,6 +319,15 @@ export interface CorrectMeterReadingRequest {
   closingReading?: number;
 }
 
+// Section 8A.2 fix — variance is netted against ShiftSalesSummary.walkInLitres
+// once a shift's walk-in (non-itemized) sales are reconciled, since ordinary
+// uncaptured walk-in volume isn't fraud. `walkInLitresReconciled` is null
+// until that reconciliation exists; `reconciliationPending` is true when
+// there's a positive, still-unreconciled gap worth logging a walk-in summary
+// for. `flagged` is never true purely because of an unreconciled walk-in gap
+// — see MeterReadingsService.checkVariance()'s own comment for the full
+// direction-aware logic (a negative gap — billed more than the meter shows
+// dispensed — always flags, since that direction can never be walk-in).
 export interface MeterVariance {
   meterReadingId: string;
   nozzleId: string;
@@ -286,9 +337,11 @@ export interface MeterVariance {
   shiftEnd: string;
   litresSoldFromMeter: number;
   litresBilled: number;
+  walkInLitresReconciled: number | null;
   variance: number;
   toleranceLitres: number;
   flagged: boolean;
+  reconciliationPending: boolean;
 }
 
 // CreditAlertsService.findAll()/findOne()/update() all use
