@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { aggregateByPaymentType } from './payment-line-aggregation.util';
+import { formatLocalDate, parseDateRangeStrings } from '../common/date-range.util';
 
 // Section 3.1 (Dashboard) / Section 12 (Reports & Analytics) — deliberately
 // scoped-down slice: today's sales summary, tank stock snapshot, and recent
@@ -20,8 +21,11 @@ const RECENT_BILLS_LIMIT = 20;
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getSalesSummary() {
-    const { start, end } = getStartAndEndOfToday();
+  // from/to (YYYY-MM-DD) — Section 3.1 date-range tabs. Omitting either
+  // preserves the original "today" behavior (getStartAndEndOfToday()) rather
+  // than requiring every caller to always pass an explicit range.
+  async getSalesSummary(from?: string, to?: string) {
+    const { start, end } = from && to ? parseDateRangeStrings(from, to) : getStartAndEndOfToday();
 
     const bills = await this.prisma.bill.findMany({
       where: {
@@ -38,7 +42,8 @@ export class DashboardService {
     const byPaymentType = aggregateByPaymentType(allPaymentLines);
 
     return {
-      date: start.toISOString().slice(0, 10),
+      from: formatLocalDate(start),
+      to: formatLocalDate(end),
       totalLitres,
       totalAmount,
       byPaymentType,

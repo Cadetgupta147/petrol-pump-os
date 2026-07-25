@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Banknote, Fuel, Wallet } from 'lucide-react';
+import { Banknote, Fuel, Gift, Truck, Users, Wallet } from 'lucide-react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
-import { DateRangeTabs } from '../components/dashboard/DateRangeTabs';
+import { DateRangeTabs, type DateRangeTab } from '../components/dashboard/DateRangeTabs';
 import { KpiCard } from '../components/dashboard/KpiCard';
 import { PaymentCollection } from '../components/dashboard/PaymentCollection';
 import { StockPanel } from '../components/dashboard/StockPanel';
@@ -15,9 +15,12 @@ import { getSalesSummary, getTankStock, getRecentBills } from '../api/dashboard'
 import { getCreditAlerts, updateCreditAlert } from '../api/creditAlerts';
 import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
 import { getAllBills } from '../api/bills';
+import { getLoyaltyCostReport } from '../api/loyalty';
+import { getPurchaseEntries } from '../api/purchases';
+import { getAttendanceLog } from '../api/attendance';
 import { downloadTallyExport } from '../api/tallyExport';
 import { ApiError } from '../api/client';
-import { formatRupees, formatLitres, formatRatePerLitre, isToday } from '../utils/format';
+import { formatRupees, formatLitres, formatRatePerLitre, localIsoDate } from '../utils/format';
 import type {
   SalesSummary,
   TankStock,
@@ -26,6 +29,9 @@ import type {
   MeterReading,
   MeterVariance,
   Bill,
+  LoyaltyCostReport,
+  PurchaseEntry,
+  AttendanceLogRow,
 } from '../api/types';
 
 interface DashboardData {
@@ -33,17 +39,56 @@ interface DashboardData {
   tankStock: TankStock[];
   recentBills: RecentBill[];
   creditAlerts: CreditLimitAlert[];
-  meterReadings: MeterReading[];
-  todaysBills: Bill[];
-  allBills: Bill[];
+  rangeBills: Bill[];
 }
 
-// GET /bills has no product-type filter or aggregation, and no date filter
-// (see api/bills.ts) — this pulls every non-deleted bill ever entered just
-// to compute today's petrol-vs-diesel split client-side. That's a real
-// scaling problem on a pump with years of history; the honest fix is a
-// backend endpoint that groups by productType server-side. Flagged in the
-// footnote below rather than silently accepted.
+const RANGE_LABELS: Record<DateRangeTab, string> = {
+  today: "today's",
+  yesterday: "yesterday's",
+  week: "this week's",
+  month: "this month's",
+};
+
+// Section 3.1 date-range tabs — resolves each tab into a concrete
+// YYYY-MM-DD pair, in the browser's LOCAL calendar (see localIsoDate()'s own
+// comment on why not toISOString()). "This week"/"This month" are
+// week-to-date/month-to-date (start through today), not the full calendar
+// period — a live dashboard has nothing useful to show for days that
+// haven't happened yet. Monday is treated as the start of the week.
+function resolveDateRange(tab: DateRangeTab): { from: string; to: string } {
+  const now = new Date();
+  const today = localIsoDate(now);
+
+  if (tab === 'today') return { from: today, to: today };
+
+  if (tab === 'yesterday') {
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const key = localIsoDate(yesterday);
+    return { from: key, to: key };
+  }
+
+  if (tab === 'week') {
+    const dayOfWeek = now.getDay(); // 0 (Sun) .. 6 (Sat)
+    const daysSinceMonday = (dayOfWeek + 6) % 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - daysSinceMonday);
+    return { from: localIsoDate(monday), to: today };
+  }
+
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { from: localIsoDate(firstOfMonth), to: today };
+}
+
+// Calendar-day (not exact-timestamp) membership check, comparing LOCAL
+// dates — matches how MeterReadingsPage's own date picker already treats
+// "which day does this shiftStart belong to" (see that page's localDateKey
+// comment for the same UTC-vs-local reasoning).
+function isWithinLocalRange(iso: string, from: string, to: string): boolean {
+  const key = localIsoDate(new Date(iso));
+  return key >= from && key <= to;
+}
+
 function computeProductTotals(bills: Bill[]): { productType: string; litres: number; amount: number }[] {
   const totals = new Map<string, { litres: number; amount: number }>();
   for (const bill of bills) {
@@ -59,8 +104,9 @@ function computeProductTotals(bills: Bill[]): { productType: string; litres: num
 
 // Rs./L chips in the sub-header aren't backed by a fuel-price/config entity
 // (none exists in the schema) — derived here from each product's most
-// recently entered bill's rateApplied, across all bills already loaded for
-// computeProductTotals above, not just today's.
+// recently entered bill's rateApplied. Deliberately fed ALL bills ever
+// entered, not the range-scoped set below — the rate chips should always
+// show the latest configured rate, even while viewing "Yesterday".
 function computeLatestRates(bills: Bill[]): Map<string, number> {
   const latest = new Map<string, { rate: number; ts: number }>();
   for (const bill of bills) {
@@ -75,10 +121,10 @@ function computeLatestRates(bills: Bill[]): Map<string, number> {
   return result;
 }
 
-// Distinct customers with a CREDIT+IN line today — the KPI's Rs. total comes
-// from the server-aggregated sales-summary, but the "N customers" subtext
-// needs per-bill detail that endpoint doesn't return.
-function countCreditCustomersToday(bills: Bill[]): number {
+// Distinct customers with a CREDIT+IN line within the selected range — the
+// KPI's Rs. total comes from the server-aggregated sales-summary, but the
+// "N customers" subtext needs per-bill detail that endpoint doesn't return.
+function countCreditCustomers(bills: Bill[]): number {
   const ids = new Set<string>();
   for (const bill of bills) {
     if (!bill.customerId) continue;
@@ -98,6 +144,12 @@ const DOT = {
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const [rangeTab, setRangeTab] = useState<DateRangeTab>('today');
+  const [rawMeterReadings, setRawMeterReadings] = useState<MeterReading[] | null>(null);
+  const [allBillsForRates, setAllBillsForRates] = useState<Bill[]>([]);
+  const [loyaltyCostReport, setLoyaltyCostReport] = useState<LoyaltyCostReport | null>(null);
+  const [purchaseEntries, setPurchaseEntries] = useState<PurchaseEntry[] | null>(null);
+  const [attendanceLog, setAttendanceLog] = useState<AttendanceLogRow[] | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [varianceByReadingId, setVarianceByReadingId] = useState<Map<string, MeterVariance>>(new Map());
@@ -107,29 +159,69 @@ export function DashboardPage() {
   const [reminderError, setReminderError] = useState<string | null>(null);
   const [varianceCheckError, setVarianceCheckError] = useState<string | null>(null);
 
+  const { from, to } = useMemo(() => resolveDateRange(rangeTab), [rangeTab]);
+
+  // Fetched once, unaffected by the selected range: meter-reading volume per
+  // nozzle/day is low enough that pulling everything once and filtering
+  // client-side by range (meterReadings below) is reasonable — same scope
+  // decision api/meterReadings.ts's own comment already documents. Bills for
+  // the rate chips are deliberately NOT range-scoped either — see
+  // computeLatestRates()'s comment.
+  useEffect(() => {
+    let cancelled = false;
+    getAllMeterReadings()
+      .then((result) => {
+        if (!cancelled) setRawMeterReadings(result);
+      })
+      .catch(() => undefined);
+    getAllBills()
+      .then((result) => {
+        if (!cancelled) setAllBillsForRates(result.bills);
+      })
+      .catch(() => undefined);
+    // Each fetched independently, not folded into the main Promise.all below
+    // — GET /loyalty/cost-report is Owner/Read-only only (Accountant is
+    // excluded, unlike every other dashboard endpoint), so an Accountant
+    // viewing this page must not have the whole dashboard fail just because
+    // this one call 403s; the widget below simply doesn't render for them.
+    getLoyaltyCostReport()
+      .then((result) => {
+        if (!cancelled) setLoyaltyCostReport(result);
+      })
+      .catch(() => undefined);
+    getPurchaseEntries()
+      .then((result) => {
+        if (!cancelled) setPurchaseEntries(result);
+      })
+      .catch(() => undefined);
+    getAttendanceLog()
+      .then((result) => {
+        if (!cancelled) setAttendanceLog(result);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [salesSummary, tankStock, recentBills, creditAlerts, allMeterReadings, allBillsResult] =
-          await Promise.all([
-            getSalesSummary(),
-            getTankStock(),
-            getRecentBills(),
-            getCreditAlerts(),
-            getAllMeterReadings(),
-            getAllBills(),
-          ]);
+        const [salesSummary, tankStock, recentBills, creditAlerts, rangeBillsResult] = await Promise.all([
+          getSalesSummary(from, to),
+          getTankStock(),
+          getRecentBills(),
+          getCreditAlerts(),
+          getAllBills({ from, to }),
+        ]);
         if (cancelled) return;
-        const allBills = allBillsResult.bills;
         setData({
           salesSummary,
           tankStock,
           recentBills,
           creditAlerts,
-          meterReadings: allMeterReadings.filter((r) => isToday(r.shiftStart)),
-          todaysBills: allBills.filter((b) => isToday(b.timestamp)),
-          allBills,
+          rangeBills: rangeBillsResult.bills,
         });
       } catch (err) {
         if (!cancelled) {
@@ -141,14 +233,36 @@ export function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [from, to]);
+
+  // Range-scoped view of the once-fetched meter readings — see the mount
+  // effect's comment above.
+  const meterReadings = useMemo(() => {
+    if (!rawMeterReadings) return [];
+    return rawMeterReadings.filter((r) => isWithinLocalRange(r.shiftStart, from, to));
+  }, [rawMeterReadings, from, to]);
+
+  // Tanker deliveries — GET /purchase-entries has no date filter server-side
+  // (PurchasesService.findAll() returns everything), so this is scoped to
+  // the selected range the same client-side way meterReadings above is.
+  const deliveriesInRange = useMemo(() => {
+    if (!purchaseEntries) return [];
+    return purchaseEntries.filter((p) => isWithinLocalRange(p.createdAt, from, to));
+  }, [purchaseEntries, from, to]);
+
+  // "On duty" is a live, right-now snapshot (who currently has no clockOut
+  // yet) — deliberately NOT scoped to the selected range, same reasoning as
+  // the tank-stock snapshot and credit-limit alerts.
+  const staffOnDuty = useMemo(() => {
+    if (!attendanceLog) return [];
+    return attendanceLog.filter((row) => row.clockOut === null);
+  }, [attendanceLog]);
 
   // Variance can only be checked once a shift is closed (closingReading +
   // shiftEnd set) — see meter-readings.service.ts. Fetched in a second pass
-  // once we know today's shifts, one request per closed shift.
+  // once we know the selected range's shifts, one request per closed shift.
   useEffect(() => {
-    if (!data) return;
-    const closedReadings = data.meterReadings.filter((r) => r.closingReading !== null);
+    const closedReadings = meterReadings.filter((r) => r.closingReading !== null);
     let cancelled = false;
     async function loadVariance() {
       const results = await Promise.all(
@@ -177,7 +291,7 @@ export function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [data]);
+  }, [meterReadings]);
 
   async function handleRequestReminder(alertId: string) {
     setReminderError(null);
@@ -259,8 +373,7 @@ export function DashboardPage() {
     setExportError(null);
     setExporting(true);
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      await downloadTallyExport(today, today);
+      await downloadTallyExport(from, to);
     } catch (err) {
       setExportError(err instanceof ApiError ? err.message : 'Export failed.');
     } finally {
@@ -286,19 +399,20 @@ export function DashboardPage() {
         <TopBar />
         <NavBar />
         <div className="content">
-          <div className="loading">Loading today&rsquo;s dashboard…</div>
+          <div className="loading">Loading dashboard…</div>
         </div>
       </>
     );
   }
 
-  const { salesSummary, tankStock, recentBills, meterReadings, todaysBills, allBills } = data;
-  const productTotals = computeProductTotals(todaysBills);
+  const { salesSummary, tankStock, recentBills, rangeBills } = data;
+  const rangeLabel = RANGE_LABELS[rangeTab];
+  const productTotals = computeProductTotals(rangeBills);
   const topProducts = productTotals.slice(0, 3);
   const extraProductCount = productTotals.length - topProducts.length;
-  const creditToday = Math.max(0, salesSummary.byPaymentType.CREDIT);
-  const creditCustomersToday = countCreditCustomersToday(todaysBills);
-  const latestRates = computeLatestRates(allBills);
+  const creditForRange = Math.max(0, salesSummary.byPaymentType.CREDIT);
+  const creditCustomersForRange = countCreditCustomers(rangeBills);
+  const latestRates = computeLatestRates(allBillsForRates);
   const kpiCount = topProducts.length + 2;
   const kpiGridClass = kpiCount >= 5 ? 'grid-5' : kpiCount === 4 ? 'grid-4' : 'grid-3';
 
@@ -308,7 +422,7 @@ export function DashboardPage() {
       <NavBar />
       <div className="content">
         <div className="content-header">
-          <DateRangeTabs />
+          <DateRangeTabs active={rangeTab} onChange={setRangeTab} />
           <div className="content-header-right">
             {latestRates.size > 0 && (
               <div className="rate-chips">
@@ -347,9 +461,9 @@ export function DashboardPage() {
               icon={Banknote}
             />
             <KpiCard
-              label="Credit given today"
-              value={formatRupees(creditToday)}
-              sub={`${creditCustomersToday} customer${creditCustomersToday === 1 ? '' : 's'}`}
+              label={`Credit given ${rangeLabel}`}
+              value={formatRupees(creditForRange)}
+              sub={`${creditCustomersForRange} customer${creditCustomersForRange === 1 ? '' : 's'}`}
               dotColor={DOT.amber}
               icon={Wallet}
               background="var(--amber-bg)"
@@ -358,10 +472,10 @@ export function DashboardPage() {
             />
           </div>
           <div className="footnote">
-            Petrol/diesel split and per-litre rate chips above are computed here from every non-deleted bill ever
-            entered (GET /bills has no date or product filter yet) — fine for now, but won&rsquo;t scale once bill
-            history grows. &ldquo;Total collection&rdquo; comes from the server-aggregated /dashboard/sales-summary
-            instead.
+            Petrol/diesel split above is computed here from the selected range&rsquo;s bills (GET /bills?from=&amp;to=
+            filters server-side; the per-product grouping itself is still done client-side). Rate chips instead use
+            every non-deleted bill ever entered, regardless of the selected range, so the latest configured rate
+            always shows. &ldquo;Total collection&rdquo; comes from the server-aggregated /dashboard/sales-summary.
             {extraProductCount > 0 && ` (${extraProductCount} more product type${extraProductCount === 1 ? '' : 's'} not shown.)`}
           </div>
         </div>
@@ -369,7 +483,7 @@ export function DashboardPage() {
         <div className="section">
           <div className="section-title">
             <h3>Payment collection</h3>
-            <span className="section-note">today, derived from BillPaymentLine rows</span>
+            <span className="section-note">{rangeLabel}, derived from BillPaymentLine rows</span>
           </div>
           <PaymentCollection totals={salesSummary.byPaymentType} />
         </div>
@@ -387,11 +501,58 @@ export function DashboardPage() {
         <div className="section">
           <div className="section-title">
             <h3>Nozzle readings</h3>
-            <span className="section-note">today&rsquo;s shifts, meter vs billed</span>
+            <span className="section-note">{rangeLabel} shifts, meter vs billed</span>
           </div>
           {varianceCheckError && <div className="banner">{varianceCheckError}</div>}
           <NozzleReadingsTable readings={meterReadings} varianceByReadingId={varianceByReadingId} />
         </div>
+
+        {(loyaltyCostReport || purchaseEntries || attendanceLog) && (
+          <div className="section">
+            <div className="section-title">
+              <h3>Loyalty, deliveries &amp; staff</h3>
+              <span className="section-note">
+                loyalty is an all-time snapshot; deliveries follow {rangeLabel} range; staff on duty is live
+              </span>
+            </div>
+            <div className="grid grid-3">
+              {loyaltyCostReport && (
+                <KpiCard
+                  label="Loyalty points outstanding"
+                  value={`${Math.round(loyaltyCostReport.pointsOutstanding).toLocaleString('en-IN')} pts`}
+                  sub={
+                    loyaltyCostReport.outstandingLiabilityValue !== null
+                      ? `${formatRupees(loyaltyCostReport.outstandingLiabilityValue)} liability`
+                      : 'cash redemption ratio not set'
+                  }
+                  onSubClick={() => navigate('/reports')}
+                  dotColor={DOT.purple}
+                  icon={Gift}
+                />
+              )}
+              {purchaseEntries && (
+                <KpiCard
+                  label={`Tanker deliveries ${rangeLabel}`}
+                  value={`${deliveriesInRange.length} deliver${deliveriesInRange.length === 1 ? 'y' : 'ies'}`}
+                  sub={`${formatLitres(deliveriesInRange.reduce((sum, p) => sum + p.quantityLitres, 0))} received`}
+                  onSubClick={() => navigate('/purchases')}
+                  dotColor={DOT.teal}
+                  icon={Truck}
+                />
+              )}
+              {attendanceLog && (
+                <KpiCard
+                  label="Staff on duty now"
+                  value={`${staffOnDuty.length} clocked in`}
+                  sub={staffOnDuty.length > 0 ? staffOnDuty.map((s) => s.staff.name).join(', ') : 'no one currently clocked in'}
+                  onSubClick={() => navigate('/reports')}
+                  dotColor={DOT.blue}
+                  icon={Users}
+                />
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="section">
           <div className="grid grid-lopsided">
@@ -418,16 +579,13 @@ export function DashboardPage() {
             <h3>Not wired to a backend endpoint yet</h3>
           </div>
           <ComingSoon
-            title="Loyalty, inventory &amp; operations"
+            title="Inventory &amp; operations — genuinely unbuilt, not just unwired"
             items={[
-              'Loyalty points liability — LoyaltyConfig/LoyaltyTransaction exist in the schema, no service yet',
-              'Tanker deliveries — PurchaseEntry exists in the schema, no service yet',
-              'Lubricant sale — LubricantItem exists in the schema, no service yet',
-              'Urea/DEF sale — no model yet',
-              'Generator diesel used — no model yet',
-              "Today's expenses — no model yet",
-              'Salesman on duty — AttendanceLog exists in the schema, no service yet',
-              'Machine testing/calibration — no model yet',
+              'Lubricant sale — LubricantItem exists in the schema (stock only, no sale-price/SKU fields), but zero service or controller exists anywhere for it',
+              'Urea/DEF sale — no dedicated model; "Urea/AdBlue" only appears as an example Item Master product name, not a planned feature',
+              'Generator diesel used — no model, not documented anywhere in docs/master-plan.md',
+              "Today's expenses — no model, not documented anywhere in docs/master-plan.md",
+              'Machine testing/calibration — no model; Tank.calibrationChartRef is just a single reference-link string, not a testing-log entity',
             ]}
           />
         </div>

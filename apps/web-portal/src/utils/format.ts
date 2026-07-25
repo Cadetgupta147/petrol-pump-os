@@ -46,6 +46,18 @@ export function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// A Date's LOCAL calendar day as "YYYY-MM-DD" — deliberately NOT
+// `date.toISOString().slice(0, 10)` (that converts to UTC first, which can
+// silently shift the calendar day near midnight — see todayIsoDate()'s own
+// comment for the exact gap this avoids reintroducing). Mirrors the
+// backend's date-range.util.ts formatLocalDate().
+export function localIsoDate(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 // "Today" per the browser's local calendar date — matches how
 // dashboard.service.ts computes getStartAndEndOfToday() using server-local
 // time. If the backend and browser sit in different timezones these two

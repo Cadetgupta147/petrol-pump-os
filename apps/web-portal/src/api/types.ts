@@ -25,7 +25,8 @@ export interface LoginResponse {
 export type PaymentTypeTotals = Record<PaymentType, number>;
 
 export interface SalesSummary {
-  date: string;
+  from: string;
+  to: string;
   totalLitres: number;
   totalAmount: number;
   byPaymentType: PaymentTypeTotals;

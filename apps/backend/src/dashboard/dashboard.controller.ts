@@ -1,7 +1,8 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { DashboardService } from './dashboard.service';
+import { GetSalesSummaryQueryDto } from './dto/get-sales-summary-query.dto';
 
 // Section 3.1 (Dashboard) / Section 12 (Reports & Analytics) — scoped-down
 // slice: today's sales summary, tank stock snapshot, recent bills list only.
@@ -15,9 +16,12 @@ import { DashboardService } from './dashboard.service';
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
+  // ?from=&to= — Section 3.1 date-range tabs (Today/Yesterday/This week/This
+  // month resolved client-side into a concrete YYYY-MM-DD pair). Omitting
+  // either preserves the original "today" behavior.
   @Get('sales-summary')
-  getSalesSummary() {
-    return this.dashboardService.getSalesSummary();
+  getSalesSummary(@Query() query: GetSalesSummaryQueryDto) {
+    return this.dashboardService.getSalesSummary(query.from, query.to);
   }
 
   @Get('tank-stock')

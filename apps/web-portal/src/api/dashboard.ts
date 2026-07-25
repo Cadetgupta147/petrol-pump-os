@@ -1,12 +1,16 @@
 import { apiFetch } from './client';
 import type { SalesSummary, TankStock, RecentBill } from './types';
 
-// GET /dashboard/sales-summary — server-computed "today" (server's local
-// calendar day, see getStartAndEndOfToday() in dashboard.service.ts). There
-// is no date-range parameter on this endpoint yet, which is why the
-// dashboard's date tabs only make "Today" selectable — see DateRangeTabs.
-export function getSalesSummary(): Promise<SalesSummary> {
-  return apiFetch<SalesSummary>('/dashboard/sales-summary');
+// GET /dashboard/sales-summary?from=&to= — Section 3.1 date-range tabs
+// (DateRangeTabs resolves Today/Yesterday/This week/This month into a
+// concrete from/to pair client-side). Omitting both preserves the original
+// server-computed "today" (server's local calendar day).
+export function getSalesSummary(from?: string, to?: string): Promise<SalesSummary> {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const qs = params.toString();
+  return apiFetch<SalesSummary>(`/dashboard/sales-summary${qs ? `?${qs}` : ''}`);
 }
 
 // GET /dashboard/tank-stock — one row per Tank. lastDipReading/lastDipAt are

@@ -1,32 +1,39 @@
-const TABS = ['Today', 'Yesterday', 'This week', 'This month'];
+export type DateRangeTab = 'today' | 'yesterday' | 'week' | 'month';
 
-// Honest limitation, not a cut corner: /dashboard/sales-summary hardcodes
-// "today" server-side (getStartAndEndOfToday() in dashboard.service.ts) with
-// no date/range query param. Wiring Yesterday/This week/This month here
-// would mean either faking a filter that doesn't do anything, or silently
-// re-deriving ranges client-side from /bills (imprecise, and a much bigger
-// data pull). Neither is "wired to a real endpoint", so those tabs stay
-// visibly disabled until the backend grows a range parameter.
-export function DateRangeTabs() {
+const TABS: { key: DateRangeTab; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
+  { key: 'week', label: 'This week' },
+  { key: 'month', label: 'This month' },
+];
+
+interface DateRangeTabsProps {
+  active: DateRangeTab;
+  onChange: (tab: DateRangeTab) => void;
+}
+
+// Section 3.1 — now genuinely wired: GET /dashboard/sales-summary takes an
+// optional from/to (see api/dashboard.ts), and DashboardPage resolves each
+// tab into a concrete YYYY-MM-DD pair (resolveDateRange()) before calling
+// it. Every range-scoped widget (sales KPIs, payment collection, nozzle
+// readings, product/rate chips) follows whichever tab is selected here —
+// the tank-stock snapshot, recent-bills feed, and credit-limit alerts stay
+// unscoped on purpose (they're current-state views, not day-scoped ones).
+export function DateRangeTabs({ active, onChange }: DateRangeTabsProps) {
   return (
     <div className="date-tabs-group">
       <div className="date-tabs">
         {TABS.map((tab) => (
           <button
-            key={tab}
-            className={tab === 'Today' ? 'date-tab active' : 'date-tab'}
-            disabled={tab !== 'Today'}
-            title={
-              tab === 'Today'
-                ? undefined
-                : 'Backend has no date-range parameter yet — /dashboard endpoints only compute "today"'
-            }
+            key={tab.key}
+            type="button"
+            className={tab.key === active ? 'date-tab active' : 'date-tab'}
+            onClick={() => onChange(tab.key)}
           >
-            {tab}
+            {tab.label}
           </button>
         ))}
       </div>
-      <span className="date-note">Only &ldquo;Today&rdquo; is wired — the backend has no date-range parameter yet</span>
     </div>
   );
 }

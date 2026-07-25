@@ -88,6 +88,34 @@ describe('DashboardService', () => {
         CREDIT: 0,
       });
     });
+
+    // Section 3.1 date-range tabs — omitting from/to preserves "today";
+    // passing both scopes the query to that explicit range instead.
+    it('uses the explicit from/to range when both are provided, instead of defaulting to today', async () => {
+      prisma.bill.findMany.mockResolvedValue([]);
+
+      const result = await service.getSalesSummary('2026-07-01', '2026-07-07');
+
+      expect(prisma.bill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            timestamp: { gte: new Date(2026, 6, 1, 0, 0, 0, 0), lte: new Date(2026, 6, 7, 23, 59, 59, 999) },
+          }) as unknown,
+        }),
+      );
+      expect(result.from).toBe('2026-07-01');
+      expect(result.to).toBe('2026-07-07');
+    });
+
+    it('falls back to today when only one of from/to is provided', async () => {
+      prisma.bill.findMany.mockResolvedValue([]);
+
+      await service.getSalesSummary('2026-07-01', undefined);
+
+      const callArgs = prisma.bill.findMany.mock.calls[0][0] as { where: { timestamp: { gte: Date } } };
+      const today = new Date();
+      expect(callArgs.where.timestamp.gte.getDate()).toBe(today.getDate());
+    });
   });
 
   describe('getTankStock', () => {

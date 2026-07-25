@@ -23,3 +23,18 @@ export function parseDateRangeStrings(
   const end = new Date(toYear, toMonth - 1, toDay, 23, 59, 59, 999);
   return { start, end };
 }
+
+// The inverse of parseDateRangeStrings — formats a Date back to its LOCAL
+// calendar-day string. Deliberately NOT `date.toISOString().slice(0, 10)`:
+// that converts to UTC first, which can shift the calendar day depending on
+// the server's local timezone offset (the exact bug this function exists to
+// avoid reintroducing — a `start`/`end` built by parseDateRangeStrings above
+// is already anchored to a local midnight/end-of-day, and re-deriving its
+// date via UTC conversion can silently disagree with the string that
+// produced it).
+export function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
