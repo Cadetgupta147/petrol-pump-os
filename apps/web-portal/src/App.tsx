@@ -13,6 +13,7 @@ import { StaffPage } from './pages/StaffPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { LoyaltySettingsPage } from './pages/LoyaltySettingsPage';
 import { CreditSettingsPage } from './pages/CreditSettingsPage';
+import { UpiCaptureSettingsPage } from './pages/UpiCaptureSettingsPage';
 import { VehicleBlacklistPage } from './pages/VehicleBlacklistPage';
 import { TanksPage } from './pages/TanksPage';
 import { PurchaseEntryPage } from './pages/PurchaseEntryPage';
@@ -83,6 +84,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <VehicleBlacklistPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/upi-capture-settings"
+        element={
+          <RequireAuth>
+            <UpiCaptureSettingsPage />
           </RequireAuth>
         }
       />

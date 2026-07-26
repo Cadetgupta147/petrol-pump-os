@@ -83,6 +83,15 @@ enum BlacklistStatus {
   RESOLVED
 }
 
+// Section 8A.3 — which merchant account a pump's UPI webhook is registered
+// against. Different dealers use different providers, so this is a per-pump
+// choice (UpiCaptureConfig.provider), not a global one — see that model's
+// comment.
+enum UpiMerchantProvider {
+  PHONEPE
+  PAYTM
+}
+
 // ---------- Multi-tenancy (docs/multi-tenancy-plan.md) ----------
 
 // The tenant root — one row per petrol pump business using this system.
@@ -120,6 +129,7 @@ model Pump {
   densityLogs            DensityLog[]
   shiftSalesSummaries    ShiftSalesSummary[]
   upiWebhookEvents       UpiWebhookEvent[]
+  upiCaptureConfigs      UpiCaptureConfig[]
   purchaseEntries        PurchaseEntry[]
   lubricantItems         LubricantItem[]
   itemSales              ItemSale[]
@@ -821,6 +831,45 @@ model UpiWebhookEvent {
   matchedNozzleId String?
   rawPayload      Json
   processedAt     DateTime @default(now())
+}
+
+// Section 8A.3 — per-pump UPI auto-capture configuration. Dealer's choice,
+// not a platform default: autoCaptureEnabled stays false until a dealer has
+// actually registered our webhook URL (/upi-webhook/:pumpId) with their own
+// PhonePe/Paytm Business merchant account and supplied credentials here.
+// While false (or this row doesn't exist yet), walkInUpiCollected on
+// ShiftSalesSummary is entered manually by the DSM at shift end, exactly
+// like cash/card — see ShiftSalesService. Once true, the webhook becomes the
+// only writer of walkInUpiCollected (ShiftSalesService rejects a
+// client-supplied value) and UpiWebhookService verifies inbound deliveries
+// against provider/phonePeWebhook*/paytmMerchantKey below.
+//
+// SECURITY NOTE: phonePeWebhookUsername/phonePeWebhookPassword/
+// paytmMerchantKey are DEALER-supplied secrets scoped to their own merchant
+// account — not a platform-wide credential, so they can't live in the
+// single shared .env the way CLAUDE.md's secrets-management note describes
+// (that's about this app's own credentials). They're stored in plaintext
+// here for now, consistent with the rest of this schema (no field-level
+// encryption exists anywhere yet) — flagged as a gap to close (encrypt at
+// rest / move to a secrets manager) before onboarding dealers beyond the
+// current solo/2-person-team phase, same spirit as CLAUDE.md's "Secrets
+// management approach" open item. The API layer (upi-capture-config
+// module) never echoes these back in a GET response — only whether each is
+// set.
+model UpiCaptureConfig {
+  id                     String               @id @default(cuid())
+  pump                   Pump                 @relation(fields: [pumpId], references: [id])
+  pumpId                 String               @unique
+  autoCaptureEnabled     Boolean              @default(false)
+  provider               UpiMerchantProvider?
+  // PhonePe: inbound webhook Authorization header = SHA256("username:password")
+  // — see verify-webhook-signature.util.ts.
+  phonePeWebhookUsername String?
+  phonePeWebhookPassword String?
+  // Paytm: inbound webhook checksum verified via the official `paytmchecksum`
+  // package against this merchant key — see verify-webhook-signature.util.ts.
+  paytmMerchantKey       String?
+  updatedAt              DateTime             @updatedAt
 }
 
 // ---------- Purchases / Lubricants / Rate Master ----------

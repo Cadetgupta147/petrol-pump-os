@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
+import { UpiCaptureConfigService } from '../upi-capture-config/upi-capture-config.service';
 import { CreateShiftSalesSummaryDto } from './dto/create-shift-sales-summary.dto';
 import { UpdateShiftSalesSummaryDto } from './dto/update-shift-sales-summary.dto';
 
@@ -28,9 +29,31 @@ export class ShiftSalesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rateMasterService: RateMasterService,
+    private readonly upiCaptureConfigService: UpiCaptureConfigService,
   ) {}
 
+  // Section 8A.3 fallback: a manually-entered walkInUpiCollected is only
+  // legal while this pump hasn't opted into webhook auto-capture (or has
+  // never configured it at all — getRaw() defaults autoCaptureEnabled to
+  // false). Once a dealer flips it on, the webhook is the sole writer —
+  // see incrementUpiForShift() — so a client-supplied value here is
+  // rejected rather than silently ignored, to surface the conflict instead
+  // of masking a DSM's attempt to correct a figure that's actually wrong.
+  private async assertManualUpiAllowed(walkInUpiCollected: number | undefined) {
+    if (walkInUpiCollected === undefined) {
+      return;
+    }
+    const config = await this.upiCaptureConfigService.getRaw();
+    if (config.autoCaptureEnabled) {
+      throw new BadRequestException(
+        'This pump has UPI auto-capture enabled — walkInUpiCollected is populated by the PhonePe/Paytm webhook and cannot be set manually. Disable auto-capture in UPI settings if you need to enter it by hand.',
+      );
+    }
+  }
+
   async create(dto: CreateShiftSalesSummaryDto) {
+    await this.assertManualUpiAllowed(dto.walkInUpiCollected);
+
     const existing = await this.prisma.shiftSalesSummary.findFirst({
       where: { shiftId: dto.shiftId },
     });
@@ -94,10 +117,13 @@ export class ShiftSalesService {
 
     const walkInCashCollected = dto.walkInCashCollected ?? 0;
     const walkInCardCollected = dto.walkInCardCollected ?? 0;
-    // walkInUpiCollected always starts at 0 on create — the webhook handler
-    // is the only thing that ever increments it (see upi-webhook/).
+    // walkInUpiCollected starts at 0 unless the caller manually supplied one
+    // (only legal while auto-capture is off — asserted above); when
+    // auto-capture is on, this stays 0 and the webhook handler is the only
+    // thing that ever increments it (see upi-webhook/).
+    const walkInUpiCollected = dto.walkInUpiCollected ?? 0;
     const variance =
-      expectedValue - (walkInCashCollected + 0 + walkInCardCollected);
+      expectedValue - (walkInCashCollected + walkInUpiCollected + walkInCardCollected);
 
     const created = await this.prisma.shiftSalesSummary.create({
       data: {
@@ -112,7 +138,7 @@ export class ShiftSalesService {
         walkInLitres,
         walkInCashCollected,
         walkInCardCollected,
-        walkInUpiCollected: 0,
+        walkInUpiCollected,
         expectedValue,
         variance,
       },
@@ -139,24 +165,27 @@ export class ShiftSalesService {
     return summary;
   }
 
-  // Update the manually-entered cash/card totals and recompute variance
-  // against the CURRENT (DB-stored) walkInUpiCollected — never a
-  // client-supplied one. See UpdateShiftSalesSummaryDto's comment for why
-  // the DTO has no walkInUpiCollected field at all.
+  // Update the manually-entered cash/card totals and recompute variance.
+  // walkInUpiCollected is only accepted (via assertManualUpiAllowed) while
+  // this pump's auto-capture is off — otherwise it stays whatever the
+  // webhook last set it to (existing.walkInUpiCollected), same as before.
   async update(id: string, dto: UpdateShiftSalesSummaryDto) {
+    await this.assertManualUpiAllowed(dto.walkInUpiCollected);
     const existing = await this.findOne(id);
 
     const walkInCashCollected =
       dto.walkInCashCollected ?? existing.walkInCashCollected;
     const walkInCardCollected =
       dto.walkInCardCollected ?? existing.walkInCardCollected;
+    const walkInUpiCollected =
+      dto.walkInUpiCollected ?? existing.walkInUpiCollected;
     const variance =
       existing.expectedValue -
-      (walkInCashCollected + existing.walkInUpiCollected + walkInCardCollected);
+      (walkInCashCollected + walkInUpiCollected + walkInCardCollected);
 
     return this.prisma.shiftSalesSummary.update({
       where: { id },
-      data: { walkInCashCollected, walkInCardCollected, variance },
+      data: { walkInCashCollected, walkInCardCollected, walkInUpiCollected, variance },
     });
   }
 

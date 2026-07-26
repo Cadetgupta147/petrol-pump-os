@@ -43,6 +43,7 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'CustomerOtp',
   'MemberIdCounter',
   'VehicleBlacklist',
+  'UpiCaptureConfig',
 ]);
 
 // Every one of these operations takes a `where` — including the singular

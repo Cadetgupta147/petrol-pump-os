@@ -135,6 +135,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'CustomerOtp',
       'MemberIdCounter',
       'VehicleBlacklist',
+      'UpiCaptureConfig',
     ];
     expect([...TENANT_SCOPED_MODELS].sort()).toEqual([...expected].sort());
   });

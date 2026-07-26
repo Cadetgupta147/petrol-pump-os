@@ -25,6 +25,7 @@ import {
   CircleDollarSign,
   ChevronDown,
   Ban,
+  Smartphone,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -89,6 +90,7 @@ const NAV_ENTRIES: NavEntry[] = [
     children: [
       { label: 'Cash custody', to: '/cash-custody', icon: Banknote },
       { label: 'Expenses', to: '/expenses', icon: ReceiptText },
+      { label: 'UPI capture', to: '/upi-capture-settings', icon: Smartphone },
     ],
   },
   { label: 'Staff', to: '/staff', icon: Users },

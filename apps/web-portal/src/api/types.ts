@@ -892,6 +892,34 @@ export interface ShiftSalesSummary {
   createdAt: string;
 }
 
+export type UpiMerchantProvider = 'PHONEPE' | 'PAYTM';
+
+// Mirrors apps/backend/src/upi-capture-config's SafeUpiCaptureConfig — never
+// carries raw secrets (see UpiCaptureConfigService.toSafeView()), only
+// whether each credential is currently set. GET never 404s (singleton
+// upsert-on-read, same pattern as CreditConfig).
+export interface UpiCaptureConfig {
+  id: string;
+  pumpId: string;
+  autoCaptureEnabled: boolean;
+  provider: UpiMerchantProvider | null;
+  phonePeWebhookUsernameSet: boolean;
+  phonePeWebhookPasswordSet: boolean;
+  paytmMerchantKeySet: boolean;
+  updatedAt: string;
+}
+
+// Mirrors apps/backend/src/upi-capture-config/dto/update-upi-capture-config.dto.ts.
+// Credential fields are write-only — a successful PATCH is reflected back
+// as the corresponding *Set boolean on the next GET, never as the raw value.
+export interface UpdateUpiCaptureConfigRequest {
+  autoCaptureEnabled?: boolean;
+  provider?: UpiMerchantProvider;
+  phonePeWebhookUsername?: string;
+  phonePeWebhookPassword?: string;
+  paytmMerchantKey?: string;
+}
+
 // ---------- Section 12 — Reports ----------
 
 // GET /credit-aging/report — CreditAgingService.getReport(). Already sorted

@@ -1,29 +1,36 @@
-import { createHmac } from 'crypto';
 import {
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { Prisma } from '@prisma/client';
+import { Prisma, UpiMerchantProvider } from '@prisma/client';
 import { UpiWebhookService } from './upi-webhook.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
 import { ShiftSalesService } from '../shift-sales/shift-sales.service';
+import { UpiCaptureConfigService } from '../upi-capture-config/upi-capture-config.service';
+import * as sigUtil from './verify-webhook-signature.util';
 
-const SECRET = 'test-secret';
 const PUMP_ID = 'pump-1';
 
-function sign(body: object): { rawBody: Buffer; signature: string } {
-  const rawBody = Buffer.from(JSON.stringify(body), 'utf8');
-  const signature = createHmac('sha256', SECRET).update(rawBody).digest('hex');
-  return { rawBody, signature };
-}
+const ENABLED_PHONEPE_CONFIG = {
+  pumpId: PUMP_ID,
+  autoCaptureEnabled: true,
+  provider: UpiMerchantProvider.PHONEPE,
+  phonePeWebhookUsername: 'dealer-user',
+  phonePeWebhookPassword: 'dealer-pass',
+  paytmMerchantKey: null,
+};
 
 // Section 8A.3 — the security-sensitive part of Feature B (CLAUDE.md:
 // webhook handlers must be idempotent and signature-verified — both are
-// tested here explicitly, plus the variance recompute math that a bad
-// signature/idempotency bug would otherwise silently corrupt).
+// tested here, plus the variance recompute math that a bad
+// signature/idempotency bug would otherwise silently corrupt). Real crypto
+// for verifyPhonePeSignature/verifyPaytmSignature is covered separately in
+// verify-webhook-signature.util.spec.ts — here those are mocked so this
+// suite can focus on pump/config resolution, dispatch, idempotency, and
+// shift matching without re-deriving real checksums for every case.
 describe('UpiWebhookService', () => {
   let service: UpiWebhookService;
 
@@ -33,8 +40,8 @@ describe('UpiWebhookService', () => {
     upiWebhookEvent: { create: jest.Mock; update: jest.Mock };
     meterReading: { findFirst: jest.Mock; findMany: jest.Mock };
   };
-  let config: { get: jest.Mock };
   let shiftSalesService: { incrementUpiForShift: jest.Mock };
+  let upiCaptureConfigService: { findByPumpId: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -45,125 +52,143 @@ describe('UpiWebhookService', () => {
       upiWebhookEvent: { create: jest.fn(), update: jest.fn() },
       meterReading: { findFirst: jest.fn(), findMany: jest.fn() },
     };
-    config = {
-      get: jest.fn((key: string) => {
-        if (key === 'UPI_WEBHOOK_SIGNING_SECRET') return SECRET;
-        if (key === 'UPI_MERCHANT_PROVIDER') return 'phonepe';
-        return undefined;
-      }),
-    };
     shiftSalesService = { incrementUpiForShift: jest.fn() };
+    upiCaptureConfigService = {
+      findByPumpId: jest.fn().mockResolvedValue(ENABLED_PHONEPE_CONFIG),
+    };
+
+    jest.spyOn(sigUtil, 'verifyPhonePeSignature').mockReturnValue(true);
+    jest.spyOn(sigUtil, 'verifyPaytmSignature').mockReturnValue(true);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UpiWebhookService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: config },
         { provide: ShiftSalesService, useValue: shiftSalesService },
+        { provide: UpiCaptureConfigService, useValue: upiCaptureConfigService },
       ],
     }).compile();
 
     service = module.get(UpiWebhookService);
   });
 
-  describe('signature verification', () => {
-    it('rejects with 401 when the signature header is missing, WITHOUT touching the DB', async () => {
-      const payload = { providerEventId: 'evt-1', amount: 500 };
-      const { rawBody } = sign(payload);
-
-      await expect(
-        service.handleWebhook(PUMP_ID, rawBody, undefined, payload),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-    });
-
-    it('rejects with 401 when the signature does not match the raw body', async () => {
-      const payload = { providerEventId: 'evt-1', amount: 500 };
-      const { rawBody } = sign(payload);
-
-      await expect(
-        service.handleWebhook(PUMP_ID, rawBody, 'not-the-real-signature', payload),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-    });
-
-    it('rejects with 401 when UPI_WEBHOOK_SIGNING_SECRET is not configured (fails closed)', async () => {
-      config.get.mockReturnValue(undefined);
-      const payload = { providerEventId: 'evt-1', amount: 500 };
-      const { rawBody, signature } = sign(payload);
-
-      await expect(
-        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
-    });
-
-    it('accepts a correctly signed payload', async () => {
-      const payload = { providerEventId: 'evt-1', amount: 500 };
-      const { rawBody, signature } = sign(payload);
-      prisma.$transaction.mockImplementation(async (cb) =>
-        cb({
-          upiWebhookEvent: {
-            create: jest.fn().mockResolvedValue({ id: 'event-1' }),
-            update: jest.fn(),
-          },
-          meterReading: { findMany: jest.fn().mockResolvedValue([]) },
-        }),
-      );
-
-      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
-      expect(result.status).toBe('processed');
-    });
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
-  describe('pump resolution (Phase 3, docs/multi-tenancy-plan.md)', () => {
+  describe('pump + capture-config resolution', () => {
     it('rejects with 404 when the :pumpId path param does not match a real Pump', async () => {
       prisma.pump.findUnique.mockResolvedValue(null);
-      const payload = { providerEventId: 'evt-1', amount: 500 };
-      const { rawBody, signature } = sign(payload);
 
       await expect(
-        service.handleWebhook('no-such-pump', rawBody, signature, payload),
+        service.handleWebhook('no-such-pump', undefined, 'sig', { providerEventId: 'e', amount: 500 }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('rejects with 404 when the pump exists but is inactive', async () => {
       prisma.pump.findUnique.mockResolvedValue({ id: PUMP_ID, active: false });
-      const payload = { providerEventId: 'evt-1', amount: 500 };
-      const { rawBody, signature } = sign(payload);
 
       await expect(
-        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, undefined, 'sig', { providerEventId: 'e', amount: 500 }),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects with 403 when this pump has no UpiCaptureConfig at all', async () => {
+      upiCaptureConfigService.findByPumpId.mockResolvedValue(null);
+
+      await expect(
+        service.handleWebhook(PUMP_ID, undefined, 'sig', { providerEventId: 'e', amount: 500 }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 403 when autoCaptureEnabled is false (dealer opted for manual entry)', async () => {
+      upiCaptureConfigService.findByPumpId.mockResolvedValue({
+        ...ENABLED_PHONEPE_CONFIG,
+        autoCaptureEnabled: false,
+      });
+
+      await expect(
+        service.handleWebhook(PUMP_ID, undefined, 'sig', { providerEventId: 'e', amount: 500 }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('provider dispatch', () => {
+    it('verifies against PhonePe using this pump\'s stored username/password', async () => {
+      prisma.$transaction.mockImplementation(async (cb) =>
+        cb({
+          upiWebhookEvent: { create: jest.fn().mockResolvedValue({ id: 'e1' }), update: jest.fn() },
+          meterReading: { findMany: jest.fn().mockResolvedValue([]) },
+        }),
+      );
+
+      await service.handleWebhook(PUMP_ID, undefined, 'auth-header', {
+        providerEventId: 'evt-1',
+        amount: 500,
+      });
+
+      expect(sigUtil.verifyPhonePeSignature).toHaveBeenCalledWith(
+        'auth-header',
+        'dealer-user',
+        'dealer-pass',
+      );
+      expect(sigUtil.verifyPaytmSignature).not.toHaveBeenCalled();
+    });
+
+    it('verifies against Paytm using this pump\'s stored merchant key', async () => {
+      upiCaptureConfigService.findByPumpId.mockResolvedValue({
+        pumpId: PUMP_ID,
+        autoCaptureEnabled: true,
+        provider: UpiMerchantProvider.PAYTM,
+        phonePeWebhookUsername: null,
+        phonePeWebhookPassword: null,
+        paytmMerchantKey: 'testmerchantkey1',
+      });
+      prisma.$transaction.mockImplementation(async (cb) =>
+        cb({
+          upiWebhookEvent: { create: jest.fn().mockResolvedValue({ id: 'e1' }), update: jest.fn() },
+          meterReading: { findMany: jest.fn().mockResolvedValue([]) },
+        }),
+      );
+      const payload = { providerEventId: 'evt-1', amount: 500, CHECKSUMHASH: 'abc' };
+
+      await service.handleWebhook(PUMP_ID, undefined, undefined, payload);
+
+      expect(sigUtil.verifyPaytmSignature).toHaveBeenCalledWith(payload, 'testmerchantkey1');
+      expect(sigUtil.verifyPhonePeSignature).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 401 when the dispatched verifier returns false, WITHOUT touching the DB', async () => {
+      jest.spyOn(sigUtil, 'verifyPhonePeSignature').mockReturnValue(false);
+
+      await expect(
+        service.handleWebhook(PUMP_ID, undefined, 'wrong', { providerEventId: 'e', amount: 500 }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 
   describe('payload validation (after signature passes)', () => {
     it('rejects a missing providerEventId', async () => {
-      const payload = { amount: 500 };
-      const { rawBody, signature } = sign(payload);
-
       await expect(
-        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, undefined, 'sig', { amount: 500 }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('rejects a missing/invalid amount', async () => {
-      const payload = { providerEventId: 'evt-1', amount: 'not-a-number' };
-      const { rawBody, signature } = sign(payload);
-
       await expect(
-        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, undefined, 'sig', {
+          providerEventId: 'evt-1',
+          amount: 'not-a-number',
+        }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
   describe('idempotency', () => {
     it('treats a duplicate providerEventId (P2002 on create) as a no-op success, not an error', async () => {
-      const payload = { providerEventId: 'evt-dup', amount: 500 };
-      const { rawBody, signature } = sign(payload);
-
       prisma.$transaction.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
           code: 'P2002',
@@ -171,7 +196,10 @@ describe('UpiWebhookService', () => {
         }),
       );
 
-      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
+      const result = await service.handleWebhook(PUMP_ID, undefined, 'sig', {
+        providerEventId: 'evt-dup',
+        amount: 500,
+      });
 
       expect(result).toEqual({ status: 'duplicate', providerEventId: 'evt-dup' });
       // Never reaches ShiftSalesService — the whole transaction (including
@@ -180,45 +208,32 @@ describe('UpiWebhookService', () => {
     });
 
     it('re-throws non-P2002 errors instead of swallowing them as duplicates', async () => {
-      const payload = { providerEventId: 'evt-1', amount: 500 };
-      const { rawBody, signature } = sign(payload);
       prisma.$transaction.mockRejectedValue(new Error('unexpected db error'));
 
       await expect(
-        service.handleWebhook(PUMP_ID, rawBody, signature, payload),
+        service.handleWebhook(PUMP_ID, undefined, 'sig', { providerEventId: 'evt-1', amount: 500 }),
       ).rejects.toThrow('unexpected db error');
     });
   });
 
   describe('shift matching + variance recompute delegation', () => {
     it('matches the payload nozzleId to the open shift and increments that shift\'s ShiftSalesSummary', async () => {
-      const payload = {
-        providerEventId: 'evt-2',
-        amount: 500,
-        nozzleId: 'n1',
-      };
-      const { rawBody, signature } = sign(payload);
-
+      const payload = { providerEventId: 'evt-2', amount: 500, nozzleId: 'n1' };
       const openShift = { id: 'shift-1', nozzleId: 'n1' };
       const txUpiWebhookEvent = {
         create: jest.fn().mockResolvedValue({ id: 'event-2' }),
         update: jest.fn().mockResolvedValue({}),
       };
-      const txMeterReading = {
-        findFirst: jest.fn().mockResolvedValue(openShift),
-      };
+      const txMeterReading = { findFirst: jest.fn().mockResolvedValue(openShift) };
       prisma.$transaction.mockImplementation(async (cb) =>
-        cb({
-          upiWebhookEvent: txUpiWebhookEvent,
-          meterReading: txMeterReading,
-        }),
+        cb({ upiWebhookEvent: txUpiWebhookEvent, meterReading: txMeterReading }),
       );
       shiftSalesService.incrementUpiForShift.mockResolvedValue({
         walkInUpiCollected: 1500,
         variance: 3500,
       });
 
-      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
+      const result = await service.handleWebhook(PUMP_ID, undefined, 'sig', payload);
 
       expect(txMeterReading.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ nozzleId: 'n1' }) }),
@@ -232,42 +247,27 @@ describe('UpiWebhookService', () => {
         'shift-1',
         500,
       );
-      expect(result).toEqual({
-        status: 'processed',
-        eventId: 'event-2',
-        matchedShiftId: 'shift-1',
-      });
+      expect(result).toEqual({ status: 'processed', eventId: 'event-2', matchedShiftId: 'shift-1' });
     });
 
     it('leaves the event unmatched when no nozzleId is given and more than one shift is open at that time', async () => {
       const payload = { providerEventId: 'evt-3', amount: 500 };
-      const { rawBody, signature } = sign(payload);
-
       const txUpiWebhookEvent = {
         create: jest.fn().mockResolvedValue({ id: 'event-3' }),
         update: jest.fn(),
       };
       const txMeterReading = {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([{ id: 'shift-1' }, { id: 'shift-2' }]), // ambiguous
+        findMany: jest.fn().mockResolvedValue([{ id: 'shift-1' }, { id: 'shift-2' }]), // ambiguous
       };
       prisma.$transaction.mockImplementation(async (cb) =>
-        cb({
-          upiWebhookEvent: txUpiWebhookEvent,
-          meterReading: txMeterReading,
-        }),
+        cb({ upiWebhookEvent: txUpiWebhookEvent, meterReading: txMeterReading }),
       );
 
-      const result = await service.handleWebhook(PUMP_ID, rawBody, signature, payload);
+      const result = await service.handleWebhook(PUMP_ID, undefined, 'sig', payload);
 
       expect(txUpiWebhookEvent.update).not.toHaveBeenCalled();
       expect(shiftSalesService.incrementUpiForShift).not.toHaveBeenCalled();
-      expect(result).toEqual({
-        status: 'processed',
-        eventId: 'event-3',
-        matchedShiftId: null,
-      });
+      expect(result).toEqual({ status: 'processed', eventId: 'event-3', matchedShiftId: null });
     });
   });
 });

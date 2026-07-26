@@ -5,9 +5,10 @@ import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
 // are the same row, see meter-readings). walkInLitres/expectedValue are
 // SERVER-COMPUTED (from the shift's meter reading + Rate Master), never
 // client-supplied — only the manually-entered cash/card totals come from the
-// caller. walkInUpiCollected is deliberately NOT part of this DTO: it starts
-// at 0 and is only ever incremented later by the UPI webhook handler (see
-// upi-webhook/) — see ShiftSalesService.create() for why.
+// caller. walkInUpiCollected is ONLY accepted from the client when this
+// pump's UpiCaptureConfig has autoCaptureEnabled=false — see
+// ShiftSalesService.create(), which rejects it otherwise (Section 8A.3: the
+// webhook is the sole writer once auto-capture is on).
 export class CreateShiftSalesSummaryDto {
   @IsString()
   shiftId!: string;
@@ -32,4 +33,9 @@ export class CreateShiftSalesSummaryDto {
   @IsNumber()
   @Min(0)
   walkInCardCollected?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  walkInUpiCollected?: number;
 }

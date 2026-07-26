@@ -25,6 +25,7 @@ import { DensityLogsModule } from './density-logs/density-logs.module';
 import { CashCustodyModule } from './cash-custody/cash-custody.module';
 import { ShiftSalesModule } from './shift-sales/shift-sales.module';
 import { UpiWebhookModule } from './upi-webhook/upi-webhook.module';
+import { UpiCaptureConfigModule } from './upi-capture-config/upi-capture-config.module';
 import { CreditAgingModule } from './credit-aging/credit-aging.module';
 import { SalesPurchaseRegisterModule } from './sales-purchase-register/sales-purchase-register.module';
 import { AttendanceModule } from './attendance/attendance.module';
@@ -91,6 +92,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     CashCustodyModule,
     ShiftSalesModule,
     UpiWebhookModule,
+    UpiCaptureConfigModule,
     CreditAgingModule,
     SalesPurchaseRegisterModule,
     AttendanceModule,

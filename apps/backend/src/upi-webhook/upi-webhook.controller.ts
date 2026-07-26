@@ -14,7 +14,8 @@ import { UpiWebhookService } from './upi-webhook.service';
 // Section 8A.3 — PhonePe/Paytm Business merchant webhook receiver.
 //
 // @Public(): PhonePe/Paytm will never send our staff JWT (they don't have
-// one) — this route's "auth" is the HMAC signature check inside the service,
+// one) — this route's "auth" is the per-pump signature check inside the
+// service (UpiCaptureConfigService.findByPumpId() + verify*Signature()),
 // not JwtAuthGuard. This is the intended, narrow use of @Public(); every
 // other route in the app still requires a JWT (see app.module.ts).
 //
@@ -27,12 +28,17 @@ import { UpiWebhookService } from './upi-webhook.service';
 // touching any tenant-scoped table.
 //
 // No DTO/@Body() here on purpose: the exact payload shape depends on
-// whichever provider (PhonePe vs Paytm Business) is eventually chosen (see
-// CLAUDE.md/Section 17 — still open), and the global ValidationPipe's
-// `forbidNonWhitelisted: true` would reject fields we haven't modeled yet.
-// req.body is read directly instead; req.rawBody (Buffer) is what the
-// signature is actually verified against — see main.ts's `rawBody: true`
-// and UpiWebhookService.handleWebhook().
+// whichever provider sent it (PhonePe vs Paytm Business have different
+// bodies — see upi-webhook.service.ts's RawUpiWebhookPayload comment), and
+// the global ValidationPipe's `forbidNonWhitelisted: true` would reject
+// fields we haven't modeled yet. req.body is read directly instead.
+//
+// The `authorization` header carries PhonePe's signature (Authorization:
+// SHA256(username:password) — see verify-webhook-signature.util.ts); Paytm
+// instead sends its checksum as a CHECKSUMHASH field inside the body, so it
+// doesn't need a header at all. Both are threaded through unconditionally;
+// UpiWebhookService picks whichever one it actually needs based on this
+// pump's configured provider.
 @Public()
 @Controller('upi-webhook')
 export class UpiWebhookController {
@@ -43,15 +49,12 @@ export class UpiWebhookController {
   handle(
     @Param('pumpId') pumpId: string,
     @Req() req: RawBodyRequest<Request>,
-    // Header name is a placeholder — see verify-webhook-signature.util.ts's
-    // top comment for why this will need adjusting once a provider is
-    // chosen.
-    @Headers('x-webhook-signature') signature?: string,
+    @Headers('authorization') authorizationHeader?: string,
   ) {
     return this.upiWebhookService.handleWebhook(
       pumpId,
       req.rawBody,
-      signature,
+      authorizationHeader,
       req.body,
     );
   }

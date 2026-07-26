@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ShiftSalesService } from './shift-sales.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
+import { UpiCaptureConfigService } from '../upi-capture-config/upi-capture-config.service';
 
 // Section 8A.2 — money-touching (CLAUDE.md: variance/expected-value math
 // needs tests). Covers create()'s walkInLitres/expectedValue/variance
@@ -27,6 +28,7 @@ describe('ShiftSalesService', () => {
     bill: { aggregate: jest.Mock };
   };
   let rateMasterService: { getCurrentRate: jest.Mock };
+  let upiCaptureConfigService: { getRaw: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -40,12 +42,19 @@ describe('ShiftSalesService', () => {
       bill: { aggregate: jest.fn() },
     };
     rateMasterService = { getCurrentRate: jest.fn() };
+    // Default: no UpiCaptureConfig row yet == auto-capture off (Section
+    // 8A.3 fallback) — matches UpiCaptureConfigService.getRaw()'s real
+    // upsert-on-read default, so most tests don't need to think about it.
+    upiCaptureConfigService = {
+      getRaw: jest.fn().mockResolvedValue({ autoCaptureEnabled: false }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ShiftSalesService,
         { provide: PrismaService, useValue: prisma },
         { provide: RateMasterService, useValue: rateMasterService },
+        { provide: UpiCaptureConfigService, useValue: upiCaptureConfigService },
       ],
     }).compile();
 
@@ -143,9 +152,65 @@ describe('ShiftSalesService', () => {
       expect(result.expectedValue).toBe(0);
       expect(result).toHaveProperty('warning', expect.stringContaining('negative'));
     });
+
+    it('accepts a manually-entered walkInUpiCollected when auto-capture is off', async () => {
+      prisma.shiftSalesSummary.findFirst.mockResolvedValue(null);
+      prisma.meterReading.findUnique.mockResolvedValue(closedShift);
+      prisma.bill.aggregate.mockResolvedValue({ _sum: { litres: 100 } });
+      rateMasterService.getCurrentRate.mockResolvedValue({ rate: 100 });
+      prisma.shiftSalesSummary.create.mockImplementation(({ data }) => data);
+
+      const result = await service.create({
+        shiftId: 'shift-1',
+        walkInCashCollected: 30000,
+        walkInCardCollected: 5000,
+        walkInUpiCollected: 5000,
+      });
+
+      // expectedValue = 40000; variance = 40000 - (30000 + 5000 + 5000) = 0
+      expect(result.walkInUpiCollected).toBe(5000);
+      expect(result.variance).toBe(0);
+    });
+
+    it('rejects a manually-entered walkInUpiCollected when auto-capture is on', async () => {
+      prisma.shiftSalesSummary.findFirst.mockResolvedValue(null);
+      upiCaptureConfigService.getRaw.mockResolvedValue({ autoCaptureEnabled: true });
+
+      await expect(
+        service.create({ shiftId: 'shift-1', walkInUpiCollected: 500 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      // Rejected before ever touching the shift/meter reading lookup.
+      expect(prisma.meterReading.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   describe('update', () => {
+    it('accepts a manually-corrected walkInUpiCollected when auto-capture is off', async () => {
+      prisma.shiftSalesSummary.findUnique.mockResolvedValue({
+        id: 'summary-1',
+        expectedValue: 40000,
+        walkInCashCollected: 30000,
+        walkInCardCollected: 5000,
+        walkInUpiCollected: 2000,
+      });
+      prisma.shiftSalesSummary.update.mockImplementation(({ data }) => data);
+
+      const result = await service.update('summary-1', { walkInUpiCollected: 5000 });
+
+      // variance = 40000 - (30000 + 5000 + 5000) = 0
+      expect(result.walkInUpiCollected).toBe(5000);
+      expect(result.variance).toBe(0);
+    });
+
+    it('rejects a manually-supplied walkInUpiCollected when auto-capture is on', async () => {
+      upiCaptureConfigService.getRaw.mockResolvedValue({ autoCaptureEnabled: true });
+
+      await expect(
+        service.update('summary-1', { walkInUpiCollected: 5000 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.shiftSalesSummary.findUnique).not.toHaveBeenCalled();
+    });
+
     it('recomputes variance against the DB-stored walkInUpiCollected, not a client-supplied one', async () => {
       prisma.shiftSalesSummary.findUnique.mockResolvedValue({
         id: 'summary-1',

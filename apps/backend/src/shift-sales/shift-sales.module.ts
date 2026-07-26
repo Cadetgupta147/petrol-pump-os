@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ShiftSalesController } from './shift-sales.controller';
 import { ShiftSalesService } from './shift-sales.service';
 import { RateMasterModule } from '../rate-master/rate-master.module';
+import { UpiCaptureConfigModule } from '../upi-capture-config/upi-capture-config.module';
 
 // Section 8A.2 — walk-in aggregate sales summary + variance. PrismaModule is
 // global (see prisma.module.ts), so no import needed. RateMasterModule is
@@ -10,8 +11,11 @@ import { RateMasterModule } from '../rate-master/rate-master.module';
 //     RateMasterService.getCurrentRate(), same pattern as BillsModule), and
 //   - UpiWebhookModule can import THIS module to call
 //     ShiftSalesService.incrementUpiForShift() directly (Section 8A.3).
+// UpiCaptureConfigModule is imported so ShiftSalesService can check
+// autoCaptureEnabled before allowing a manual walkInUpiCollected — see
+// assertManualUpiAllowed().
 @Module({
-  imports: [RateMasterModule],
+  imports: [RateMasterModule, UpiCaptureConfigModule],
   controllers: [ShiftSalesController],
   providers: [ShiftSalesService],
   exports: [ShiftSalesService],

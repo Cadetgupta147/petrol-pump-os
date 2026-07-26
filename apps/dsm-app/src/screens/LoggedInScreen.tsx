@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StaffSummary } from '../api/authApi';
 import { MeterReadingScreen } from './MeterReadingScreen';
 import { NewBillScreen } from './NewBillScreen';
+import { ShiftSalesSummaryScreen } from './ShiftSalesSummaryScreen';
 
 interface Props {
   staff: StaffSummary;
@@ -10,13 +11,13 @@ interface Props {
   onLogOut: () => void;
 }
 
-type MenuScreen = 'home' | 'meterReading' | 'newBill';
+type MenuScreen = 'home' | 'meterReading' | 'newBill' | 'shiftSalesSummary';
 
 // Home/menu screen after login. No navigation library — a manual local
-// state machine swaps between this menu and the two feature screens built
-// in this slice (Meter Reading, New Bill). Further screens (QR scan,
-// Bluetooth printing, shift-end cash handover, offline sync, own-shift
-// summary, biometric login) are separate, later slices per Section 4.
+// state machine swaps between this menu and the feature screens built so
+// far (Meter Reading, New Bill, Shift Sales Summary). Further screens (QR
+// scan, Bluetooth printing, offline sync, biometric login) are separate,
+// later slices per Section 4.
 export function LoggedInScreen({ staff, accessToken, onLogOut }: Props) {
   const [screen, setScreen] = useState<MenuScreen>('home');
 
@@ -28,6 +29,12 @@ export function LoggedInScreen({ staff, accessToken, onLogOut }: Props) {
 
   if (screen === 'newBill') {
     return <NewBillScreen staff={staff} accessToken={accessToken} onBack={() => setScreen('home')} />;
+  }
+
+  if (screen === 'shiftSalesSummary') {
+    return (
+      <ShiftSalesSummaryScreen staff={staff} accessToken={accessToken} onBack={() => setScreen('home')} />
+    );
   }
 
   return (
@@ -44,6 +51,14 @@ export function LoggedInScreen({ staff, accessToken, onLogOut }: Props) {
 
       <Pressable style={styles.menuButton} onPress={() => setScreen('newBill')} testID="menu-new-bill">
         <Text style={styles.menuButtonText}>New Bill</Text>
+      </Pressable>
+
+      <Pressable
+        style={styles.menuButton}
+        onPress={() => setScreen('shiftSalesSummary')}
+        testID="menu-shift-sales-summary"
+      >
+        <Text style={styles.menuButtonText}>Shift Sales Summary</Text>
       </Pressable>
 
       <Pressable style={styles.button} onPress={onLogOut} testID="logout-button">

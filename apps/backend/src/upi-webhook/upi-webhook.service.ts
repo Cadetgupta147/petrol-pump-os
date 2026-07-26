@@ -1,15 +1,19 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { Prisma, UpiMerchantProvider } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ShiftSalesService } from '../shift-sales/shift-sales.service';
+import { UpiCaptureConfigService } from '../upi-capture-config/upi-capture-config.service';
 import { runInTenantContext } from '../common/tenant-context';
-import { verifyWebhookSignature } from './verify-webhook-signature.util';
+import {
+  verifyPaytmSignature,
+  verifyPhonePeSignature,
+} from './verify-webhook-signature.util';
 
 // Section 8A.3 — PhonePe/Paytm Business merchant webhook handler. This is
 // the security-sensitive, money-touching part of Section 8A (CLAUDE.md:
@@ -17,51 +21,88 @@ import { verifyWebhookSignature } from './verify-webhook-signature.util';
 // both have to be right, since this endpoint is @Public() (no staff JWT) and
 // directly increments a money figure.
 //
-// PAYLOAD SHAPE NOTE (open decision — provider not yet chosen, see
-// CLAUDE.md/Section 17): the exact field names below (`providerEventId`,
-// `amount`, `receivedAt`, `nozzleId`, `provider`) are a reasonable
-// provider-agnostic guess, not a real PhonePe/Paytm schema. Whichever
-// provider is chosen will need this mapped to their actual webhook body
-// shape — this is the one place that needs to change, alongside
-// verify-webhook-signature.util.ts.
+// PAYLOAD SHAPE NOTE: the exact field names below (`providerEventId`,
+// `amount`, `receivedAt`, `nozzleId`) are a reasonable provider-agnostic
+// guess, not confirmed against a real PhonePe/Paytm payload sample — that
+// still needs doing once a dealer actually registers a live webhook (see
+// CLAUDE.md/master-plan Section 17). `provider` is deliberately NOT read
+// from the payload — see handleWebhook() below, the DB-stored
+// UpiCaptureConfig.provider for this pumpId is the only thing trusted for
+// that, so a forged/wrong `provider` field in the body can't redirect
+// verification to the wrong scheme.
 type RawUpiWebhookPayload = {
-  provider?: string;
   providerEventId?: string;
   amount?: number | string;
   receivedAt?: string;
   nozzleId?: string;
+  [key: string]: unknown;
 };
 
 @Injectable()
 export class UpiWebhookService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
+    private readonly upiCaptureConfigService: UpiCaptureConfigService,
     private readonly shiftSalesService: ShiftSalesService,
   ) {}
 
   async handleWebhook(
     pumpId: string,
     rawBody: Buffer | undefined,
-    signatureHeader: string | undefined,
+    authorizationHeader: string | undefined,
     payload: RawUpiWebhookPayload,
   ) {
-    // --- Signature verification FIRST, before touching the DB at all. ---
-    const secret = this.config.get<string>('UPI_WEBHOOK_SIGNING_SECRET');
-    if (!verifyWebhookSignature(rawBody, signatureHeader, secret)) {
-      throw new UnauthorizedException('Invalid or missing webhook signature');
-    }
-
-    // Multi-tenancy Phase 3: pumpId comes from the URL path (no JWT on this
-    // route — see the controller's comment). Pump is deliberately NOT a
+    // --- Resolve pump + its per-pump UPI capture config FIRST. Unlike the
+    // old single-global-secret design, signature verification now depends
+    // on WHICH pump this is (each dealer has their own PhonePe/Paytm
+    // credentials — Section 8A.3, different dealers use different
+    // providers), so we can't verify before knowing that. Both lookups are
+    // plain reads with no side effects — nothing is created/mutated until
+    // after verification passes below. (Trade-off: an invalid/misconfigured
+    // pumpId now gets a 404/403 before a signature is even checked, versus
+    // the old design's 401-first; this is the same shape every per-tenant
+    // webhook scheme, e.g. Stripe Connect, has to accept.)
+    //
+    // Multi-tenancy Phase 3 (docs/multi-tenancy-plan.md): this route has no
+    // JWT, so TenantContextInterceptor never runs for it — there is no
+    // req.user to derive a pumpId from. Pump is deliberately NOT a
     // tenant-scoped model (see tenant-scoping.extension.ts), so this lookup
     // is a plain, unscoped existence check — the one place it's safe/correct
     // for that to be unscoped, since it's what ESTABLISHES the tenant for
-    // everything that follows.
+    // everything that follows. UpiCaptureConfigService.findByPumpId() is
+    // similarly a plain unscoped read (no tenant context exists yet either).
     const pump = await this.prisma.pump.findUnique({ where: { id: pumpId } });
     if (!pump || !pump.active) {
       throw new NotFoundException('Unknown pump');
     }
+
+    const captureConfig = await this.upiCaptureConfigService.findByPumpId(pumpId);
+    if (!captureConfig || !captureConfig.autoCaptureEnabled || !captureConfig.provider) {
+      throw new ForbiddenException(
+        'UPI auto-capture is not enabled for this pump — see /upi-capture-config',
+      );
+    }
+
+    // --- Signature verification, dispatched by the DB-stored provider. ---
+    const verified =
+      captureConfig.provider === UpiMerchantProvider.PHONEPE
+        ? verifyPhonePeSignature(
+            authorizationHeader,
+            captureConfig.phonePeWebhookUsername ?? undefined,
+            captureConfig.phonePeWebhookPassword ?? undefined,
+          )
+        : verifyPaytmSignature(
+            payload as Record<string, unknown>,
+            captureConfig.paytmMerchantKey ?? undefined,
+          );
+    if (!verified) {
+      throw new UnauthorizedException('Invalid or missing webhook signature');
+    }
+    // rawBody isn't used by either verifier (PhonePe verifies a header,
+    // Paytm verifies fields inside the parsed body) but is still accepted
+    // as a parameter/kept flowing from the controller in case a future
+    // provider needs raw-bytes HMAC verification instead.
+    void rawBody;
 
     // --- Minimal payload shape validation (not a class-validator DTO on
     // purpose — see the controller's comment on why this route accepts an
@@ -76,10 +117,7 @@ export class UpiWebhookService {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('Missing or invalid amount in webhook payload');
     }
-    const provider =
-      payload?.provider ??
-      this.config.get<string>('UPI_MERCHANT_PROVIDER') ??
-      'unknown';
+    const provider = captureConfig.provider.toLowerCase();
     const receivedAt = payload?.receivedAt
       ? new Date(payload.receivedAt)
       : new Date();
