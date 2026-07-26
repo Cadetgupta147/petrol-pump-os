@@ -32,6 +32,7 @@ import { StaffModule } from './staff/staff.module';
 import { StaffManagementModule } from './staff-management/staff-management.module';
 import { BusinessProfileModule } from './business-profile/business-profile.module';
 import { ExpensesModule } from './expenses/expenses.module';
+import { GeneratorDieselModule } from './generator-diesel/generator-diesel.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -93,6 +94,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     StaffManagementModule,
     BusinessProfileModule,
     ExpensesModule,
+    GeneratorDieselModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

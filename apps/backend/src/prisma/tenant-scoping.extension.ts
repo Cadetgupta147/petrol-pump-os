@@ -29,6 +29,7 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'PurchaseEntry',
   'LubricantItem',
   'ExpenseEntry',
+  'GeneratorDieselLog',
   'RateHistory',
   'LoyaltyConfig',
   'LoyaltyTransaction',

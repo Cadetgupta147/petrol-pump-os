@@ -574,6 +574,24 @@ export interface CreateExpenseRequest {
   expenseDate?: string;
 }
 
+// Mirrors prisma GeneratorDieselLog — dashboard "Generator diesel used"
+// slice. tankId isn't echoed back as its own field on the raw API response
+// (it's a plain relation column) but is still sent on create.
+export interface GeneratorDieselLog {
+  id: string;
+  tankId: string;
+  quantityLitres: number;
+  notes: string | null;
+  recordedAt: string;
+}
+
+// Mirrors apps/backend/src/generator-diesel/dto/create-generator-diesel-log.dto.ts.
+export interface CreateGeneratorDieselLogRequest {
+  tankId: string;
+  quantityLitres: number;
+  notes?: string;
+}
+
 // Mirrors prisma RateHistory — Section 7.4. Append-only price history per
 // product; no update/delete request type exists on purpose (see
 // RateMasterService — a correction is a new dated row, not an edit).

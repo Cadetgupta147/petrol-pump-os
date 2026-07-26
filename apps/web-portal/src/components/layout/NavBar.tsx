@@ -15,6 +15,7 @@ import {
   BarChart3,
   Settings as SettingsIcon,
   ReceiptText,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -38,6 +39,7 @@ const NAV_ITEMS: { label: string; to: string; icon: LucideIcon }[] = [
   { label: 'Rate master', to: '/rate-master', icon: Tag },
   { label: 'Cash custody', to: '/cash-custody', icon: Banknote },
   { label: 'Expenses', to: '/expenses', icon: ReceiptText },
+  { label: 'Generator diesel', to: '/generator-diesel', icon: Zap },
   { label: 'Reports', to: '/reports', icon: BarChart3 },
   { label: 'Settings', to: '/settings', icon: SettingsIcon },
 ];

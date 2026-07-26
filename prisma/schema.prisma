@@ -108,6 +108,7 @@ model Pump {
   purchaseEntries        PurchaseEntry[]
   lubricantItems         LubricantItem[]
   expenseEntries         ExpenseEntry[]
+  generatorDieselLogs    GeneratorDieselLog[]
   rateHistories          RateHistory[]
   loyaltyConfigs         LoyaltyConfig[]
   loyaltyTransactions    LoyaltyTransaction[]
@@ -176,6 +177,7 @@ model Staff {
   dipReadings            DipReading[]
   densityLogs            DensityLog[]
   expenseEntries         ExpenseEntry[]
+  generatorDieselLogs    GeneratorDieselLog[]
 
   @@unique([accountId, pumpId])
 }
@@ -636,8 +638,9 @@ model Tank {
   // calculation here — informational/audit field only.
   calibrationChartRef String?
 
-  densityLogs DensityLog[]
-  dipReadings DipReading[]
+  densityLogs         DensityLog[]
+  dipReadings         DipReading[]
+  generatorDieselLogs GeneratorDieselLog[]
 }
 
 // Section 7.1/7.2 — physical DIP stick reading, compared against the
@@ -761,6 +764,30 @@ model LubricantItem {
   name      String
   stockQty  Int
   reorderAt Int
+}
+
+// Dashboard "Not wired to a backend endpoint yet" panel item #3 — "Generator
+// diesel used" (no model). Diesel drawn off for a generator is a real tank
+// outflow that isn't a nozzle sale — recording it here decrements
+// Tank.currentStockLitres directly (same mechanism as a purchase entry's
+// increment, GeneratorDieselService.create()), so it doesn't get misread as
+// pilferage/shortage by the Section 7.2 variance report. pumpId is derived
+// from the matched Tank (tank.pumpId), same reasoning as
+// DensityLogsService/PurchasesService — no floor-check on the decrement,
+// matching the existing nozzle-sale decrement in
+// MeterReadingsService.closeShift() (variance reporting is the intended
+// catch, not a hard block here either).
+model GeneratorDieselLog {
+  id             String   @id @default(cuid())
+  pump           Pump     @relation(fields: [pumpId], references: [id])
+  pumpId         String
+  tank           Tank     @relation(fields: [tankId], references: [id])
+  tankId         String
+  quantityLitres Float
+  recordedBy     Staff    @relation(fields: [recordedById], references: [id])
+  recordedById   String
+  recordedAt     DateTime @default(now())
+  notes          String?
 }
 
 // Dashboard "Not wired to a backend endpoint yet" panel item #4 — "Today's
