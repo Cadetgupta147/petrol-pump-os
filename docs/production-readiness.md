@@ -191,6 +191,27 @@ unset, per the existing .env.example placeholder. This is flagged in CLAUDE.md a
 — confirm which phase the project is actually in before treating this as optional.
 ```
 
+### A12. Confirm the "can't skip a day's meter reading" guarantee has no production bypass — MEDIUM (verify before go-live)
+**File:** `apps/backend/src/meter-readings/meter-readings.service.ts` (`openShift()` line ~85-95, `batchClose()` line ~292-324, correction path line ~709-712) + a DB-level unique constraint on the open-shift lock (`prisma/schema.prisma`, `MeterReading.open_lock_nozzle_id`).
+
+**Requirement (dealer-facing, raised during staging walkthrough 2026-07-25):** a DSM (or any role) must never be able to submit a *next* meter reading for a nozzle while that nozzle's previous shift was never closed — i.e., you can't get ahead of "yesterday's" reading. In production this must be a hard block, no exceptions. In a **testing/staging environment**, it's expected that a dealer/tester might deliberately backfill or skip entries while setting up demo data — that's fine for a non-production DB, but the mechanism used to do that must not be reachable in production.
+
+**Current state, as verified in code (not yet re-confirmed live against a real skip-a-day attempt):** `openShift()` throws (`ConflictException`, "already has an open shift ... close it before opening a new one") if a nozzle already has an open shift, and this is backed by a real DB uniqueness constraint, not just an app-level check — so two concurrent opens on the same nozzle can't both succeed, and the batch-close flow (§3.3 redesign) never exposes a "start fresh" option that skips the currently-open shift. On paper this already satisfies the requirement. What has **not** been explicitly re-verified since the §3.3 redesign landed:
+1. That the web portal's manual single-nozzle open/close fallback (§3.3: "the fallback if the DSM app fails, or for corrections") enforces the identical constraint, not a looser one.
+2. That the Owner/Accountant/Manager backdating path (§3.3.1 "Manual-entry backdating") can't be used to insert a reading that logically skips over an unclosed prior shift instead of legitimately back-filling a late-but-in-order one.
+3. That no seed/provisioning script (`prisma/seed.ts`, `prisma/provision-pump.cts`) or direct-DB tooling used for staging demo data has a code path that's also reachable from a real API endpoint in production.
+
+```
+Use the backend-agent to write an integration test (and fix if it fails) proving: (1) a nozzle with a
+currently-open shift rejects every code path that could create a second reading ahead of it — DSM app
+batch-close, web portal manual open/close, and the Owner backdating endpoint — all three, not just
+openShift(); (2) the backdating endpoint can shift an unclosed shift's start/end time but cannot be used
+to create a NEW reading for that nozzle while the old one is still open; (3) confirm no staging/seed-only
+code path (prisma/seed.ts, prisma/provision-pump.cts, or any test helper) is wired into a real HTTP route.
+This touches shift/billing-adjacent data (stock variance, §3.3's Variance Flag) — flag for human review
+before merge per CLAUDE.md even though it's a test-and-verify task, not a features change.
+```
+
 ---
 
 ## B. Web Portal (`apps/web-portal`)
