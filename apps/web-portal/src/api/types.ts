@@ -544,7 +544,8 @@ export interface VarianceReportRow {
 // Mirrors prisma PurchaseEntry — Section 7.1/7.2/7.4. densityValue/ppmValue
 // (Section 7.3) live on a separate DensityLog row linked by
 // purchaseEntryId, not on PurchaseEntry itself, so they're deliberately not
-// fields here.
+// fields here — see the DensityLog interface below and
+// api/densityLogs.ts's getDensityLogs({ purchaseEntryId }).
 export interface PurchaseEntry {
   id: string;
   supplierName: string;
@@ -559,9 +560,12 @@ export interface PurchaseEntry {
   createdAt: string;
 }
 
-// Mirrors apps/backend/src/purchases/dto/create-purchase-entry.dto.ts. The
-// densityValue/ppmValue/recordedById trio (Section 7.3) is omitted here —
-// see the judgment-call note at the top of PurchaseEntryPage.tsx.
+// Mirrors apps/backend/src/purchases/dto/create-purchase-entry.dto.ts.
+// densityValue/ppmValue (Section 7.3) are optional — recordedById is NOT a
+// DTO field here or on the backend; PurchasesController derives it from the
+// authenticated caller whenever densityValue is sent (see that DTO's
+// comment — this used to require a client-supplied recordedById, that
+// requirement was already dropped backend-side).
 export interface CreatePurchaseEntryRequest {
   supplierName: string;
   productType: string;
@@ -572,6 +576,25 @@ export interface CreatePurchaseEntryRequest {
   tankerNo?: string;
   invoiceImageUrl?: string;
   ocrExtracted?: boolean;
+  densityValue?: number;
+  ppmValue?: number;
+}
+
+// Mirrors prisma DensityLog — Section 7.3. Linked to the PurchaseEntry
+// (purchaseEntryId) or DipReading (dipReadingId) that prompted it; both are
+// nullable since a DensityLog can also stand alone. `flagged` is computed
+// server-side (DensityLogsService.computeDensityFlag()) against a hardcoded
+// per-product acceptable range — no range values are duplicated here.
+export interface DensityLog {
+  id: string;
+  tankId: string;
+  densityValue: number;
+  ppmValue: number | null;
+  recordedById: string;
+  purchaseEntryId: string | null;
+  dipReadingId: string | null;
+  flagged: boolean;
+  recordedAt: string;
 }
 
 // Mirrors apps/backend/src/ocr/invoice-text-parser.util.ts's

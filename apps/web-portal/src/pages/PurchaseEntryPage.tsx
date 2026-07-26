@@ -3,9 +3,10 @@ import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { getPurchaseEntries, createPurchaseEntry, ocrExtractInvoice } from '../api/purchases';
 import { getItems } from '../api/items';
+import { getDensityLogs } from '../api/densityLogs';
 import { ApiError } from '../api/client';
 import { formatLitres, formatRupees, formatRatePerLitre, formatDateTime } from '../utils/format';
-import type { CreatePurchaseEntryRequest, Item, PurchaseEntry } from '../api/types';
+import type { CreatePurchaseEntryRequest, DensityLog, Item, PurchaseEntry } from '../api/types';
 
 // Section 7.1/7.2 (manual purchase entry -> tank stock increment) + Section
 // 9 (OCR pre-fill). Owner/Accountant only server-side
@@ -15,13 +16,16 @@ import type { CreatePurchaseEntryRequest, Item, PurchaseEntry } from '../api/typ
 // backend's 403 in the error-box below on load, same as every other page.
 //
 // Judgment calls (flagged per the task instructions, not hidden):
-//  - No density/PPM fields on this form. Section 7.3's DensityLog is a
-//    separate row linked via purchaseEntryId, and CreatePurchaseEntryDto's
-//    densityValue/ppmValue/recordedById trio requires recordedById whenever
-//    densityValue is present (PurchasesService.create()'s cross-field
-//    check) — wiring that in cleanly wants a recordedById selector (a
-//    logged-in staff picker) this task didn't ask for. Left out; the
-//    backend already accepts a simpler purchase entry without them.
+//  - Density/PPM are optional fields on this form (Section 7.3). Both are
+//    blank by default — a delivery doesn't always come with an on-the-spot
+//    quality check — and omitted from the request entirely when left blank,
+//    never sent as 0. recordedById is never collected from the user: the
+//    backend derives it from the authenticated caller whenever densityValue
+//    is present (see CreatePurchaseEntryDto's comment). The resulting
+//    DensityLog (including the server-computed `flagged` out-of-range
+//    check) is shown in the "Density" column of the table below, fetched
+//    separately via GET /density-logs and matched by purchaseEntryId — it
+//    isn't a field on PurchaseEntry itself.
 //  - invoiceImageUrl is never sent from this form. There's no file-storage
 //    backend wired up yet (OcrService's controller comment: the uploaded
 //    image lives only for the duration of the OCR request, memoryStorage
@@ -52,7 +56,17 @@ export function PurchaseEntryPage() {
   const [ratePerLitre, setRatePerLitre] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('');
   const [tankerNo, setTankerNo] = useState('');
+  const [densityValue, setDensityValue] = useState('');
+  const [ppmValue, setPpmValue] = useState('');
   const [ocrExtracted, setOcrExtracted] = useState(false);
+
+  // Section 7.3 — keyed by purchaseEntryId so the table below can show
+  // whatever density/quality reading (if any) rode along with each
+  // delivery. Not a field on PurchaseEntry itself — see the file-level
+  // comment above.
+  const [densityLogsByPurchaseEntryId, setDensityLogsByPurchaseEntryId] = useState<
+    Record<string, DensityLog>
+  >({});
 
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -81,6 +95,17 @@ export function PurchaseEntryPage() {
         if (!cancelled) setItems(result);
       })
       .catch(() => undefined);
+    getDensityLogs()
+      .then((result) => {
+        if (!cancelled) {
+          setDensityLogsByPurchaseEntryId(
+            Object.fromEntries(
+              result.filter((log) => log.purchaseEntryId !== null).map((log) => [log.purchaseEntryId as string, log]),
+            ),
+          );
+        }
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -94,6 +119,8 @@ export function PurchaseEntryPage() {
     setRatePerLitre('');
     setInvoiceNo('');
     setTankerNo('');
+    setDensityValue('');
+    setPpmValue('');
     setOcrExtracted(false);
     setOcrRawText(null);
     setOcrInvoiceDate(null);
@@ -154,10 +181,29 @@ export function PurchaseEntryPage() {
         ratePerLitre: Number(ratePerLitre.trim()),
         invoiceNo: invoiceNo.trim() === '' ? undefined : invoiceNo.trim(),
         tankerNo: tankerNo.trim() === '' ? undefined : tankerNo.trim(),
+        // Omitted entirely when blank, never sent as 0 — see the file-level
+        // comment above.
+        densityValue: densityValue.trim() === '' ? undefined : Number(densityValue.trim()),
+        ppmValue: ppmValue.trim() === '' ? undefined : Number(ppmValue.trim()),
         ocrExtracted,
       };
       const created = await createPurchaseEntry(dto);
       setEntries((prev) => (prev ? [created, ...prev] : [created]));
+      // The linked DensityLog (if any) isn't part of the PurchaseEntry
+      // response — PurchasesService.create() writes it in the same
+      // transaction, but as its own row (see api/types.ts's DensityLog
+      // comment) — so pick it up with a refetch rather than guessing its id
+      // client-side.
+      if (dto.densityValue !== undefined) {
+        getDensityLogs({ purchaseEntryId: created.id })
+          .then((logs) => {
+            const log = logs[0];
+            if (log) {
+              setDensityLogsByPurchaseEntryId((prev) => ({ ...prev, [created.id]: log }));
+            }
+          })
+          .catch(() => undefined);
+      }
       resetForm();
       setSavedAt(new Date().toLocaleTimeString());
     } catch (err) {
@@ -309,6 +355,30 @@ export function PurchaseEntryPage() {
                   placeholder="Optional"
                 />
               </div>
+              <div className="form-field">
+                <label htmlFor="pe-density">Density (g/mL) — Section 7.3</label>
+                <input
+                  id="pe-density"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={densityValue}
+                  onChange={(e) => setDensityValue(e.target.value)}
+                  placeholder="Optional — from an on-the-spot quality check"
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="pe-ppm">PPM (water/contaminant)</label>
+                <input
+                  id="pe-ppm"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={ppmValue}
+                  onChange={(e) => setPpmValue(e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
             </div>
 
             {saveError && <div className="form-error">{saveError}</div>}
@@ -347,12 +417,15 @@ export function PurchaseEntryPage() {
                     <th className="num">Amount</th>
                     <th>Invoice no.</th>
                     <th>Tanker no.</th>
+                    <th>Density (Section 7.3)</th>
                     <th>Source</th>
                     <th>Recorded at</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((entry) => (
+                  {entries.map((entry) => {
+                    const densityLog = densityLogsByPurchaseEntryId[entry.id];
+                    return (
                     <tr key={entry.id}>
                       <td>{entry.supplierName}</td>
                       <td>{entry.productType}</td>
@@ -361,6 +434,23 @@ export function PurchaseEntryPage() {
                       <td className="num">{formatRupees(entry.amount)}</td>
                       <td>{entry.invoiceNo ?? '—'}</td>
                       <td>{entry.tankerNo ?? '—'}</td>
+                      <td>
+                        {densityLog ? (
+                          <span
+                            className="badge"
+                            style={
+                              densityLog.flagged
+                                ? { background: 'var(--red-bg)', color: 'var(--red)' }
+                                : { background: 'var(--green-bg)', color: 'var(--green)' }
+                            }
+                          >
+                            {densityLog.densityValue.toFixed(3)} g/mL
+                            {densityLog.flagged ? ' — out of range' : ''}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
                       <td>
                         {entry.ocrExtracted ? (
                           <span
@@ -380,7 +470,8 @@ export function PurchaseEntryPage() {
                       </td>
                       <td>{formatDateTime(entry.createdAt)}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

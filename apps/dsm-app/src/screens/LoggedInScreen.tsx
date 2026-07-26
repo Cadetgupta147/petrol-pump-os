@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StaffSummary } from '../api/authApi';
+import { AttendanceScreen } from './AttendanceScreen';
 import { MeterReadingScreen } from './MeterReadingScreen';
 import { NewBillScreen } from './NewBillScreen';
 import { ShiftSalesSummaryScreen } from './ShiftSalesSummaryScreen';
@@ -11,13 +12,13 @@ interface Props {
   onLogOut: () => void;
 }
 
-type MenuScreen = 'home' | 'meterReading' | 'newBill' | 'shiftSalesSummary';
+type MenuScreen = 'home' | 'meterReading' | 'newBill' | 'shiftSalesSummary' | 'attendance';
 
 // Home/menu screen after login. No navigation library — a manual local
 // state machine swaps between this menu and the feature screens built so
-// far (Meter Reading, New Bill, Shift Sales Summary). Further screens (QR
-// scan, Bluetooth printing, offline sync, biometric login) are separate,
-// later slices per Section 4.
+// far (Meter Reading, New Bill, Shift Sales Summary, Attendance). Further
+// screens (QR scan, Bluetooth printing, offline sync, biometric login) are
+// separate, later slices per Section 4.
 export function LoggedInScreen({ staff, accessToken, onLogOut }: Props) {
   const [screen, setScreen] = useState<MenuScreen>('home');
 
@@ -35,6 +36,10 @@ export function LoggedInScreen({ staff, accessToken, onLogOut }: Props) {
     return (
       <ShiftSalesSummaryScreen staff={staff} accessToken={accessToken} onBack={() => setScreen('home')} />
     );
+  }
+
+  if (screen === 'attendance') {
+    return <AttendanceScreen staff={staff} accessToken={accessToken} onBack={() => setScreen('home')} />;
   }
 
   return (
@@ -59,6 +64,10 @@ export function LoggedInScreen({ staff, accessToken, onLogOut }: Props) {
         testID="menu-shift-sales-summary"
       >
         <Text style={styles.menuButtonText}>Shift Sales Summary</Text>
+      </Pressable>
+
+      <Pressable style={styles.menuButton} onPress={() => setScreen('attendance')} testID="menu-attendance">
+        <Text style={styles.menuButtonText}>Attendance</Text>
       </Pressable>
 
       <Pressable style={styles.button} onPress={onLogOut} testID="logout-button">

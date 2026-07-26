@@ -125,6 +125,37 @@ describe('AttendanceService', () => {
     });
   });
 
+  describe('getMyStatus', () => {
+    it('returns the open log for the caller when one exists', async () => {
+      prisma.attendanceLog.findFirst.mockResolvedValue({ id: 'log-1', staffId: 'dsm-1' });
+
+      const status = await service.getMyStatus(dsmCaller);
+
+      expect(prisma.attendanceLog.findFirst).toHaveBeenCalledWith({
+        where: { staffId: 'dsm-1', clockOut: null },
+      });
+      expect(status).toEqual({ openLog: { id: 'log-1', staffId: 'dsm-1' } });
+    });
+
+    it('returns a null openLog when the caller has no open session', async () => {
+      prisma.attendanceLog.findFirst.mockResolvedValue(null);
+
+      const status = await service.getMyStatus(dsmCaller);
+
+      expect(status).toEqual({ openLog: null });
+    });
+
+    it('never accepts a staffId param — always scoped to the caller', async () => {
+      prisma.attendanceLog.findFirst.mockResolvedValue(null);
+
+      await service.getMyStatus(managerCaller);
+
+      expect(prisma.attendanceLog.findFirst).toHaveBeenCalledWith({
+        where: { staffId: 'manager-1', clockOut: null },
+      });
+    });
+  });
+
   describe('getSummary', () => {
     it('sums hours worked per staff member across multiple closed sessions', async () => {
       prisma.attendanceLog.findMany.mockResolvedValue([

@@ -91,6 +91,20 @@ export class AttendanceService {
     });
   }
 
+  // Self-service status check for the DSM app: findAll()/GET /attendance is
+  // Owner/Accountant/Manager only (see attendance.controller.ts), so a DSM
+  // caller has no other way to learn whether they're currently clocked in,
+  // or to get the AttendanceLog id clockOut() needs. Always scoped to the
+  // caller themselves — never accepts a staffId param — since this is a
+  // "check my own status" read, not an assignable-on-behalf-of action like
+  // clockIn()/resolveAssignableActorId().
+  async getMyStatus(user: AuthenticatedUser) {
+    const openLog = await this.prisma.attendanceLog.findFirst({
+      where: { staffId: user.staffId, clockOut: null },
+    });
+    return { openLog };
+  }
+
   // Section 12 — the hours-worked half of "Staff attendance & salary
   // summary". A session is attributed to the day it STARTED (clockIn falls
   // in [start, end]) — same "attribute to the start" convention as other

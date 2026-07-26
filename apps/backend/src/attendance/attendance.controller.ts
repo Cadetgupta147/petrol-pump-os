@@ -35,6 +35,17 @@ export class AttendanceController {
     return this.attendanceService.clockOut(id);
   }
 
+  // 'me' is a distinct static path segment under the collection root, ahead
+  // of any future ':id' GET route — same reasoning as 'summary' below. Lets
+  // the DSM app show "clocked in since HH:MM" / "not clocked in" and get the
+  // log id clock-out needs, without opening up GET /attendance (which stays
+  // Owner/Accountant/Manager only) to DSM callers.
+  @Roles(Role.OWNER, Role.ACCOUNTANT, Role.MANAGER, Role.DSM)
+  @Get('me')
+  getMyStatus(@CurrentUser() user: AuthenticatedUser) {
+    return this.attendanceService.getMyStatus(user);
+  }
+
   @Get()
   findAll() {
     return this.attendanceService.findAll();
