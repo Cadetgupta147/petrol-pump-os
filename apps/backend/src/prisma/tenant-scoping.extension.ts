@@ -28,6 +28,7 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'UpiWebhookEvent',
   'PurchaseEntry',
   'LubricantItem',
+  'ExpenseEntry',
   'RateHistory',
   'LoyaltyConfig',
   'LoyaltyTransaction',

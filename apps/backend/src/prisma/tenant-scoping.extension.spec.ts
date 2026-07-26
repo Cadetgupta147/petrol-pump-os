@@ -120,6 +120,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'UpiWebhookEvent',
       'PurchaseEntry',
       'LubricantItem',
+      'ExpenseEntry',
       'RateHistory',
       'LoyaltyConfig',
       'LoyaltyTransaction',

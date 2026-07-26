@@ -107,6 +107,7 @@ model Pump {
   upiWebhookEvents       UpiWebhookEvent[]
   purchaseEntries        PurchaseEntry[]
   lubricantItems         LubricantItem[]
+  expenseEntries         ExpenseEntry[]
   rateHistories          RateHistory[]
   loyaltyConfigs         LoyaltyConfig[]
   loyaltyTransactions    LoyaltyTransaction[]
@@ -174,6 +175,7 @@ model Staff {
   cashCustodyLogs        CashCustodyLog[]
   dipReadings            DipReading[]
   densityLogs            DensityLog[]
+  expenseEntries         ExpenseEntry[]
 
   @@unique([accountId, pumpId])
 }
@@ -759,6 +761,27 @@ model LubricantItem {
   name      String
   stockQty  Int
   reorderAt Int
+}
+
+// Dashboard "Not wired to a backend endpoint yet" panel item #4 — "Today's
+// expenses" (no model, not in docs/master-plan.md). Kept deliberately simple:
+// category is a free-typed string, same convention as Bill/Tank/PurchaseEntry
+// productType (no typed enum exists for this either), and there's no stock
+// or tank side-effect. pumpId has no natural parent row to inherit from (no
+// Tank/Item this belongs to), so it's stamped from requireTenantContext(),
+// same as ItemsService.create().
+model ExpenseEntry {
+  id           String      @id @default(cuid())
+  pump         Pump        @relation(fields: [pumpId], references: [id])
+  pumpId       String
+  category     String
+  description  String?
+  amount       Float
+  paidVia      PaymentType
+  recordedBy   Staff       @relation(fields: [recordedById], references: [id])
+  recordedById String
+  expenseDate  DateTime    @default(now())
+  createdAt    DateTime    @default(now())
 }
 
 // Section 7.4 — Rate Master. Append-only history: corrections are new dated

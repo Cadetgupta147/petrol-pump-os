@@ -14,6 +14,7 @@ import {
   Banknote,
   BarChart3,
   Settings as SettingsIcon,
+  ReceiptText,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -36,6 +37,7 @@ const NAV_ITEMS: { label: string; to: string; icon: LucideIcon }[] = [
   { label: 'Variance report', to: '/variance-report', icon: Scale },
   { label: 'Rate master', to: '/rate-master', icon: Tag },
   { label: 'Cash custody', to: '/cash-custody', icon: Banknote },
+  { label: 'Expenses', to: '/expenses', icon: ReceiptText },
   { label: 'Reports', to: '/reports', icon: BarChart3 },
   { label: 'Settings', to: '/settings', icon: SettingsIcon },
 ];

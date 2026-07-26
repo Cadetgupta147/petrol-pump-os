@@ -20,6 +20,7 @@ import { RateMasterPage } from './pages/RateMasterPage';
 import { CashCustodyPage } from './pages/CashCustodyPage';
 import { CashCustodyStatusPage } from './pages/CashCustodyStatusPage';
 import { ReportsPage } from './pages/ReportsPage';
+import { ExpensesPage } from './pages/ExpensesPage';
 
 // Root path just forwards to whichever of /dashboard or /login is correct
 // for the current auth state, rather than being its own page.
@@ -158,6 +159,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <CashCustodyStatusPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/expenses"
+        element={
+          <RequireAuth>
+            <ExpensesPage />
           </RequireAuth>
         }
       />

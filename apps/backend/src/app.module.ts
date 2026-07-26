@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { resolve } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
+import { AppController } from './app.controller';
 import { HealthController } from './health/health.controller';
 import { CustomersModule } from './customers/customers.module';
 import { BillsModule } from './bills/bills.module';
@@ -30,6 +31,7 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { StaffModule } from './staff/staff.module';
 import { StaffManagementModule } from './staff-management/staff-management.module';
 import { BusinessProfileModule } from './business-profile/business-profile.module';
+import { ExpensesModule } from './expenses/expenses.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -90,8 +92,9 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     StaffModule,
     StaffManagementModule,
     BusinessProfileModule,
+    ExpensesModule,
   ],
-  controllers: [HealthController],
+  controllers: [AppController, HealthController],
   providers: [
     // Section 2 — every endpoint requires a valid JWT by default (JwtAuthGuard),
     // then a role check (RolesGuard) for any route carrying @Roles(...).

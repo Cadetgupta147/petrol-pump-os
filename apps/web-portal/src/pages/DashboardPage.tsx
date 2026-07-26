@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Banknote, Fuel, Gift, Truck, Users, Wallet } from 'lucide-react';
+import { Banknote, Fuel, Gift, Truck, Users, Wallet, ReceiptText } from 'lucide-react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { DateRangeTabs, type DateRangeTab } from '../components/dashboard/DateRangeTabs';
@@ -18,9 +18,10 @@ import { getAllBills } from '../api/bills';
 import { getLoyaltyCostReport } from '../api/loyalty';
 import { getPurchaseEntries } from '../api/purchases';
 import { getAttendanceLog } from '../api/attendance';
+import { getExpenses } from '../api/expenses';
 import { downloadTallyExport } from '../api/tallyExport';
 import { ApiError } from '../api/client';
-import { formatRupees, formatLitres, formatRatePerLitre, localIsoDate } from '../utils/format';
+import { formatRupees, formatLitres, formatRatePerLitre, localIsoDate, isToday } from '../utils/format';
 import type {
   SalesSummary,
   TankStock,
@@ -32,6 +33,7 @@ import type {
   LoyaltyCostReport,
   PurchaseEntry,
   AttendanceLogRow,
+  ExpenseEntry,
 } from '../api/types';
 
 interface DashboardData {
@@ -150,6 +152,7 @@ export function DashboardPage() {
   const [loyaltyCostReport, setLoyaltyCostReport] = useState<LoyaltyCostReport | null>(null);
   const [purchaseEntries, setPurchaseEntries] = useState<PurchaseEntry[] | null>(null);
   const [attendanceLog, setAttendanceLog] = useState<AttendanceLogRow[] | null>(null);
+  const [expenseEntries, setExpenseEntries] = useState<ExpenseEntry[] | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [varianceByReadingId, setVarianceByReadingId] = useState<Map<string, MeterVariance>>(new Map());
@@ -197,6 +200,11 @@ export function DashboardPage() {
     getAttendanceLog()
       .then((result) => {
         if (!cancelled) setAttendanceLog(result);
+      })
+      .catch(() => undefined);
+    getExpenses()
+      .then((result) => {
+        if (!cancelled) setExpenseEntries(result);
       })
       .catch(() => undefined);
     return () => {
@@ -257,6 +265,17 @@ export function DashboardPage() {
     if (!attendanceLog) return [];
     return attendanceLog.filter((row) => row.clockOut === null);
   }, [attendanceLog]);
+
+  // "Today" here, not the selected range tab — an owner glancing at this
+  // widget wants "what did I spend today", regardless of which date-range
+  // tab the rest of the dashboard happens to be on (mirrors staffOnDuty's
+  // deliberately-not-range-scoped reasoning above).
+  const todaysExpensesTotal = useMemo(() => {
+    if (!expenseEntries) return 0;
+    return expenseEntries
+      .filter((e) => isToday(e.expenseDate))
+      .reduce((sum, e) => sum + e.amount, 0);
+  }, [expenseEntries]);
 
   // Variance can only be checked once a shift is closed (closingReading +
   // shiftEnd set) — see meter-readings.service.ts. Fetched in a second pass
@@ -576,6 +595,23 @@ export function DashboardPage() {
 
         <div className="section">
           <div className="section-title">
+            <h3>Inventory &amp; operations</h3>
+            <span className="section-note">figures below are always &ldquo;today&rdquo;, not the selected range tab</span>
+          </div>
+          <div className="grid grid-3">
+            <KpiCard
+              label="Today's expenses"
+              value={formatRupees(todaysExpensesTotal)}
+              sub="view / add expenses"
+              onSubClick={() => navigate('/expenses')}
+              dotColor={DOT.amber}
+              icon={ReceiptText}
+            />
+          </div>
+        </div>
+
+        <div className="section">
+          <div className="section-title">
             <h3>Not wired to a backend endpoint yet</h3>
           </div>
           <ComingSoon
@@ -584,7 +620,6 @@ export function DashboardPage() {
               'Lubricant sale — LubricantItem exists in the schema (stock only, no sale-price/SKU fields), but zero service or controller exists anywhere for it',
               'Urea/DEF sale — no dedicated model; "Urea/AdBlue" only appears as an example Item Master product name, not a planned feature',
               'Generator diesel used — no model, not documented anywhere in docs/master-plan.md',
-              "Today's expenses — no model, not documented anywhere in docs/master-plan.md",
               'Machine testing/calibration — no model; Tank.calibrationChartRef is just a single reference-link string, not a testing-log entity',
             ]}
           />

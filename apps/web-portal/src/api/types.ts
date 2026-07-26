@@ -554,6 +554,26 @@ export interface OcrExtractionResult {
   rawText: string;
 }
 
+// Mirrors prisma ExpenseEntry — dashboard "Today's expenses" slice.
+export interface ExpenseEntry {
+  id: string;
+  category: string;
+  description: string | null;
+  amount: number;
+  paidVia: PaymentType;
+  expenseDate: string;
+  createdAt: string;
+}
+
+// Mirrors apps/backend/src/expenses/dto/create-expense.dto.ts.
+export interface CreateExpenseRequest {
+  category: string;
+  description?: string;
+  amount: number;
+  paidVia: PaymentType;
+  expenseDate?: string;
+}
+
 // Mirrors prisma RateHistory — Section 7.4. Append-only price history per
 // product; no update/delete request type exists on purpose (see
 // RateMasterService — a correction is a new dated row, not an edit).
