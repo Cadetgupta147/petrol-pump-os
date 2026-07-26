@@ -152,6 +152,8 @@ Every feature below includes **what it does, why it exists, and how it works** �
 
 **Researched but deliberately deferred (not built in this slice):** several competitor products (and the reference screenshot this feature was speced from) additionally track **Testing** (fuel drawn off for equipment calibration, not a sale), **Transfer** (fuel moved between nozzles/tanks for reconciliation), and **Lube** (lubricant dispensed alongside a fuel sale) as separate adjustment columns per shift, with litres sold computed as `(closing − opening) − testing − transfer` rather than the plain `closing − opening` this build uses. This is a real, common pattern worth adopting later, but is a separate vertical slice (new MeterReading fields + variance-formula change) — flagged here rather than silently folded into this one.
 
+**Update:** Section 7.5 has since added a standalone `MachineTestingLog` (testing/calibration audit trail + tank-stock effect) and `GeneratorDieselLog`, independent of `MeterReading`. Those close the "no log entity exists" gap only — the formula change described above (folding Testing/Transfer/Lube into the per-shift litres-sold calculation) remains deferred and undecided.
+
 **Database entity:** `Nozzle { id, pump_id, label, item_id, starting_reading, rollover_at, is_active }`. `MeterReading.nozzle_id` is a real foreign key to this table (previously free text — see Section 13). `MeterReading` also carries `open_lock_nozzle_id` (the DB-level single-open-shift guarantee), `meter_rolled_over`, and `corrected_by_id`/`corrected_at` (the correction endpoint's minimal audit trail).
 
 #### 3.3.2 Item Master (Settings) — new
@@ -461,6 +463,14 @@ This variance report is arguably the single most valuable report in the whole sy
 
 **How it works:** every bill stores the rate that was active at the time of sale (captured from Rate Master at the moment of billing, not looked up retroactively). This makes historical reports always accurate even after today's rate changes again tomorrow. The dealer or accountant updates Rate Master whenever the OMC notifies a new price — takes seconds, and every downstream report (profit, GST) reads from it automatically.
 
+### 7.5 Lubricant/Urea sales, generator diesel, and machine testing *(new — closes the dashboard's former "genuinely unbuilt" gaps)*
+
+Four small, standalone additions, each Owner/Accountant/Manager on the web portal (no DSM-app wiring yet — that's a follow-up once the mobile side picks this up, per Section 16.4's phase order):
+
+- **Lubricant sale / Urea-DEF sale — one shared feature (`ItemSale`):** any non-fuel Item Master entry (category `LUBRICANT` or `OTHER`) can be sold — quantity × unit price, server-computed amount, single payment type (no split-payment; that's a Bill-specific pattern, Section 5A). Selling a `LUBRICANT` item decrements its linked stock row (409 if insufficient); `OTHER` items (e.g. Urea/AdBlue) have no stock model and just record the sale. `FUEL` items are rejected — those sales stay on the existing meter reading/billing flow.
+- **`LubricantItem` finished:** now carries `sku`, `costPrice`, `salePrice` per Section 7.1's original field list (it previously had stock-only fields), and is linked to its Item Master row by `itemId` instead of a duplicate `name`.
+- **Generator diesel used (`GeneratorDieselLog`):** logs diesel drawn from a tank for the generator and decrements that tank's stock in the same transaction, so it isn't misread as pilferage by the Section 7.2 variance report.
+- **Machine testing/calibration (`MachineTestingLog`):** a standalone test/calibration log per tank (result, optional deviation found, optional calibration chart reference, optional litres drawn off — which decrements tank stock only when non-zero). **Deliberately does not touch `MeterReading`** — Section 3.3.1's "Testing"/"Transfer"/"Lube" adjustment-column formula change stays deferred; this only closes the "no log entity exists" gap, not that formula integration.
 
 ---
 
@@ -622,7 +632,7 @@ Build the **Tally XML export** in Phase 2 (right after the core web app MVP), no
 
 High-level entity list — expand each into full tables with your ORM's migration tool once you start building.
 
-`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | Items | Nozzles | ShiftDefinitions | MeterReadings | Tanks | PurchaseEntries | LubricantItems | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents`
+`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | Items | Nozzles | ShiftDefinitions | MeterReadings | Tanks | PurchaseEntries | LubricantItems | ItemSales | GeneratorDieselLogs | MachineTestingLogs | ExpenseEntries | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents`
 
 **Item** row should store: `pump_id, name, category (fuel/lubricant/other), unit (litre/kg/piece), is_active` — Section 3.3.2.
 
