@@ -567,7 +567,7 @@ export function DashboardPage() {
 
         <div className="section">
           <div className="section-title">
-            <h3>Nozzle readings</h3>
+            <h3>Meter readings</h3>
             <span className="section-note">{rangeLabel} shifts, meter vs billed</span>
           </div>
           {varianceCheckError && <div className="banner">{varianceCheckError}</div>}
