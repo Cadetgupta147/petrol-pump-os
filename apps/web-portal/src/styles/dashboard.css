@@ -81,9 +81,10 @@
   height: 36px;
   display: flex;
   align-items: center;
-  gap: 26px;
+  gap: 22px;
   padding: 0 24px;
-  overflow-x: auto;
+  position: relative;
+  z-index: 20;
 }
 
 .navlink {
@@ -96,6 +97,10 @@
   white-space: nowrap;
   padding-bottom: 10px;
   border-bottom: 2.5px solid transparent;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
 }
 
 .navlink-icon {
@@ -111,6 +116,78 @@
 
 .navlink.active .navlink-icon {
   opacity: 1;
+}
+
+/* Grouped nav (Sales / Customers / Inventory & ops / Finance) — a flat list
+   of every module overflowed a single row (18 items) requiring horizontal
+   scroll, so related modules collapse behind a click-to-open dropdown
+   instead. */
+.nav-group {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.nav-group-trigger {
+  height: 100%;
+  padding-top: 10px;
+}
+
+.nav-group-chevron {
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.nav-group-chevron.open {
+  transform: rotate(180deg);
+}
+
+.nav-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 1px;
+  min-width: 200px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(15, 27, 51, 0.18);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dark);
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.nav-dropdown-item:hover {
+  background: var(--page-bg);
+}
+
+.nav-dropdown-item .navlink-icon {
+  color: var(--gray);
+  opacity: 1;
+}
+
+.nav-dropdown-item.active {
+  background: var(--amber-bg);
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.nav-dropdown-item.active .navlink-icon {
+  color: var(--amber);
 }
 
 .content {
