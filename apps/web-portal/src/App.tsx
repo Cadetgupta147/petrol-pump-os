@@ -13,6 +13,7 @@ import { StaffPage } from './pages/StaffPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { LoyaltySettingsPage } from './pages/LoyaltySettingsPage';
 import { CreditSettingsPage } from './pages/CreditSettingsPage';
+import { VehicleBlacklistPage } from './pages/VehicleBlacklistPage';
 import { TanksPage } from './pages/TanksPage';
 import { PurchaseEntryPage } from './pages/PurchaseEntryPage';
 import { VarianceReportPage } from './pages/VarianceReportPage';
@@ -74,6 +75,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <CreditSettingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/vehicle-blacklist"
+        element={
+          <RequireAuth>
+            <VehicleBlacklistPage />
           </RequireAuth>
         }
       />

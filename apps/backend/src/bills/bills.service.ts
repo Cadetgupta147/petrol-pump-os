@@ -22,6 +22,7 @@ import {
 import { allocateQrMemberId } from '../customers/member-id';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { parseDateRangeStrings } from '../common/date-range.util';
+import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { ListBillsQueryDto } from './dto/list-bills-query.dto';
@@ -61,6 +62,7 @@ export class BillsService {
     private readonly creditConfigService: CreditConfigService,
     private readonly loyaltyService: LoyaltyService,
     private readonly rateMasterService: RateMasterService,
+    private readonly vehicleBlacklistService: VehicleBlacklistService,
   ) {}
 
   // Finding A1 (docs/production-readiness.md) — enteredById is no longer a
@@ -124,6 +126,27 @@ export class BillsService {
       throw new BadRequestException(
         'CREDIT payment lines require either an existing customerId or quickAddCustomer',
       );
+    }
+
+    // Section 3.4B — a harder, unconditional block than the credit-limit
+    // enforcement below: this isn't "would this bill exceed a limit", it's
+    // "this vehicle/company/customer has an unresolved prior default and
+    // gets no MORE credit until an Owner resolves the entry" (PATCH
+    // /vehicle-blacklist/:id/resolve). Only runs for CREDIT bills — a
+    // blacklisted vehicle paying cash/UPI/card is exactly the outcome this
+    // feature exists to allow, so non-credit bills are untouched. Checks
+    // every vehicle-number candidate this bill carries (the DSM-typed one
+    // and the customer's on-file one, if they differ).
+    if (hasCreditLines) {
+      await this.vehicleBlacklistService.assertNotBlacklisted({
+        vehicleNumbers: [
+          dto.vehicleNumber,
+          customer?.vehicleNumber,
+          dto.quickAddCustomer?.vehicleNumber,
+        ],
+        companyName: customer?.companyName,
+        customerId: customer?.id,
+      });
     }
 
     // Section 3.4A — dealer-configurable enforcement mode (NOTIFY default /

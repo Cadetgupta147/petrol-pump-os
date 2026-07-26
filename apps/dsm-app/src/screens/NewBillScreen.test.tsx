@@ -19,6 +19,14 @@ jest.mock('../api/loyaltyApi', () => ({
   calculatePointsPreview: jest.fn(() => Promise.resolve(null)),
 }));
 
+// The blacklist pre-check (runBlacklistCheck in NewBillScreen) fires on
+// every credit-customer selection now — default it to "not blocked" so the
+// existing tests below, which aren't about this feature, don't have to know
+// it exists. checkVehicleBlacklist has its own dedicated tests elsewhere.
+jest.mock('../api/vehicleBlacklistApi', () => ({
+  checkVehicleBlacklist: jest.fn(() => Promise.resolve({ blocked: false, entry: null })),
+}));
+
 // Every test here drives ScanCustomerModal through its manual member-ID
 // fallback input, never the camera — stub the camera bits out so the
 // permission hook's real async native-module round trip (which otherwise
@@ -39,12 +47,16 @@ jest.mock('../api/billsApi', () => {
 
 import { getCustomerByMemberId, listCustomers } from '../api/customersApi';
 import { createBill } from '../api/billsApi';
+import { checkVehicleBlacklist } from '../api/vehicleBlacklistApi';
 
 const mockGetCustomerByMemberId = getCustomerByMemberId as jest.MockedFunction<
   typeof getCustomerByMemberId
 >;
 const mockListCustomers = listCustomers as jest.MockedFunction<typeof listCustomers>;
 const mockCreateBill = createBill as jest.MockedFunction<typeof createBill>;
+const mockCheckVehicleBlacklist = checkVehicleBlacklist as jest.MockedFunction<
+  typeof checkVehicleBlacklist
+>;
 
 const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', phone: '9999999999', role: 'DSM' };
 
@@ -209,6 +221,99 @@ describe('NewBillScreen — credit-attribution conflict on scan', () => {
 
     await waitFor(() => expect(getByTestId('scanned-customer-chip')).toBeTruthy());
     expect(queryByTestId('scan-conflict-error')).toBeNull();
+  });
+});
+
+// -----------------------------------------------------------------------
+// (a2) Section 3.4B — vehicle blacklist pre-check on credit-customer
+// selection. The authoritative block is server-side (BillsService.create()),
+// so these tests only cover the UI's own behavior: a blocked pre-check must
+// surface an error and never attach the customer, while a non-blocked one
+// (or a failed network call) proceeds exactly as before.
+// -----------------------------------------------------------------------
+describe('NewBillScreen — vehicle blacklist pre-check (Section 3.4B)', () => {
+  it('blocks selecting an existing credit customer whose vehicle is blacklisted, and never attaches them', async () => {
+    mockListCustomers.mockResolvedValue([CUSTOMER_A]);
+    mockCheckVehicleBlacklist.mockResolvedValueOnce({
+      blocked: true,
+      entry: {
+        id: 'bl-1',
+        scope: 'VEHICLE',
+        vehicleNumber: 'DL01AA1111',
+        companyName: null,
+        reason: 'unpaid credit tab',
+        outstandingAmount: 4500,
+        status: 'ACTIVE',
+      },
+    });
+
+    const { getByTestId, queryByTestId } = render(
+      <NewBillScreen staff={staff} accessToken="token" onBack={jest.fn()} />,
+    );
+
+    fillBaseBillFields(getByTestId);
+    fireEvent.press(getByTestId('add-payment-button'));
+    fireEvent.press(getByTestId('payment-method-CREDIT'));
+    fireEvent.changeText(getByTestId('payment-amount-input'), '500');
+    fireEvent.press(getByTestId('confirm-add-payment-button'));
+
+    await waitFor(() => expect(getByTestId('credit-customer-cust-a')).toBeTruthy());
+    fireEvent.press(getByTestId('credit-customer-cust-a'));
+
+    await waitFor(() => expect(getByTestId('blacklist-error')).toBeTruthy());
+    expect(getByTestId('blacklist-error')).toHaveTextContent(/DL01AA1111 is blacklisted/);
+    expect(getByTestId('blacklist-error')).toHaveTextContent(/4500\.00 outstanding/);
+    // Never attached: no credit-customer-label, and the Add Payment sheet is
+    // still open (handleAdd() never reached onAddLines()) so the DSM can
+    // adjust instead of a CREDIT line silently landing on a blocked vehicle.
+    expect(queryByTestId('credit-customer-label')).toBeNull();
+    expect(getByTestId('payment-amount-input')).toBeTruthy();
+  });
+
+  it('proceeds normally when the pre-check is not blocked', async () => {
+    mockListCustomers.mockResolvedValue([CUSTOMER_A]);
+    mockCheckVehicleBlacklist.mockResolvedValueOnce({ blocked: false, entry: null });
+
+    const { getByTestId } = render(
+      <NewBillScreen staff={staff} accessToken="token" onBack={jest.fn()} />,
+    );
+
+    fillBaseBillFields(getByTestId);
+    fireEvent.press(getByTestId('add-payment-button'));
+    fireEvent.press(getByTestId('payment-method-CREDIT'));
+    fireEvent.changeText(getByTestId('payment-amount-input'), '500');
+    fireEvent.press(getByTestId('confirm-add-payment-button'));
+
+    await waitFor(() => expect(getByTestId('credit-customer-cust-a')).toBeTruthy());
+    fireEvent.press(getByTestId('credit-customer-cust-a'));
+
+    await waitFor(() => expect(getByTestId('credit-customer-label')).toBeTruthy());
+    expect(getByTestId('credit-customer-label')).toHaveTextContent(/Customer A/);
+    expect(mockCheckVehicleBlacklist).toHaveBeenCalledWith(
+      { vehicleNumber: 'DL01AA1111', customerId: 'cust-a' },
+      'token',
+    );
+  });
+
+  it('a failed pre-check (network error) does not block the selection — Save still enforces this server-side', async () => {
+    mockListCustomers.mockResolvedValue([CUSTOMER_A]);
+    mockCheckVehicleBlacklist.mockRejectedValueOnce(new Error('network down'));
+
+    const { getByTestId, queryByTestId } = render(
+      <NewBillScreen staff={staff} accessToken="token" onBack={jest.fn()} />,
+    );
+
+    fillBaseBillFields(getByTestId);
+    fireEvent.press(getByTestId('add-payment-button'));
+    fireEvent.press(getByTestId('payment-method-CREDIT'));
+    fireEvent.changeText(getByTestId('payment-amount-input'), '500');
+    fireEvent.press(getByTestId('confirm-add-payment-button'));
+
+    await waitFor(() => expect(getByTestId('credit-customer-cust-a')).toBeTruthy());
+    fireEvent.press(getByTestId('credit-customer-cust-a'));
+
+    await waitFor(() => expect(getByTestId('credit-customer-label')).toBeTruthy());
+    expect(queryByTestId('blacklist-error')).toBeNull();
   });
 });
 

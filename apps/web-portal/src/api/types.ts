@@ -370,6 +370,9 @@ export interface Customer {
   name: string;
   phone: string | null;
   vehicleNumber: string | null;
+  // Fleet/company this vehicle bills under, if any — Section 3.4B, used
+  // only for company-scope blacklist matching + reporting.
+  companyName: string | null;
   qrMemberId: string;
   // Section 6.2 — per-customer earning rate override. null = "uses the
   // dealer default"; 0 is a real override meaning "earns nothing".
@@ -386,6 +389,7 @@ export interface CreateCustomerRequest {
   name: string;
   phone: string;
   vehicleNumber?: string;
+  companyName?: string;
   creditLimit?: number;
 }
 
@@ -397,8 +401,48 @@ export interface UpdateCustomerRequest {
   name?: string;
   phone?: string;
   vehicleNumber?: string;
+  companyName?: string;
   creditLimit?: number;
   verificationStatus?: 'INFORMAL' | 'VERIFIED';
+}
+
+// ---------- Vehicle/Company Blacklist (Section 3.4B) ----------
+
+export type BlacklistScope = 'VEHICLE' | 'COMPANY';
+export type BlacklistStatus = 'ACTIVE' | 'RESOLVED';
+
+// Mirrors prisma VehicleBlacklist.
+export interface VehicleBlacklistEntry {
+  id: string;
+  scope: BlacklistScope;
+  vehicleNumber: string | null;
+  companyName: string | null;
+  customerId: string | null;
+  reason: string;
+  outstandingAmount: number;
+  status: BlacklistStatus;
+  referencePhotoUrl: string | null;
+  blacklistedById: string;
+  blacklistedAt: string;
+  resolvedById: string | null;
+  resolvedAt: string | null;
+  resolutionNote: string | null;
+}
+
+// Mirrors apps/backend/src/vehicle-blacklist/dto/create-vehicle-blacklist.dto.ts.
+export interface CreateVehicleBlacklistRequest {
+  scope: BlacklistScope;
+  vehicleNumber?: string;
+  companyName?: string;
+  customerId?: string;
+  reason: string;
+  outstandingAmount?: number;
+  referencePhotoUrl?: string;
+}
+
+// Mirrors apps/backend/src/vehicle-blacklist/dto/resolve-vehicle-blacklist.dto.ts.
+export interface ResolveVehicleBlacklistRequest {
+  resolutionNote?: string;
 }
 
 export type EarningBasis = 'RUPEE' | 'LITRE';

@@ -68,6 +68,21 @@ enum CreditEnforcementMode {
   BLOCK
 }
 
+// Section 3.4B — a blacklist entry targets either one vehicle number or an
+// entire company/fleet (Customer.companyName), never both at once.
+enum BlacklistScope {
+  VEHICLE
+  COMPANY
+}
+
+// Section 3.4B — ACTIVE blocks new CREDIT bills outright; RESOLVED (dues
+// cleared / dispute settled) stops blocking. A reoffense after resolution is
+// a new entry, not a reopened one.
+enum BlacklistStatus {
+  ACTIVE
+  RESOLVED
+}
+
 // ---------- Multi-tenancy (docs/multi-tenancy-plan.md) ----------
 
 // The tenant root — one row per petrol pump business using this system.
@@ -121,6 +136,7 @@ model Pump {
   tallyExportLogs        TallyExportLog[]
   customerOtps           CustomerOtp[]
   memberIdCounters       MemberIdCounter[]
+  vehicleBlacklists      VehicleBlacklist[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -168,20 +184,22 @@ model Staff {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  billsEntered           Bill[]           @relation("BillEnteredBy")
-  billsLastEdited        Bill[]           @relation("BillLastEditedBy")
-  billsDeleted           Bill[]           @relation("BillDeletedBy")
-  billAuditLogs          BillAuditLog[]
-  meterReadings          MeterReading[]   @relation("MeterReadingStaff")
-  meterReadingsCorrected MeterReading[]   @relation("MeterReadingCorrectedBy")
-  attendanceLogs         AttendanceLog[]
-  cashCustodyLogs        CashCustodyLog[]
-  dipReadings            DipReading[]
-  densityLogs            DensityLog[]
-  expenseEntries         ExpenseEntry[]
-  generatorDieselLogs    GeneratorDieselLog[]
-  machineTestingLogs     MachineTestingLog[]
-  itemSales              ItemSale[]
+  billsEntered              Bill[]               @relation("BillEnteredBy")
+  billsLastEdited           Bill[]               @relation("BillLastEditedBy")
+  billsDeleted              Bill[]               @relation("BillDeletedBy")
+  billAuditLogs             BillAuditLog[]
+  meterReadings             MeterReading[]       @relation("MeterReadingStaff")
+  meterReadingsCorrected    MeterReading[]       @relation("MeterReadingCorrectedBy")
+  attendanceLogs            AttendanceLog[]
+  cashCustodyLogs           CashCustodyLog[]
+  dipReadings               DipReading[]
+  densityLogs               DensityLog[]
+  expenseEntries            ExpenseEntry[]
+  generatorDieselLogs       GeneratorDieselLog[]
+  machineTestingLogs        MachineTestingLog[]
+  itemSales                 ItemSale[]
+  vehicleBlacklistsCreated  VehicleBlacklist[]   @relation("VehicleBlacklistedBy")
+  vehicleBlacklistsResolved VehicleBlacklist[]   @relation("VehicleBlacklistResolvedBy")
 
   @@unique([accountId, pumpId])
 }
@@ -239,6 +257,11 @@ model Customer {
   // reason as before the split.
   phone               String?
   vehicleNumber       String?
+  // Fleet/company this vehicle bills under, if any — set by the dealer, not
+  // self-declared by the customer. Purely a grouping label for company-level
+  // blacklisting (Section 3.4B, VehicleBlacklist.scope = COMPANY) and
+  // reporting; carries no enforcement meaning on its own.
+  companyName         String?
   // Section 6.1/6.7 — human-friendly member id, e.g. "PUMP001-CUST-04521-6":
   // pump code + literal CUST + zero-padded sequence + Luhn check digit over
   // the sequence (for manual fallback entry when the card won't scan). This
@@ -261,6 +284,7 @@ model Customer {
   payments               Payment[]
   creditAlerts           CreditLimitAlert[]
   otpRequests            CustomerOtp[]
+  vehicleBlacklists      VehicleBlacklist[]
 
   @@unique([accountId, pumpId])
 }
@@ -454,6 +478,65 @@ model CreditLimitAlert {
   reminderRequested   Boolean?
   reminderRequestedAt DateTime?
   createdAt           DateTime  @default(now())
+}
+
+// ---------- Vehicle Blacklist (Section 3.4B) ----------
+
+// Dealer-initiated block on a defaulting vehicle or fleet company — separate
+// from CreditLimitAlert (which flags a single over-limit bill) and from
+// CreditConfig.enforcementMode (which governs ordinary credit-limit
+// behavior). A blacklist entry blocks a new CREDIT bill outright at creation
+// time regardless of payment type headroom, because the point isn't "this
+// bill would exceed a limit" — it's "this vehicle/company has unresolved
+// dues and gets no more credit until a human clears it."
+//
+// Scope deliberately stays PER-PUMP (pumpId, not shared across tenants) —
+// see docs/multi-tenancy-plan.md. Sharing blacklist data across
+// independently-owned pumps would mean two unrelated businesses exchanging a
+// third party's payment-default history, which is what a licensed Credit
+// Information Company does under RBI's CIC (Regulation) Act, 2005 — out of
+// scope here without that license and a real legal/consent framework.
+//
+// referencePhotoUrl is for a staff member to manually eyeball ("does this
+// driver match the photo on file") — there is deliberately no face-matching
+// / biometric-recognition field or job here. Automated facial recognition
+// against a blacklist is a biometric-surveillance feature with real
+// misidentification risk, not something bolted on as a schema afterthought.
+model VehicleBlacklist {
+  id                String          @id @default(cuid())
+  pump              Pump            @relation(fields: [pumpId], references: [id])
+  pumpId            String
+  scope             BlacklistScope
+  // Required when scope = VEHICLE, null when scope = COMPANY — enforced in
+  // VehicleBlacklistService, not at the DB level (Prisma has no cross-field
+  // conditional-required constraint).
+  vehicleNumber     String?
+  // Required when scope = COMPANY, null when scope = VEHICLE.
+  companyName       String?
+  customer          Customer?       @relation(fields: [customerId], references: [id])
+  customerId        String?
+  reason            String
+  // Snapshot of what was owed at blacklist time, for the human record — the
+  // authoritative live balance is still derived from Bill/Payment rows the
+  // same way CustomersService.ledger() does it, never read from here.
+  outstandingAmount Float           @default(0)
+  status            BlacklistStatus @default(ACTIVE)
+  // Manual-review reference photo only — see model comment. Never used for
+  // automated matching.
+  referencePhotoUrl String?
+
+  blacklistedBy   Staff    @relation("VehicleBlacklistedBy", fields: [blacklistedById], references: [id])
+  blacklistedById String
+  blacklistedAt   DateTime @default(now())
+
+  resolvedBy     Staff?    @relation("VehicleBlacklistResolvedBy", fields: [resolvedById], references: [id])
+  resolvedById   String?
+  resolvedAt     DateTime?
+  resolutionNote String?
+
+  @@index([pumpId, vehicleNumber])
+  @@index([pumpId, companyName])
+  @@index([pumpId, status])
 }
 
 // ---------- Item Master ----------
@@ -773,16 +856,16 @@ model PurchaseEntry {
 // extension), matching Section 7.1's fuller field list
 // (item_name/SKU/quantity/reorder_level/cost_price/sale_price).
 model LubricantItem {
-  id         String @id @default(cuid())
-  pump       Pump   @relation(fields: [pumpId], references: [id])
-  pumpId     String
-  item       Item   @relation(fields: [itemId], references: [id])
-  itemId     String @unique
-  sku        String?
-  costPrice  Float?
-  salePrice  Float
-  stockQty   Int
-  reorderAt  Int
+  id        String  @id @default(cuid())
+  pump      Pump    @relation(fields: [pumpId], references: [id])
+  pumpId    String
+  item      Item    @relation(fields: [itemId], references: [id])
+  itemId    String  @unique
+  sku       String?
+  costPrice Float?
+  salePrice Float
+  stockQty  Int
+  reorderAt Int
 }
 
 // Dashboard "Not wired to a backend endpoint yet" panel items #1/#2 —

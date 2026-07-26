@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreditConfigService } from '../credit-config/credit-config.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
+import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { runInTenantContext } from '../common/tenant-context';
 
@@ -153,6 +154,10 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: CreditConfigService, useValue: creditConfigService },
         { provide: RateMasterService, useValue: rateMasterService },
+        {
+          provide: VehicleBlacklistService,
+          useValue: { assertNotBlacklisted: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 

@@ -70,6 +70,7 @@ export class CustomersService {
             name: dto.name,
             phone: normalizedPhone,
             vehicleNumber: dto.vehicleNumber,
+            companyName: dto.companyName,
             creditLimit: dto.creditLimit ?? 0,
             qrMemberId,
           },
@@ -123,6 +124,9 @@ export class CustomersService {
             ...(normalizedPhone !== undefined && { phone: normalizedPhone, accountId }),
             ...(dto.vehicleNumber !== undefined && {
               vehicleNumber: dto.vehicleNumber,
+            }),
+            ...(dto.companyName !== undefined && {
+              companyName: dto.companyName,
             }),
             ...(dto.creditLimit !== undefined && {
               creditLimit: dto.creditLimit,

@@ -23,6 +23,13 @@ export class CreateCustomerDto {
   @IsString()
   vehicleNumber?: string;
 
+  // Fleet/company this vehicle bills under, if any — dealer-set only, used
+  // for Section 3.4B's company-scope blacklisting and reporting. Carries no
+  // enforcement meaning by itself.
+  @IsOptional()
+  @IsString()
+  companyName?: string;
+
   @IsOptional()
   @IsNumber()
   @Min(0)

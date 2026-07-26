@@ -36,6 +36,7 @@ import { GeneratorDieselModule } from './generator-diesel/generator-diesel.modul
 import { MachineTestingModule } from './machine-testing/machine-testing.module';
 import { LubricantItemsModule } from './lubricant-items/lubricant-items.module';
 import { ItemSalesModule } from './item-sales/item-sales.module';
+import { VehicleBlacklistModule } from './vehicle-blacklist/vehicle-blacklist.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -101,6 +102,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     MachineTestingModule,
     LubricantItemsModule,
     ItemSalesModule,
+    VehicleBlacklistModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

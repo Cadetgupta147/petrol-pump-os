@@ -42,6 +42,7 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'TallyExportLog',
   'CustomerOtp',
   'MemberIdCounter',
+  'VehicleBlacklist',
 ]);
 
 // Every one of these operations takes a `where` — including the singular

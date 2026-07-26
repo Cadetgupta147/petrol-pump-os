@@ -134,6 +134,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'TallyExportLog',
       'CustomerOtp',
       'MemberIdCounter',
+      'VehicleBlacklist',
     ];
     expect([...TENANT_SCOPED_MODELS].sort()).toEqual([...expected].sort());
   });

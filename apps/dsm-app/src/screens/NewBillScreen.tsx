@@ -20,6 +20,7 @@ import {
 } from '../api/billsApi';
 import type { CustomerLookup, CustomerSummary } from '../api/customersApi';
 import { calculatePointsPreview, type PointsPreview } from '../api/loyaltyApi';
+import { checkVehicleBlacklist } from '../api/vehicleBlacklistApi';
 import { generateAndSaveReceiptPdf, ReceiptError, shareReceiptPdf, type SavedReceipt } from '../receipts/billReceipt';
 import { AddPaymentModal } from './AddPaymentModal';
 import { CreditCustomerPicker } from './CreditCustomerPicker';
@@ -94,6 +95,18 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [creditPickerVisible, setCreditPickerVisible] = useState(false);
   const creditResolveRef = useRef<((resolved: boolean) => void) | null>(null);
 
+  // Section 3.4B — vehicle blacklist pre-check, fires right after a
+  // customer is chosen for a CREDIT line (existing or quick-add), BEFORE
+  // that choice takes effect. This is a convenience, not the real safety
+  // net: the AUTHORITATIVE block happens server-side inside
+  // BillsService.create() regardless (VehicleBlacklistService.
+  // assertNotBlacklisted()), so a failed/skipped pre-check here (e.g. a
+  // network hiccup) still can't let a blacklisted credit sale through —
+  // Save would just fail with the same message a few seconds later instead
+  // of immediately.
+  const [checkingBlacklist, setCheckingBlacklist] = useState(false);
+  const [blacklistError, setBlacklistError] = useState<string | null>(null);
+
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successBill, setSuccessBill] = useState<Bill | null>(null);
@@ -136,6 +149,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
 
   const canSave =
     !submitting &&
+    !checkingBlacklist &&
     hasVehicleOrName &&
     amount > 0 &&
     litres > 0 &&
@@ -240,22 +254,65 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     });
   };
 
-  const handleSelectExistingCustomer = (customer: CustomerSummary) => {
+  // Runs the pre-check and, if blocked, formats the same explanation
+  // BillsService.assertNotBlacklisted() would give at Save time — kept in
+  // one place so the wording never drifts between the two.
+  const runBlacklistCheck = async (params: { vehicleNumber?: string; customerId?: string }): Promise<boolean> => {
+    setCheckingBlacklist(true);
+    setBlacklistError(null);
+    try {
+      const result = await checkVehicleBlacklist(params, accessToken);
+      if (result.blocked && result.entry) {
+        const subject =
+          result.entry.scope === 'VEHICLE' ? `Vehicle ${result.entry.vehicleNumber}` : `Company ${result.entry.companyName}`;
+        const outstandingNote =
+          result.entry.outstandingAmount > 0 ? ` (₹${result.entry.outstandingAmount.toFixed(2)} outstanding)` : '';
+        setBlacklistError(
+          `${subject} is blacklisted: ${result.entry.reason}${outstandingNote}. Clear the prior dues before extending credit again.`,
+        );
+        return false;
+      }
+      return true;
+    } catch {
+      // Network hiccup on the pre-check — don't block on that alone, Save
+      // still enforces this server-side. See the state comment above.
+      return true;
+    } finally {
+      setCheckingBlacklist(false);
+    }
+  };
+
+  const handleSelectExistingCustomer = async (customer: CustomerSummary) => {
+    setCreditPickerVisible(false);
+    const ok = await runBlacklistCheck({
+      vehicleNumber: customer.vehicleNumber ?? undefined,
+      customerId: customer.id,
+    });
+    if (!ok) {
+      creditResolveRef.current?.(false);
+      creditResolveRef.current = null;
+      return;
+    }
     setCreditCustomerId(customer.id);
     setCreditQuickAdd(undefined);
     setCreditCustomerLabel(
       `${customer.name}${customer.vehicleNumber ? ' · ' + customer.vehicleNumber : ''}`,
     );
-    setCreditPickerVisible(false);
     creditResolveRef.current?.(true);
     creditResolveRef.current = null;
   };
 
-  const handleQuickAddCustomer = (input: QuickAddCustomerInput) => {
+  const handleQuickAddCustomer = async (input: QuickAddCustomerInput) => {
+    setCreditPickerVisible(false);
+    const ok = await runBlacklistCheck({ vehicleNumber: input.vehicleNumber });
+    if (!ok) {
+      creditResolveRef.current?.(false);
+      creditResolveRef.current = null;
+      return;
+    }
     setCreditQuickAdd(input);
     setCreditCustomerId(undefined);
     setCreditCustomerLabel(`${input.name} · ${input.vehicleNumber} (new)`);
-    setCreditPickerVisible(false);
     creditResolveRef.current?.(true);
     creditResolveRef.current = null;
   };
@@ -616,6 +673,17 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
             </Text>
           ) : null}
 
+          {checkingBlacklist ? (
+            <Text style={styles.hint} testID="blacklist-checking">
+              Checking vehicle blacklist…
+            </Text>
+          ) : null}
+          {blacklistError ? (
+            <Text style={styles.error} testID="blacklist-error">
+              {blacklistError}
+            </Text>
+          ) : null}
+
           <Pressable
             style={styles.buttonSecondary}
             onPress={() => setAddPaymentVisible(true)}
@@ -664,8 +732,8 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
       <CreditCustomerPicker
         visible={creditPickerVisible}
         accessToken={accessToken}
-        onSelectExisting={handleSelectExistingCustomer}
-        onQuickAdd={handleQuickAddCustomer}
+        onSelectExisting={(customer) => { void handleSelectExistingCustomer(customer); }}
+        onQuickAdd={(input) => { void handleQuickAddCustomer(input); }}
         onCancel={handleCancelCreditPicker}
       />
 

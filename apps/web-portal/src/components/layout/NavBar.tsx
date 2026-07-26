@@ -24,6 +24,7 @@ import {
   Warehouse,
   CircleDollarSign,
   ChevronDown,
+  Ban,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -66,6 +67,7 @@ const NAV_ENTRIES: NavEntry[] = [
       { label: 'Credit customers', to: '/customers', icon: Wallet },
       { label: 'Loyalty', to: '/loyalty', icon: Star },
       { label: 'Credit settings', to: '/credit-settings', icon: ShieldCheck },
+      { label: 'Vehicle blacklist', to: '/vehicle-blacklist', icon: Ban },
     ],
   },
   {

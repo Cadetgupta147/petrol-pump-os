@@ -19,6 +19,10 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
   const [name, setName] = useState(customer?.name ?? '');
   const [phone, setPhone] = useState(customer?.phone ?? '');
   const [vehicleNumber, setVehicleNumber] = useState(customer?.vehicleNumber ?? '');
+  // Section 3.4B — fleet/company this vehicle bills under, dealer-set only.
+  // Used purely for company-scope blacklist matching + reporting; leaving
+  // it blank is the normal case for a customer with no fleet affiliation.
+  const [companyName, setCompanyName] = useState(customer?.companyName ?? '');
   const [creditLimit, setCreditLimit] = useState(customer ? String(customer.creditLimit) : '');
   // Section 3.4A — the informal -> verified upgrade. Only surfaced in edit
   // mode: a brand-new customer added here always starts VERIFIED per the
@@ -37,11 +41,14 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
       const trimmedCreditLimit = creditLimit.trim();
       const parsedCreditLimit = trimmedCreditLimit === '' ? undefined : Number(trimmedCreditLimit);
 
+      const trimmedCompanyName = companyName.trim();
+
       const saved = isEdit
         ? await updateCustomer(customer.id, {
             name: name.trim(),
             phone: phone.trim(),
             vehicleNumber: trimmedVehicle === '' ? undefined : trimmedVehicle,
+            companyName: trimmedCompanyName === '' ? undefined : trimmedCompanyName,
             creditLimit: parsedCreditLimit,
             verificationStatus: verified ? 'VERIFIED' : 'INFORMAL',
           })
@@ -49,6 +56,7 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
             name: name.trim(),
             phone: phone.trim(),
             vehicleNumber: trimmedVehicle === '' ? undefined : trimmedVehicle,
+            companyName: trimmedCompanyName === '' ? undefined : trimmedCompanyName,
             creditLimit: parsedCreditLimit,
           });
 
@@ -97,6 +105,15 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
             value={vehicleNumber}
             onChange={(e) => setVehicleNumber(e.target.value)}
             placeholder="Optional"
+          />
+        </div>
+        <div className="form-field">
+          <label htmlFor="cf-company">Company/fleet (optional)</label>
+          <input
+            id="cf-company"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+            placeholder="For company-scope blacklisting only (Section 3.4B)"
           />
         </div>
         <div className="form-field">

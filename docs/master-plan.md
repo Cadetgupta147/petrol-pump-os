@@ -203,6 +203,39 @@ Every feature below includes **what it does, why it exists, and how it works** �
 
 **Default informal credit limit:** to avoid genuinely unlimited exposure on a customer nobody has vetted, a dealer-set `CreditConfig.defaultInformalCreditLimit` auto-applies to any quick-added customer (editable per-customer once verified). This never blocks a bill under `NOTIFY` mode — it just determines when the notify-and-optionally-remind trigger fires. A dealer can set this to a very high number if they'd rather not have even a soft trigger point.
 
+### 3.4B Vehicle/Company Blacklist — Credit Recovery Guard (New)
+
+**What it does:** lets an Owner or Accountant flag a specific vehicle number, or an entire company/fleet, as blacklisted after a credit default or unresolved dispute. Once active, any **new CREDIT bill** for that vehicle, that company, or the linked customer is rejected outright at the point of sale — regardless of credit limit headroom — until a human resolves the entry.
+
+**Why it exists:** §3.4A's `enforcementMode` (`NOTIFY`/`BLOCK`) governs "would this bill push the customer over their limit" — it says nothing about "this specific vehicle already walked off owing money and shouldn't get any more credit at all." Those are two different questions, and a pump that's been burned once needs the second one answered independently of whatever the limit says. This is a harder, unconditional gate — closer in spirit to the enforcement-policy decision itself (Owner-only, per §2) than to ordinary day-to-day credit ledger work.
+
+**Scope — vehicle or company, dealer's choice per entry:**
+
+| Scope | Matches on | Typical use |
+|---|---|---|
+| `VEHICLE` | A single vehicle number | One driver/vehicle defaulted; rest of the fleet is fine |
+| `COMPANY` | `Customer.companyName` (new optional field, dealer-set — see below) | A whole transport company's account went bad; block every vehicle billing under that name, not just the one that was caught |
+
+`Customer` gains a new optional `companyName` field — purely a grouping label the dealer sets (never self-declared by the customer), used only for company-scope blacklisting and reporting. It carries no enforcement meaning on its own; nothing changes for a `Customer` that never has it set.
+
+**What's blocked vs. not:** only `CREDIT` payment lines are affected. A blacklisted vehicle paying cash, UPI, or card at the counter goes through completely normally — that's the outcome this feature exists to still allow. The bill-creation check looks at every vehicle-number candidate a bill actually carries (the number the DSM typed, and the customer's on-file number, if they differ), plus the linked customer id and company name, so a match on any of them blocks the bill. Vehicle numbers are matched case/whitespace-normalized (`"mh 12 ab 1234"` and `"MH12AB1234"` are the same plate) — this normalization applies only inside the blacklist check, it does not change how `vehicleNumber` is stored anywhere else.
+
+**Data captured per entry:** scope, the vehicle number or company name, an optional link to an existing `Customer`, a required free-text reason, a snapshot of the outstanding amount at blacklist time (record only — the live balance is still derived from `Bill`/`Payment` rows the same way the ledger already works), and an optional reference photo. That photo is for a staff member to manually eyeball against the person at the pump — there is deliberately no automated face-matching here; that's a biometric-surveillance feature with real misidentification risk, not something to bolt on as a schema afterthought.
+
+**Resolving an entry:** an Owner/Accountant marks an entry `RESOLVED` (dues cleared, or the flag was a mistake/dispute settled) with an optional note. A resolved vehicle/company can be blacklisted again later if it reoffends — that's a new entry, not reopening the old one.
+
+**Who can do what:**
+- **Create / resolve an entry:** Owner only — matching the existing precedent that `CreditConfig.enforcementMode` (§3.4A) is Owner-only, since an active blacklist is a *stronger*, fully automatic block than anything enforcementMode does, so it can't be a looser permission than that.
+- **View the list / run the pre-check:** Owner, Accountant, Manager, DSM, Read-only — everyone who already sees credit data, including the DSM standing at the pump, since they're the one who needs to know *before* fueling a vehicle on credit, not after Save fails.
+
+**DSM app UX:** right after a DSM picks (or quick-adds) a customer for a `CREDIT` line on the New Bill screen, the app runs a non-blocking pre-check against the blacklist so staff find out immediately, before filling out the rest of the bill — not just when Save is rejected. This pre-check is a convenience only: the real, authoritative block always happens server-side at bill creation regardless of whether the pre-check ran, succeeded, or failed (e.g. on a network hiccup) — a failed pre-check never lets a blacklisted credit sale through, it just means the DSM finds out a few seconds later, at Save, instead of immediately.
+
+**Multi-tenancy boundary:** blacklist entries are per-pump only, never shared across tenants (see `docs/multi-tenancy-plan.md`). Sharing a vehicle's payment-default history across independently-owned pumps is what a licensed Credit Information Company does under RBI's CIC (Regulation) Act, 2005 — genuinely out of scope here without that license and a real consent framework, not just a nice-to-have integration.
+
+**Explicitly deferred, not part of this build:**
+- **Automated credit scoring.** There's no validated, explainable scoring formula to build against yet, and tying an unvalidated heuristic to a real credit-block decision is worse than not having one. If this gets built later, it needs its own spec section and sign-off before being wired into `BillsService`, same as any other money-touching logic (see CLAUDE.md).
+- **Mandatory ID-document capture at quick-add / customer-creation time.** A real hardening idea (a phone number alone gives you nothing to pursue if a credit customer disappears), but it's a separate schema/UX change that touches *both* the DSM app's quick-add flow *and* the web portal's full customer form (`CustomerFormModal`) — bundling it into this slice risks shipping a validation rule the web portal's UI can't satisfy. Tracked as its own open decision, §17.24.
+
 ### 3.5 Loyalty Program Control
 
 Full detail in **Section 6**. Summary of what lives here:
@@ -260,6 +293,7 @@ Full list in **Section 12**.
 | Meter reading: meter rollover | If a nozzle's physical meter is configured with a rollover point (Section 3.3.1 — older mechanical/electronic totalizers that reset to zero), the DSM can check "meter rolled over" for that row instead of being blocked when the closing reading is lower than the opening reading | litres sold = (rollover point − opening) + closing; without this, an older meter physically rolling over would stop the DSM from ever closing that nozzle's shift |
 | New Bill screen | QR scan → auto-fills customer name, vehicle, loyalty rate → DSM enters amount/litres → saves | This is the core transaction screen — see the full flow in Section 6.3 |
 | Payment type selection | Cash / Card / UPI / Credit | Every bill must be tagged so cash reconciliation (Section 8) and reports (Section 12) can split correctly |
+| Vehicle/company blacklist pre-check | Right after picking a credit customer for a `CREDIT` line, the app checks the blacklist and warns immediately if blocked | Section 3.4B — a convenience only; the real block is always server-side at Save regardless of this check's outcome |
 | Shift-end cash handover entry | Mirrors the web app's Day-End entry (Section 8): deposited / locker / taken home | Captures cash custody at the point of handover, not hours later from memory |
 | Bluetooth receipt printing | Prints a physical receipt via ESC/POS thermal printer over Bluetooth | Customers expect a paper receipt; this is standard at every Indian fuel station |
 | View own shift summary | Litres sold, cash collected, bills entered — for that DSM's current shift only | Lets staff self-check before handover, reduces end-of-shift disputes |
@@ -617,6 +651,7 @@ Build the **Tally XML export** in Phase 2 (right after the core web app MVP), no
 | Vehicle-wise sales | Which vehicles/customers generate the most revenue | Owner |
 | Profit estimate | Sales − purchase cost, using Rate Master history (Section 7.4) for accuracy | Owner, Accountant |
 | Credit aging report | Who owes how long — overdue buckets (0-15/15-30/30+ days) | Owner, Accountant |
+| Vehicle/company blacklist log | Active and resolved blacklist entries, who created/resolved each, reason and outstanding amount at the time | Owner, Accountant |
 | Loyalty program cost report | Points issued vs. redeemed (cash + gifts) — this is a real liability, track it like one | Owner |
 | Gift redemption report | Which gifts are redeemed most, current gift stock levels | Owner |
 | Stock variance report | Purchased − sold − physical DIP = variance | Owner, Manager |
@@ -632,7 +667,9 @@ Build the **Tally XML export** in Phase 2 (right after the core web app MVP), no
 
 High-level entity list — expand each into full tables with your ORM's migration tool once you start building.
 
-`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | Items | Nozzles | ShiftDefinitions | MeterReadings | Tanks | PurchaseEntries | LubricantItems | ItemSales | GeneratorDieselLogs | MachineTestingLogs | ExpenseEntries | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents`
+`Customers | Bills | BillPaymentLines | ShiftSalesSummaries | Items | Nozzles | ShiftDefinitions | MeterReadings | Tanks | PurchaseEntries | LubricantItems | ItemSales | GeneratorDieselLogs | MachineTestingLogs | ExpenseEntries | GiftCatalogItems | LoyaltyConfig | LoyaltyRates | LoyaltyTransactions | RedemptionTransactions | RateHistory | DensityLogs | Staff | Users | Roles | AttendanceLogs | Payments | CashCustodyLog | TallyExportLog | UpiWebhookEvents | VehicleBlacklist`
+
+**VehicleBlacklist** row should store: `pump_id, scope (VEHICLE/COMPANY), vehicle_number (nullable, required iff scope=VEHICLE), company_name (nullable, required iff scope=COMPANY), customer_id (nullable), reason, outstanding_amount (snapshot, default 0), status (ACTIVE/RESOLVED), reference_photo_url (nullable, manual comparison only), blacklisted_by (staff_id), blacklisted_at, resolved_by (staff_id, nullable), resolved_at (nullable), resolution_note (nullable)` — Section 3.4B. `Customer` also gains a nullable `company_name` field used only for `COMPANY`-scope matching.
 
 **Item** row should store: `pump_id, name, category (fuel/lubricant/other), unit (litre/kg/piece), is_active` — Section 3.3.2.
 
@@ -900,6 +937,8 @@ This is a **rough planning estimate, not a promise** — it assumes two people w
 - [ ] **17.21** — **General pattern to watch for: an ID and its "display copy" (label/name string) drifting apart, or an existing commitment silently surviving an identity swap underneath it.** The bug above had two independent ingredients worth generalizing, not just patching locally: (1) a screen tracked a customer as an id (`creditCustomerId` / `scannedCustomer.customerId`) *and* a separately-set display string (`creditCustomerLabel`) — any path that changes/clears the id must update the display copy in the exact same state transition, never as an afterthought in a different function; and (2) multiple ways of *arriving at* the same "current customer for this bill" (manual pick vs. QR scan) could each mutate that slot without checking whether some other already-added piece of state (here, a `CREDIT` payment line) had a standing commitment to the *previous* value. Whenever a future screen has a similar "manually chosen OR auto-resolved, one shared slot" shape — anywhere else in `apps/dsm-app` or `apps/customer-app` that mixes a picker with a QR/barcode/lookup scan — audit it against both halves of this pattern, not just re-run this specific test case.
 - [ ] **17.22** — **GST report has no real tax-rate modeling.** Fuel is largely outside GST in India (state VAT applies instead), and no tax-rate field exists anywhere in the schema. The current "GST-ready" report (§12) is a plain sales/purchase register only. Needs proper VAT/tax modeling before this is genuinely GST/tax-filing ready — check with an actual accountant before relying on it for filing.
 - [ ] **17.23** — **Staff wage/advance tracking has no schema support.** No wage-rate field on `Staff`, no advances table. Attendance hours-worked (§12) is fully built; "salary due" is not. Needs its own spec before building — §3.7 already flags salary/advance tracking as optional/Phase 5+.
+- [ ] **17.24** — **Mandatory ID-document capture before extending credit — deliberately deferred out of §3.4B.** A phone number alone gives a dealer nothing to pursue if a credit customer disappears; requiring an ID document (driving licence, voter ID, PAN, or last-4 Aadhaar — never a full Aadhaar number, per the Aadhaar Act's restrictions on private-entity collection) before any `creditLimit > 0` is a reasonable hardening. Not built now because it's a cross-cutting change: it would need to touch the DSM app's quick-add flow *and* the web portal's full customer form (`CustomerFormModal`, §3.4) *in the same slice*, or the two flows drift out of sync and one of them starts silently rejecting a credit-limit save the UI gives no way to satisfy. Build both sides together if this gets picked up.
+- [ ] **17.25** — **Automated credit scoring — deliberately deferred out of §3.4B.** A CIBIL-style score derived from this pump's own bill/payment/aging history (reusing the credit-aging FIFO logic, §12) is a plausible follow-on to the blacklist feature, but no validated scoring formula exists yet — inventing one and wiring it straight into a credit-block decision would tie real money to an untuned heuristic. Needs its own spec, an agreed formula, and a period of report-only/observation use before it's allowed to block a bill (see CLAUDE.md's rule that anything touching money is human-reviewed before merge).
 
 ---
 

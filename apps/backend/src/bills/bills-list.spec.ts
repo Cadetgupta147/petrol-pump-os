@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreditConfigService } from '../credit-config/credit-config.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
+import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
 
 // Section 3.2 — GET /bills filtering + opt-in pagination (BillsService.findAll()).
 // Covers: each filter builds the expected Prisma where clause, filters
@@ -30,6 +31,7 @@ describe('BillsService.findAll (Section 3.2 register filters)', () => {
         { provide: CreditConfigService, useValue: {} },
         { provide: LoyaltyService, useValue: {} },
         { provide: RateMasterService, useValue: {} },
+        { provide: VehicleBlacklistService, useValue: {} },
       ],
     }).compile();
 
