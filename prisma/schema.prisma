@@ -109,6 +109,7 @@ model Pump {
   lubricantItems         LubricantItem[]
   expenseEntries         ExpenseEntry[]
   generatorDieselLogs    GeneratorDieselLog[]
+  machineTestingLogs     MachineTestingLog[]
   rateHistories          RateHistory[]
   loyaltyConfigs         LoyaltyConfig[]
   loyaltyTransactions    LoyaltyTransaction[]
@@ -178,6 +179,7 @@ model Staff {
   densityLogs            DensityLog[]
   expenseEntries         ExpenseEntry[]
   generatorDieselLogs    GeneratorDieselLog[]
+  machineTestingLogs     MachineTestingLog[]
 
   @@unique([accountId, pumpId])
 }
@@ -641,6 +643,7 @@ model Tank {
   densityLogs         DensityLog[]
   dipReadings         DipReading[]
   generatorDieselLogs GeneratorDieselLog[]
+  machineTestingLogs  MachineTestingLog[]
 }
 
 // Section 7.1/7.2 — physical DIP stick reading, compared against the
@@ -764,6 +767,34 @@ model LubricantItem {
   name      String
   stockQty  Int
   reorderAt Int
+}
+
+// Dashboard "Not wired to a backend endpoint yet" panel item #5 — "Machine
+// testing/calibration" (no model; Tank.calibrationChartRef is just a
+// reference-link string, not a log entity). This is a standalone audit-trail
+// + tank-stock-effect entity — it deliberately does NOT touch MeterReading
+// or its opening/closing/variance formula. docs/master-plan.md Section 3.3.1
+// explicitly defers folding a "Testing" adjustment column into that formula
+// (`litres sold = (closing - opening) - testing - transfer`) as a separate,
+// not-yet-decided vertical slice; that stays deferred here too — this only
+// closes the "no model exists" half of the gap. litresDrawnOff defaults to 0
+// (most calibration checks don't draw off any fuel); when it's > 0 the
+// matched Tank is decremented in the same transaction, same mechanism/
+// no-floor-check reasoning as GeneratorDieselService.create().
+model MachineTestingLog {
+  id                  String   @id @default(cuid())
+  pump                Pump     @relation(fields: [pumpId], references: [id])
+  pumpId              String
+  tank                Tank     @relation(fields: [tankId], references: [id])
+  tankId              String
+  litresDrawnOff      Float    @default(0)
+  result              String
+  deviationFound      Float?
+  calibrationChartRef String?
+  performedBy         Staff    @relation(fields: [performedById], references: [id])
+  performedById       String
+  performedAt         DateTime @default(now())
+  notes               String?
 }
 
 // Dashboard "Not wired to a backend endpoint yet" panel item #3 — "Generator

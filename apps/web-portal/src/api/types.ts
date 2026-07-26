@@ -592,6 +592,30 @@ export interface CreateGeneratorDieselLogRequest {
   notes?: string;
 }
 
+// Mirrors prisma MachineTestingLog — dashboard "Machine testing/calibration"
+// slice. Deliberately unrelated to MeterReading (see the schema comment) —
+// this is a standalone audit-trail + tank-stock-effect entity.
+export interface MachineTestingLog {
+  id: string;
+  tankId: string;
+  litresDrawnOff: number;
+  result: string;
+  deviationFound: number | null;
+  calibrationChartRef: string | null;
+  notes: string | null;
+  performedAt: string;
+}
+
+// Mirrors apps/backend/src/machine-testing/dto/create-machine-testing-log.dto.ts.
+export interface CreateMachineTestingLogRequest {
+  tankId: string;
+  litresDrawnOff?: number;
+  result: string;
+  deviationFound?: number;
+  calibrationChartRef?: string;
+  notes?: string;
+}
+
 // Mirrors prisma RateHistory — Section 7.4. Append-only price history per
 // product; no update/delete request type exists on purpose (see
 // RateMasterService — a correction is a new dated row, not an edit).

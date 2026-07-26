@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Banknote, Fuel, Gift, Truck, Users, Wallet, ReceiptText, Zap } from 'lucide-react';
+import { Banknote, Fuel, Gift, Truck, Users, Wallet, ReceiptText, Zap, Wrench } from 'lucide-react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { DateRangeTabs, type DateRangeTab } from '../components/dashboard/DateRangeTabs';
@@ -20,6 +20,7 @@ import { getPurchaseEntries } from '../api/purchases';
 import { getAttendanceLog } from '../api/attendance';
 import { getExpenses } from '../api/expenses';
 import { getGeneratorDieselLogs } from '../api/generatorDiesel';
+import { getMachineTestingLogs } from '../api/machineTesting';
 import { downloadTallyExport } from '../api/tallyExport';
 import { ApiError } from '../api/client';
 import { formatRupees, formatLitres, formatRatePerLitre, localIsoDate, isToday } from '../utils/format';
@@ -36,6 +37,7 @@ import type {
   AttendanceLogRow,
   ExpenseEntry,
   GeneratorDieselLog,
+  MachineTestingLog,
 } from '../api/types';
 
 interface DashboardData {
@@ -156,6 +158,7 @@ export function DashboardPage() {
   const [attendanceLog, setAttendanceLog] = useState<AttendanceLogRow[] | null>(null);
   const [expenseEntries, setExpenseEntries] = useState<ExpenseEntry[] | null>(null);
   const [generatorDieselLogs, setGeneratorDieselLogs] = useState<GeneratorDieselLog[] | null>(null);
+  const [machineTestingLogs, setMachineTestingLogs] = useState<MachineTestingLog[] | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [varianceByReadingId, setVarianceByReadingId] = useState<Map<string, MeterVariance>>(new Map());
@@ -213,6 +216,11 @@ export function DashboardPage() {
     getGeneratorDieselLogs()
       .then((result) => {
         if (!cancelled) setGeneratorDieselLogs(result);
+      })
+      .catch(() => undefined);
+    getMachineTestingLogs()
+      .then((result) => {
+        if (!cancelled) setMachineTestingLogs(result);
       })
       .catch(() => undefined);
     return () => {
@@ -291,6 +299,18 @@ export function DashboardPage() {
       .filter((log) => isToday(log.recordedAt))
       .reduce((sum, log) => sum + log.quantityLitres, 0);
   }, [generatorDieselLogs]);
+
+  // Month-to-date count — a calibration log is infrequent enough that
+  // "today" would show 0 most days; the month view is the more useful
+  // at-a-glance number for this one.
+  const machineTestsThisMonth = useMemo(() => {
+    if (!machineTestingLogs) return 0;
+    const now = new Date();
+    return machineTestingLogs.filter((log) => {
+      const d = new Date(log.performedAt);
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    }).length;
+  }, [machineTestingLogs]);
 
   // Variance can only be checked once a shift is closed (closingReading +
   // shiftEnd set) — see meter-readings.service.ts. Fetched in a second pass
@@ -630,6 +650,14 @@ export function DashboardPage() {
               dotColor={DOT.teal}
               icon={Zap}
             />
+            <KpiCard
+              label="Machine tests logged"
+              value={`${machineTestsThisMonth} this month`}
+              sub="view / add entries"
+              onSubClick={() => navigate('/machine-testing')}
+              dotColor={DOT.blue}
+              icon={Wrench}
+            />
           </div>
         </div>
 
@@ -642,7 +670,6 @@ export function DashboardPage() {
             items={[
               'Lubricant sale — LubricantItem exists in the schema (stock only, no sale-price/SKU fields), but zero service or controller exists anywhere for it',
               'Urea/DEF sale — no dedicated model; "Urea/AdBlue" only appears as an example Item Master product name, not a planned feature',
-              'Machine testing/calibration — no model; Tank.calibrationChartRef is just a single reference-link string, not a testing-log entity',
             ]}
           />
         </div>

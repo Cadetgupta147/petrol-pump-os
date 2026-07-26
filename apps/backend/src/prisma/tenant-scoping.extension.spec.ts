@@ -122,6 +122,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'LubricantItem',
       'ExpenseEntry',
       'GeneratorDieselLog',
+      'MachineTestingLog',
       'RateHistory',
       'LoyaltyConfig',
       'LoyaltyTransaction',
