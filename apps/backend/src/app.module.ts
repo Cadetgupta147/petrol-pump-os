@@ -34,6 +34,8 @@ import { BusinessProfileModule } from './business-profile/business-profile.modul
 import { ExpensesModule } from './expenses/expenses.module';
 import { GeneratorDieselModule } from './generator-diesel/generator-diesel.module';
 import { MachineTestingModule } from './machine-testing/machine-testing.module';
+import { LubricantItemsModule } from './lubricant-items/lubricant-items.module';
+import { ItemSalesModule } from './item-sales/item-sales.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -97,6 +99,8 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     ExpensesModule,
     GeneratorDieselModule,
     MachineTestingModule,
+    LubricantItemsModule,
+    ItemSalesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

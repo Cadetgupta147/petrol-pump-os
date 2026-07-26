@@ -17,6 +17,7 @@ import {
   ReceiptText,
   Zap,
   Wrench,
+  FlaskConical,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -42,6 +43,7 @@ const NAV_ITEMS: { label: string; to: string; icon: LucideIcon }[] = [
   { label: 'Expenses', to: '/expenses', icon: ReceiptText },
   { label: 'Generator diesel', to: '/generator-diesel', icon: Zap },
   { label: 'Machine testing', to: '/machine-testing', icon: Wrench },
+  { label: 'Lubricant & Urea sales', to: '/item-sales', icon: FlaskConical },
   { label: 'Reports', to: '/reports', icon: BarChart3 },
   { label: 'Settings', to: '/settings', icon: SettingsIcon },
 ];

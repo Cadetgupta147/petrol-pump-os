@@ -7,6 +7,7 @@ import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { todayIsoDate } from '../utils/format';
 import { ItemSettings } from '../components/settings/ItemSettings';
+import { LubricantStockSettings } from '../components/settings/LubricantStockSettings';
 import { NozzleSettings } from '../components/settings/NozzleSettings';
 import { ShiftScheduleSettings } from '../components/settings/ShiftScheduleSettings';
 import type { BusinessProfile } from '../api/types';
@@ -175,6 +176,8 @@ export function SettingsPage() {
         </div>
 
         <ItemSettings canManage={canManageItems} />
+
+        <LubricantStockSettings canManage={canManageItems} />
 
         <NozzleSettings canManage={canManageNozzles} />
 

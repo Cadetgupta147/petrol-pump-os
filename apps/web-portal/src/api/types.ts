@@ -616,6 +616,59 @@ export interface CreateMachineTestingLogRequest {
   notes?: string;
 }
 
+// Mirrors prisma LubricantItem (post-finish, Section 7.1) — the SKU/
+// pricing/stock extension for an Item already registered with category
+// LUBRICANT. `item` is embedded because LubricantItemsService.findAll()/
+// findOne() always `include: { item: true }` (identity lives on Item now,
+// not a standalone `name` field here).
+export interface LubricantItem {
+  id: string;
+  itemId: string;
+  item: Item;
+  sku: string | null;
+  costPrice: number | null;
+  salePrice: number;
+  stockQty: number;
+  reorderAt: number;
+}
+
+// Mirrors apps/backend/src/lubricant-items/dto/create-lubricant-item.dto.ts.
+export interface CreateLubricantItemRequest {
+  itemId: string;
+  sku?: string;
+  costPrice?: number;
+  salePrice: number;
+  stockQty: number;
+  reorderAt: number;
+}
+
+// Mirrors apps/backend/src/lubricant-items/dto/update-lubricant-item.dto.ts.
+export type UpdateLubricantItemRequest = Partial<Omit<CreateLubricantItemRequest, 'itemId'>>;
+
+// Mirrors prisma ItemSale — dashboard "Lubricant sale"/"Urea/DEF sale"
+// slice. `item` is embedded because ItemSalesService.findAll() always
+// `include: { item: true }`.
+export interface ItemSale {
+  id: string;
+  itemId: string;
+  item: Item;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  paymentType: PaymentType;
+  soldAt: string;
+}
+
+// Mirrors apps/backend/src/item-sales/dto/create-item-sale.dto.ts. amount is
+// deliberately absent — the backend computes it server-side (see that DTO's
+// comment).
+export interface CreateItemSaleRequest {
+  itemId: string;
+  quantity: number;
+  unitPrice: number;
+  paymentType: PaymentType;
+}
+
 // Mirrors prisma RateHistory — Section 7.4. Append-only price history per
 // product; no update/delete request type exists on purpose (see
 // RateMasterService — a correction is a new dated row, not an edit).

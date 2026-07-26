@@ -107,6 +107,7 @@ model Pump {
   upiWebhookEvents       UpiWebhookEvent[]
   purchaseEntries        PurchaseEntry[]
   lubricantItems         LubricantItem[]
+  itemSales              ItemSale[]
   expenseEntries         ExpenseEntry[]
   generatorDieselLogs    GeneratorDieselLog[]
   machineTestingLogs     MachineTestingLog[]
@@ -180,6 +181,7 @@ model Staff {
   expenseEntries         ExpenseEntry[]
   generatorDieselLogs    GeneratorDieselLog[]
   machineTestingLogs     MachineTestingLog[]
+  itemSales              ItemSale[]
 
   @@unique([accountId, pumpId])
 }
@@ -491,7 +493,9 @@ model Item {
   isActive  Boolean      @default(true)
   createdAt DateTime     @default(now())
 
-  nozzles Nozzle[]
+  nozzles       Nozzle[]
+  lubricantItem LubricantItem?
+  itemSales     ItemSale[]
 
   @@unique([pumpId, name])
 }
@@ -760,13 +764,51 @@ model PurchaseEntry {
   densityLogs DensityLog[]
 }
 
+// Dashboard "Not wired to a backend endpoint yet" panel item #1 — "Lubricant
+// sale" ("LubricantItem exists in the schema (stock only, no sale-price/SKU
+// fields), but zero service or controller exists anywhere for it"). Finishes
+// the model: identity now lives once in Item Master (itemId, replacing the
+// old standalone `name` field — a lubricant is registered as an Item with
+// category LUBRICANT first, then this row adds its SKU/pricing/stock
+// extension), matching Section 7.1's fuller field list
+// (item_name/SKU/quantity/reorder_level/cost_price/sale_price).
 model LubricantItem {
-  id        String @id @default(cuid())
-  pump      Pump   @relation(fields: [pumpId], references: [id])
-  pumpId    String
-  name      String
-  stockQty  Int
-  reorderAt Int
+  id         String @id @default(cuid())
+  pump       Pump   @relation(fields: [pumpId], references: [id])
+  pumpId     String
+  item       Item   @relation(fields: [itemId], references: [id])
+  itemId     String @unique
+  sku        String?
+  costPrice  Float?
+  salePrice  Float
+  stockQty   Int
+  reorderAt  Int
+}
+
+// Dashboard "Not wired to a backend endpoint yet" panel items #1/#2 —
+// "Lubricant sale" and "Urea/DEF sale". One shared model rather than two
+// near-identical ones: both are a non-fuel Item Master sale, and only differ
+// in whether a linked LubricantItem stock row exists to decrement
+// (category LUBRICANT) or not (category OTHER, e.g. Urea/AdBlue — see
+// ItemSalesService.create() for the category branch). FUEL-category items
+// are rejected here — fuel sales go through the existing meter
+// reading/billing flow, not this one. No split-payment support
+// (Section 5A is a Bill-specific pattern) — a single paymentType per sale,
+// same shape Bill had before Section 5A introduced BillPaymentLine.
+// Money-touching (CLAUDE.md) — flagged for human review before merge.
+model ItemSale {
+  id          String      @id @default(cuid())
+  pump        Pump        @relation(fields: [pumpId], references: [id])
+  pumpId      String
+  item        Item        @relation(fields: [itemId], references: [id])
+  itemId      String
+  quantity    Float
+  unitPrice   Float
+  amount      Float
+  paymentType PaymentType
+  soldBy      Staff       @relation(fields: [soldById], references: [id])
+  soldById    String
+  soldAt      DateTime    @default(now())
 }
 
 // Dashboard "Not wired to a backend endpoint yet" panel item #5 — "Machine

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Banknote, Fuel, Gift, Truck, Users, Wallet, ReceiptText, Zap, Wrench } from 'lucide-react';
+import { Banknote, Fuel, Gift, Truck, Users, Wallet, ReceiptText, Zap, Wrench, FlaskConical } from 'lucide-react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { DateRangeTabs, type DateRangeTab } from '../components/dashboard/DateRangeTabs';
@@ -10,7 +10,6 @@ import { StockPanel } from '../components/dashboard/StockPanel';
 import { NozzleReadingsTable } from '../components/dashboard/NozzleReadingsTable';
 import { RecentBillsTable } from '../components/dashboard/RecentBillsTable';
 import { AlertsPanel, type DashboardAlert } from '../components/dashboard/AlertsPanel';
-import { ComingSoon } from '../components/dashboard/ComingSoon';
 import { getSalesSummary, getTankStock, getRecentBills } from '../api/dashboard';
 import { getCreditAlerts, updateCreditAlert } from '../api/creditAlerts';
 import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
@@ -21,6 +20,7 @@ import { getAttendanceLog } from '../api/attendance';
 import { getExpenses } from '../api/expenses';
 import { getGeneratorDieselLogs } from '../api/generatorDiesel';
 import { getMachineTestingLogs } from '../api/machineTesting';
+import { getItemSales } from '../api/itemSales';
 import { downloadTallyExport } from '../api/tallyExport';
 import { ApiError } from '../api/client';
 import { formatRupees, formatLitres, formatRatePerLitre, localIsoDate, isToday } from '../utils/format';
@@ -38,6 +38,7 @@ import type {
   ExpenseEntry,
   GeneratorDieselLog,
   MachineTestingLog,
+  ItemSale,
 } from '../api/types';
 
 interface DashboardData {
@@ -159,6 +160,7 @@ export function DashboardPage() {
   const [expenseEntries, setExpenseEntries] = useState<ExpenseEntry[] | null>(null);
   const [generatorDieselLogs, setGeneratorDieselLogs] = useState<GeneratorDieselLog[] | null>(null);
   const [machineTestingLogs, setMachineTestingLogs] = useState<MachineTestingLog[] | null>(null);
+  const [itemSales, setItemSales] = useState<ItemSale[] | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [varianceByReadingId, setVarianceByReadingId] = useState<Map<string, MeterVariance>>(new Map());
@@ -221,6 +223,11 @@ export function DashboardPage() {
     getMachineTestingLogs()
       .then((result) => {
         if (!cancelled) setMachineTestingLogs(result);
+      })
+      .catch(() => undefined);
+    getItemSales()
+      .then((result) => {
+        if (!cancelled) setItemSales(result);
       })
       .catch(() => undefined);
     return () => {
@@ -311,6 +318,12 @@ export function DashboardPage() {
       return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
     }).length;
   }, [machineTestingLogs]);
+
+  const todaysItemSales = useMemo(() => {
+    if (!itemSales) return { amount: 0, count: 0 };
+    const todays = itemSales.filter((sale) => isToday(sale.soldAt));
+    return { amount: todays.reduce((sum, sale) => sum + sale.amount, 0), count: todays.length };
+  }, [itemSales]);
 
   // Variance can only be checked once a shift is closed (closingReading +
   // shiftEnd set) — see meter-readings.service.ts. Fetched in a second pass
@@ -658,20 +671,15 @@ export function DashboardPage() {
               dotColor={DOT.blue}
               icon={Wrench}
             />
+            <KpiCard
+              label="Lubricant/Urea sales today"
+              value={formatRupees(todaysItemSales.amount)}
+              sub={`${todaysItemSales.count} sale${todaysItemSales.count === 1 ? '' : 's'}`}
+              onSubClick={() => navigate('/item-sales')}
+              dotColor={DOT.purple}
+              icon={FlaskConical}
+            />
           </div>
-        </div>
-
-        <div className="section">
-          <div className="section-title">
-            <h3>Not wired to a backend endpoint yet</h3>
-          </div>
-          <ComingSoon
-            title="Inventory &amp; operations — genuinely unbuilt, not just unwired"
-            items={[
-              'Lubricant sale — LubricantItem exists in the schema (stock only, no sale-price/SKU fields), but zero service or controller exists anywhere for it',
-              'Urea/DEF sale — no dedicated model; "Urea/AdBlue" only appears as an example Item Master product name, not a planned feature',
-            ]}
-          />
         </div>
       </div>
     </>
