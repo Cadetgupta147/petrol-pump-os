@@ -1,6 +1,8 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
 // CORS allowlist is env-driven (CORS_ALLOWED_ORIGINS, comma-separated) so
 // deployed frontend domains can be added later without a code change. In
@@ -28,6 +30,55 @@ async function bootstrap() {
   // parsed `req.body` — every other route's JSON parsing is unaffected, only
   // upi-webhook.controller.ts reads req.rawBody.
   const app = await NestFactory.create(AppModule, { rawBody: true });
+
+  // Security headers, applied before anything else (CORS, ValidationPipe,
+  // route handlers) so they land on EVERY response this server ever sends —
+  // including ones CORS would reject with a 403 or the ValidationPipe would
+  // reject with a 400. Those are still HTTP responses to a browser, and a
+  // browser only honours the headers on the response it actually receives.
+  //
+  // This app is a pure JSON API — it never renders or serves HTML/CSS/JS of
+  // its own (that's apps/web-portal, apps/dsm-app, apps/customer-app) — so
+  // the CSP can be maximally strict (`default-src 'none'`, helmet's
+  // default) with no risk of breaking a page this server would otherwise
+  // need to render.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        // No frontend assets are served from this origin, so nothing needs
+        // permission to load anything (script/style/img/etc.) from
+        // anywhere, including this origin itself.
+        directives: {
+          defaultSrc: ["'none'"],
+        },
+      },
+      hsts: {
+        // includeSubDomains: any subdomain of this API's domain should also
+        // only ever be reached over HTTPS.
+        includeSubDomains: true,
+        // preload deliberately left off: HSTS preload submission is a
+        // one-way door (browsers ship it in a hardcoded list; removal takes
+        // months to propagate) and we haven't confirmed every subdomain of
+        // this deployment is HTTPS-ready yet. Flip this on only after that's
+        // verified — don't default to it silently.
+        preload: false,
+      },
+      // frameguard defaults to SAMEORIGIN; nothing about this API should
+      // ever be embedded in a frame, same-origin or not, so deny outright.
+      frameguard: { action: 'deny' },
+      // X-Content-Type-Options: nosniff — this is helmet's default, kept
+      // implicit/on here (not disabled) so the browser never guesses a
+      // response's MIME type from its content.
+    }),
+  );
+
+  // Catches anything an application-level try/catch or deliberately-thrown
+  // HttpException doesn't — a raw Prisma error, an unexpected bug, etc. —
+  // and makes sure the client never sees internals (stack trace, SQL,
+  // column names, file paths) regardless of environment. See
+  // src/common/filters/global-exception.filter.ts for the full rationale.
+  app.useGlobalFilters(new GlobalExceptionFilter());
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true, // strip properties not declared on the DTO
