@@ -7,6 +7,7 @@ import { LoyaltyCostReportTab } from '../components/reports/LoyaltyCostReportTab
 import { GiftRedemptionReportTab } from '../components/reports/GiftRedemptionReportTab';
 import { SalesPurchaseRegisterTab } from '../components/reports/SalesPurchaseRegisterTab';
 import { AttendanceSummaryTab } from '../components/reports/AttendanceSummaryTab';
+import { CreditLimitSuggestionsTab } from '../components/reports/CreditLimitSuggestionsTab';
 
 // Section 12 — Reports & Analytics hub. Stock variance and cash custody
 // already have their own dedicated pages built in earlier slices — this hub
@@ -18,10 +19,17 @@ import { AttendanceSummaryTab } from '../components/reports/AttendanceSummaryTab
 // bookmark need beyond "the reports page", so nested routing would add
 // ceremony without a real benefit. Matches "your call on IA" from the task
 // spec.
-type TabKey = 'credit-aging' | 'loyalty-cost' | 'gift-redemption' | 'gst-register' | 'attendance';
+type TabKey =
+  | 'credit-aging'
+  | 'credit-limit-suggestions'
+  | 'loyalty-cost'
+  | 'gift-redemption'
+  | 'gst-register'
+  | 'attendance';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'credit-aging', label: 'Credit aging' },
+  { key: 'credit-limit-suggestions', label: 'Credit limit suggestions' },
   { key: 'loyalty-cost', label: 'Loyalty cost' },
   { key: 'gift-redemption', label: 'Gift redemption' },
   { key: 'gst-register', label: 'GST sales/purchase register' },
@@ -74,6 +82,7 @@ export function ReportsPage() {
           </div>
 
           {activeTab === 'credit-aging' && <CreditAgingReportTab />}
+          {activeTab === 'credit-limit-suggestions' && <CreditLimitSuggestionsTab />}
           {activeTab === 'loyalty-cost' && <LoyaltyCostReportTab />}
           {activeTab === 'gift-redemption' && <GiftRedemptionReportTab />}
           {activeTab === 'gst-register' && <SalesPurchaseRegisterTab />}

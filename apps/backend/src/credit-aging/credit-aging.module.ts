@@ -7,5 +7,6 @@ import { CreditAgingService } from './credit-aging.service';
 @Module({
   controllers: [CreditAgingController],
   providers: [CreditAgingService],
+  exports: [CreditAgingService],
 })
 export class CreditAgingModule {}
