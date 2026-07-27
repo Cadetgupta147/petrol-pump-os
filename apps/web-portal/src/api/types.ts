@@ -1147,3 +1147,27 @@ export interface CreateStaffAdvanceRequest {
   amount: number;
   note?: string;
 }
+
+// GET /credit-limit-suggestions — Section 17.25. A transparent rule-based
+// suggestion, never auto-applied — see CreditLimitSuggestionsTab for the
+// Approve/Adjust/Reject flow, and credit-limit-suggestions.util.ts for the
+// full methodology (uses CURRENT aging status, not a historical "N late
+// payments" count — that data doesn't exist in this schema).
+export type CreditLimitSuggestedAction = 'INCREASE' | 'NO_CHANGE' | 'FREEZE_OR_REDUCE';
+
+export interface CreditLimitSuggestionRow {
+  customerId: string;
+  customerName: string;
+  phone: string | null;
+  currentLimit: number;
+  totalOutstanding: number;
+  bucket30Plus: number;
+  action: CreditLimitSuggestedAction;
+  suggestedLimit: number;
+  reasoning: string;
+}
+
+export interface CreditLimitSuggestionsReport {
+  asOf: string;
+  suggestions: CreditLimitSuggestionRow[];
+}
