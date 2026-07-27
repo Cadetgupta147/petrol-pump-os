@@ -21,6 +21,13 @@ import { LOGIN_IP_THROTTLE_LIMIT, LOGIN_IP_THROTTLE_TTL_MS } from './login-throt
     // globally in app.module.ts — mirrors CustomerAuthModule's own
     // ThrottlerModule registration; each feature owns its own rate-limit
     // policy instead of sharing one global one.
+    //
+    // Storage backend: @nestjs/throttler's default ThrottlerStorage is
+    // in-memory — resets per instance. If this backend is ever run as more
+    // than one instance (e.g. zero-downtime rolling deploys, horizontal
+    // scaling), switch to the Redis storage adapter for @nestjs/throttler,
+    // since attempt counts won't accumulate correctly across instances
+    // otherwise — see docs/security-notes.md.
     ThrottlerModule.forRoot([
       { name: 'default', ttl: LOGIN_IP_THROTTLE_TTL_MS, limit: LOGIN_IP_THROTTLE_LIMIT },
     ]),

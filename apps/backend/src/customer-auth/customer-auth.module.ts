@@ -27,6 +27,12 @@ import { OTP_IP_THROTTLE_TTL_MS, OTP_REQUEST_IP_THROTTLE_LIMIT } from './otp.con
       // (see this slice's summary).
       signOptions: { expiresIn: '30d' },
     }),
+    // Storage backend: @nestjs/throttler's default ThrottlerStorage is
+    // in-memory — resets per instance. If this backend is ever run as more
+    // than one instance (e.g. zero-downtime rolling deploys, horizontal
+    // scaling), switch to the Redis storage adapter for @nestjs/throttler,
+    // since attempt counts won't accumulate correctly across instances
+    // otherwise — see docs/security-notes.md.
     ThrottlerModule.forRoot([
       { name: 'default', ttl: OTP_IP_THROTTLE_TTL_MS, limit: OTP_REQUEST_IP_THROTTLE_LIMIT },
     ]),
