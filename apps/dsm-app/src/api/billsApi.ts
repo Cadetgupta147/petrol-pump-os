@@ -39,6 +39,11 @@ export interface CreateBillInput {
   // would be rejected by the same forbidNonWhitelisted rule.
   entryChannel: 'DSM_APP';
   paymentLines: BillPaymentLineInput[];
+  // Section 17.6 — offline queue idempotency key. Only set when this bill
+  // is being submitted from offlineBillQueue.ts (either the first sync
+  // attempt or a retry of the same queued entry) — see that file's comment.
+  // Omitted for a normal live Save, same as every other entry point.
+  clientRequestId?: string;
 }
 
 export interface BillPaymentLine {
@@ -76,7 +81,18 @@ export interface Bill {
 // exceeded under BLOCK mode — Section 3.4A) and "server unreachable". Per
 // CLAUDE.md, anything touching bill amounts/points needs human review before
 // merge — this client just relays what the server decided, it never guesses.
-export class BillsApiError extends Error {}
+//
+// Section 17.6 — isNetworkError distinguishes the two cases for
+// NewBillScreen's offline-queue decision: a REJECTED bill (imbalanced
+// payment, blacklisted vehicle, missing name/vehicle) must never be queued
+// for silent retry — retrying an invalid payload without fixing it just
+// wastes a sync attempt and hides a real problem from the DSM. Only an
+// UNREACHABLE server is something retrying later can actually fix.
+export class BillsApiError extends Error {
+  constructor(message: string, public readonly isNetworkError: boolean = false) {
+    super(message);
+  }
+}
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -96,12 +112,14 @@ export async function createBill(input: CreateBillInput, accessToken: string): P
         signal: controller.signal,
       });
     } catch {
-      // Same network/timeout handling as authApi.ts. Bill entry is NOT part
-      // of the offline-queue slice in this task (Section 15.3 offline
-      // queueing/sync is explicitly out of scope here) — this call needs a
-      // live round trip and surfaces failure rather than silently queuing.
+      // Same network/timeout handling as authApi.ts. Section 17.6 —
+      // NewBillScreen decides what to do with a network-unreachable failure
+      // (queue it via offlineBillQueue.ts); this function's job stays
+      // narrow — attempt the live call, report clearly whether the failure
+      // was reachability or a real rejection.
       throw new BillsApiError(
         "Can't reach the server — check EXPO_PUBLIC_API_BASE_URL in your .env file.",
+        true,
       );
     }
   } finally {

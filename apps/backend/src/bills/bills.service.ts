@@ -70,6 +70,25 @@ export class BillsService {
   // authenticated caller) and passes it as its own argument, so a request
   // can no longer attribute bill entry to a different staff member.
   async create(dto: CreateBillDto, enteredById: string) {
+    // Section 17.6 — DSM app offline queue idempotency. If this exact
+    // clientRequestId already produced a bill (the original request
+    // actually succeeded server-side, but the DSM app never saw the
+    // response — e.g. connectivity dropped mid-reply — and its offline
+    // queue retried the same queued entry), return that ORIGINAL bill
+    // instead of re-running every validation/side-effect below and
+    // creating a duplicate. Skips the loyaltyWarning re-augmentation on
+    // replay (a one-time notice at original creation, not worth
+    // re-deriving here) — a documented simplification, not a bug.
+    if (dto.clientRequestId) {
+      const existing = await this.prisma.bill.findFirst({
+        where: { clientRequestId: dto.clientRequestId },
+        include: { paymentLines: true, customer: true },
+      });
+      if (existing) {
+        return existing;
+      }
+    }
+
     // Section 4 — Vehicle Number and Customer Name are each individually
     // optional, but at least one of the two must be present. Enforced here
     // regardless of what the web/DSM UI does or doesn't hide.
@@ -272,6 +291,7 @@ export class BillsService {
             entryChannel: dto.entryChannel,
             loyaltyPointsEarned: loyaltyCalc?.points ?? 0,
             loyaltyBasisUsed: loyaltyCalc?.basis ?? null,
+            clientRequestId: dto.clientRequestId,
             paymentLines: {
               create: dto.paymentLines.map((line) => ({
                 pumpId,
@@ -776,6 +796,20 @@ export class BillsService {
 
   private handlePrismaError(error: unknown, actorId: string): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      // Section 17.6 — two near-simultaneous retries of the same offline-
+      // queued bill both missed the findFirst() replay check above and both
+      // tried to create — the DB's own @@unique([pumpId, clientRequestId])
+      // catches what the check couldn't. Surfaced as a clean 409 (the DSM
+      // app's queue will simply retry, and the next attempt's findFirst()
+      // will find the row this race just created) rather than an opaque 500.
+      if (error.code === 'P2002') {
+        const target = (error.meta as { target?: string[] } | undefined)?.target ?? [];
+        if (target.includes('clientRequestId')) {
+          throw new ConflictException(
+            'This bill was just created by a concurrent retry — reload and it will appear',
+          );
+        }
+      }
       if (error.code === 'P2003') {
         // Foreign key violation. Usually the actor id (enteredById /
         // editedById / deletedById) doesn't reference a real Staff record

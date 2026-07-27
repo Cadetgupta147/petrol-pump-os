@@ -8,6 +8,12 @@ import type { CustomerLookup, CustomerSummary } from '../api/customersApi';
 // All three are real network-calling modules in production; every test in
 // this file exercises the UI/state layer only, never an actual fetch.
 
+// NewBillScreen imports offlineBillQueue.ts (Section 17.6), which imports
+// AsyncStorage — the real native module isn't available under Jest.
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
 jest.mock('../api/customersApi', () => ({
   hasMemberIdShape: jest.fn(() => true),
   getCustomerByMemberId: jest.fn(),
@@ -46,8 +52,10 @@ jest.mock('../api/billsApi', () => {
 });
 
 import { getCustomerByMemberId, listCustomers } from '../api/customersApi';
-import { createBill } from '../api/billsApi';
+import { createBill, BillsApiError } from '../api/billsApi';
 import { checkVehicleBlacklist } from '../api/vehicleBlacklistApi';
+import { getQueuedBills } from '../offline/offlineBillQueue';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const mockGetCustomerByMemberId = getCustomerByMemberId as jest.MockedFunction<
   typeof getCustomerByMemberId
@@ -104,11 +112,12 @@ function fillBaseBillFields(getByTestId: ReturnType<typeof render>['getByTestId'
   fireEvent.changeText(getByTestId('litres-input'), '10');
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
   mockGetCustomerByMemberId.mockReset();
   mockListCustomers.mockReset();
   mockCreateBill.mockReset();
+  await AsyncStorage.clear();
 });
 
 // Note: the pure hasCreditCustomerConflict decision rule has its own direct
@@ -379,5 +388,51 @@ describe('NewBillScreen — creditCustomerLabel stays in sync', () => {
     expect(queryByTestId('credit-customer-label')).toBeNull();
     expect(queryByTestId('scanned-customer-chip')).toBeNull();
     expect(getByTestId('scan-qr-button')).toBeTruthy();
+  });
+});
+
+// Section 17.6 — DSM app offline bill queue.
+describe('NewBillScreen — offline queue on Save', () => {
+  it('queues the bill and shows "Saved offline" when createBill fails with a network error', async () => {
+    mockCreateBill.mockRejectedValue(new BillsApiError("Can't reach the server", true));
+
+    const { getByTestId } = render(<NewBillScreen staff={staff} accessToken="token" onBack={jest.fn()} />);
+
+    fillBaseBillFields(getByTestId);
+    fireEvent.changeText(getByTestId('vehicle-number-input'), 'DL01AA1111');
+    fireEvent.press(getByTestId('add-payment-button'));
+    fireEvent.press(getByTestId('payment-method-CASH'));
+    fireEvent.changeText(getByTestId('payment-amount-input'), '500');
+    fireEvent.press(getByTestId('confirm-add-payment-button'));
+
+    fireEvent.press(getByTestId('save-bill-button'));
+
+    await waitFor(() => expect(getByTestId('bill-queued-offline')).toBeTruthy());
+
+    const queued = await getQueuedBills();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].input.vehicleNumber).toBe('DL01AA1111');
+  });
+
+  it('does NOT queue and shows the normal error banner when the server rejects the bill (not a network error)', async () => {
+    mockCreateBill.mockRejectedValue(new BillsApiError('Payment lines do not balance', false));
+
+    const { getByTestId, queryByTestId } = render(
+      <NewBillScreen staff={staff} accessToken="token" onBack={jest.fn()} />,
+    );
+
+    fillBaseBillFields(getByTestId);
+    fireEvent.changeText(getByTestId('vehicle-number-input'), 'DL01AA1111');
+    fireEvent.press(getByTestId('add-payment-button'));
+    fireEvent.press(getByTestId('payment-method-CASH'));
+    fireEvent.changeText(getByTestId('payment-amount-input'), '500');
+    fireEvent.press(getByTestId('confirm-add-payment-button'));
+
+    fireEvent.press(getByTestId('save-bill-button'));
+
+    await waitFor(() => expect(getByTestId('submit-error')).toBeTruthy());
+    expect(getByTestId('submit-error')).toHaveTextContent('Payment lines do not balance');
+    expect(queryByTestId('bill-queued-offline')).toBeNull();
+    expect(await getQueuedBills()).toHaveLength(0);
   });
 });

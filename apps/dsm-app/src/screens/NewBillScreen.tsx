@@ -22,6 +22,7 @@ import type { CustomerLookup, CustomerSummary } from '../api/customersApi';
 import { calculatePointsPreview, type PointsPreview } from '../api/loyaltyApi';
 import { checkVehicleBlacklist } from '../api/vehicleBlacklistApi';
 import { generateAndSaveReceiptPdf, ReceiptError, shareReceiptPdf, type SavedReceipt } from '../receipts/billReceipt';
+import { enqueueBill } from '../offline/offlineBillQueue';
 import { AddPaymentModal } from './AddPaymentModal';
 import { CreditCustomerPicker } from './CreditCustomerPicker';
 import { hasCreditCustomerConflict } from './creditCustomerConflict';
@@ -110,6 +111,13 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successBill, setSuccessBill] = useState<Bill | null>(null);
+  // Section 17.6 — set instead of successBill when Save fails with a
+  // network-unreachable error: the bill is queued locally (offlineBillQueue.ts)
+  // rather than lost, and the DSM sees a distinct "saved offline" state
+  // (no receipt to print yet — there's no server-assigned bill id until it
+  // actually syncs) rather than the red submitError treatment, since this
+  // isn't a rejection the DSM needs to fix anything about.
+  const [queuedOffline, setQueuedOffline] = useState(false);
 
   // Set when a QR scan resolves to a customer who is NOT the one already
   // attached to an existing CREDIT payment line — see handleCustomerResolved.
@@ -359,6 +367,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     setScannedCustomer(null);
     setPointsPreview(null);
     setSuccessBill(null);
+    setQueuedOffline(false);
     setSubmitError(null);
     setScanConflictError(null);
     setSavingReceipt(false);
@@ -402,33 +411,61 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
     if (!canSave) return;
     setSubmitting(true);
     setSubmitError(null);
+    const input = {
+      customerId: effectiveCustomerId,
+      quickAddCustomer: creditQuickAdd,
+      vehicleNumber: vehicleNumber.trim() || undefined,
+      customerName: customerName.trim() || undefined,
+      amount,
+      litres,
+      productType,
+      entryChannel: 'DSM_APP' as const,
+      paymentLines: lines.map(({ paymentType, amount: lineAmount, direction }) => ({
+        paymentType,
+        amount: lineAmount,
+        direction,
+      })),
+    };
     try {
-      const bill = await createBill(
-        {
-          customerId: effectiveCustomerId,
-          quickAddCustomer: creditQuickAdd,
-          vehicleNumber: vehicleNumber.trim() || undefined,
-          customerName: customerName.trim() || undefined,
-          amount,
-          litres,
-          productType,
-          entryChannel: 'DSM_APP',
-          paymentLines: lines.map(({ paymentType, amount: lineAmount, direction }) => ({
-            paymentType,
-            amount: lineAmount,
-            direction,
-          })),
-        },
-        accessToken,
-      );
+      const bill = await createBill(input, accessToken);
       setSuccessBill(bill);
     } catch (error) {
-      const message = error instanceof BillsApiError ? error.message : 'Something went wrong. Please try again.';
-      setSubmitError(message);
+      // Section 17.6 — a network-unreachable failure is queued locally
+      // instead of losing the bill; a real rejection (imbalanced payment,
+      // blacklisted vehicle, missing name/vehicle) is shown as before and
+      // must NOT be queued — retrying it unmodified would just fail again
+      // and hide the actual problem.
+      if (error instanceof BillsApiError && error.isNetworkError) {
+        await enqueueBill(input);
+        setQueuedOffline(true);
+      } else {
+        const message = error instanceof BillsApiError ? error.message : 'Something went wrong. Please try again.';
+        setSubmitError(message);
+      }
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (queuedOffline) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.warningBanner} testID="bill-queued-offline">
+          <Text style={[styles.successTitle, { color: '#7a5b00' }]}>Saved offline</Text>
+          <Text style={styles.resultLine}>
+            Couldn&rsquo;t reach the server, so this bill was saved on the phone instead. It will sync
+            automatically next time you&rsquo;re online — check the DSM Home screen for pending count.
+          </Text>
+        </View>
+        <Pressable style={styles.button} onPress={resetForm} testID="new-bill-again-button-offline">
+          <Text style={styles.buttonText}>Enter Another Bill</Text>
+        </Pressable>
+        <Pressable style={styles.backButton} onPress={onBack} testID="new-bill-back-button-offline">
+          <Text style={styles.backButtonText}>Back to Menu</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   if (successBill) {
     return (

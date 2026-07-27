@@ -79,4 +79,13 @@ export class CreateBillDto {
   @Type(() => CreateBillPaymentLineDto)
   @ArrayMinSize(1)
   paymentLines!: CreateBillPaymentLineDto[];
+
+  // Section 17.6 — DSM app offline queue idempotency key. Client-generated
+  // (a UUID minted when the bill is first queued locally on the device, not
+  // at submit time) — see BillsService.create()'s comment for the replay
+  // semantics. Optional: only the DSM app's offline queue sends this; every
+  // other entry point (web portal, DSM app when online) omits it.
+  @IsOptional()
+  @IsString()
+  clientRequestId?: string;
 }

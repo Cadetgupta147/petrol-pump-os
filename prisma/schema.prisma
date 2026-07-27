@@ -454,6 +454,17 @@ model Bill {
   timestamp           DateTime      @default(now())
   loyaltyPointsEarned Float         @default(0)
   loyaltyBasisUsed    EarningBasis?
+  // Section 17.6 — DSM app offline queue idempotency key. Client-generated
+  // (a UUID minted when the bill is first queued locally, not at submit
+  // time), so a retried sync of the same queued bill after a dropped
+  // response — the request succeeded server-side but the DSM app never saw
+  // the reply, e.g. connectivity dropped mid-response — returns the
+  // ORIGINAL bill instead of creating a duplicate. Nullable: every other
+  // entry point (web portal, DSM app when online) doesn't send one and
+  // never needs to. @@unique is scoped per-pump like every other compound
+  // key in this schema (Postgres treats each NULL as distinct, so many
+  // bills with clientRequestId = null coexist fine).
+  clientRequestId     String?
 
   lastEditedBy   Staff?    @relation("BillLastEditedBy", fields: [lastEditedById], references: [id])
   lastEditedById String?
@@ -466,6 +477,8 @@ model Bill {
   paymentLines        BillPaymentLine[]
   auditLogs           BillAuditLog[]
   creditAlerts        CreditLimitAlert[]
+
+  @@unique([pumpId, clientRequestId])
 }
 
 // Immutable audit trail for Bill — one row per create/edit/delete action,
