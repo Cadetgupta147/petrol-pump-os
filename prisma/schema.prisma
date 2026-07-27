@@ -748,6 +748,16 @@ model Nozzle {
   label           String // dealer-defined display label shown in every dropdown, e.g. "N1", "P3"
   item            Item     @relation(fields: [itemId], references: [id])
   itemId          String
+  // Which physical underground Tank this nozzle is plumbed to. Nullable +
+  // optional on purpose: closeShift()/correctMeterReading() (meter-readings
+  // module) fall back to matching Tank.productType == Item.name when this is
+  // unset, so existing/legacy nozzles keep auto-deducting stock exactly as
+  // before this field existed. Once set, it's the authoritative match —
+  // required to disambiguate pumps with more than one tank of the same
+  // product (e.g. two Diesel tanks feeding different nozzles), which a
+  // productType string alone can never resolve.
+  tank            Tank?    @relation(fields: [tankId], references: [id])
+  tankId          String?
   startingReading Float // one-time baseline; superseded by carry-forward after the first shift
   rolloverAt      Float? // physical rollover point for meters that reset to 0; null = never rolls over
   isActive        Boolean  @default(true) // soft-disable instead of delete once a nozzle has reading history
@@ -861,6 +871,7 @@ model Tank {
   dipReadings         DipReading[]
   generatorDieselLogs GeneratorDieselLog[]
   machineTestingLogs  MachineTestingLog[]
+  nozzles             Nozzle[]
 }
 
 // Section 7.1/7.2 — physical DIP stick reading, compared against the

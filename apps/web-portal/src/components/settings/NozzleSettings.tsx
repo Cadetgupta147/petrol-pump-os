@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { createNozzle, getNozzles, updateNozzle } from '../../api/nozzles';
 import { getItems } from '../../api/items';
+import { getTanks } from '../../api/tanks';
 import { StatusBadge } from '../common/StatusBadge';
 import { ApiError } from '../../api/client';
-import type { Item, Nozzle } from '../../api/types';
+import type { Item, Nozzle, Tank } from '../../api/types';
 
 interface NozzleSettingsProps {
   canManage: boolean;
@@ -24,10 +25,12 @@ interface NozzleSettingsProps {
 export function NozzleSettings({ canManage }: NozzleSettingsProps) {
   const [nozzles, setNozzles] = useState<Nozzle[] | null>(null);
   const [items, setItems] = useState<Item[]>([]);
+  const [tanks, setTanks] = useState<Tank[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [label, setLabel] = useState('');
   const [itemId, setItemId] = useState('');
+  const [tankId, setTankId] = useState('');
   const [startingReading, setStartingReading] = useState('');
   const [rolloverAt, setRolloverAt] = useState('');
   const [adding, setAdding] = useState(false);
@@ -36,6 +39,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [editItemId, setEditItemId] = useState('');
+  const [editTankId, setEditTankId] = useState('');
   const [editStartingReading, setEditStartingReading] = useState('');
   const [editRolloverAt, setEditRolloverAt] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
@@ -74,6 +78,11 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
         if (!cancelled) setItems(result);
       })
       .catch(() => undefined);
+    getTanks()
+      .then((result) => {
+        if (!cancelled) setTanks(result);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -87,11 +96,13 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
       await createNozzle({
         label: label.trim(),
         itemId,
+        ...(tankId && { tankId }),
         startingReading: Number(startingReading),
         ...(rolloverAt.trim() && { rolloverAt: Number(rolloverAt) }),
       });
       setLabel('');
       setItemId('');
+      setTankId('');
       setStartingReading('');
       setRolloverAt('');
       await loadNozzles();
@@ -106,6 +117,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
     setEditingId(nozzle.id);
     setEditLabel(nozzle.label);
     setEditItemId(nozzle.itemId);
+    setEditTankId(nozzle.tankId ?? '');
     setEditStartingReading(String(nozzle.startingReading));
     setEditRolloverAt(nozzle.rolloverAt != null ? String(nozzle.rolloverAt) : '');
     setEditError(null);
@@ -119,10 +131,14 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
     try {
       // Backend rejects (409) the startingReading portion of this if the
       // nozzle already has shift history — surfaced as-is, not re-checked
-      // client-side (see UpdateNozzleRequest's comment).
+      // client-side (see UpdateNozzleRequest's comment). clearTank is set
+      // whenever the "No tank linked" option is chosen — a plain
+      // tankId: undefined wouldn't unlink an existing link (see that
+      // request type's comment).
       await updateNozzle(editingId, {
         label: editLabel.trim(),
         itemId: editItemId,
+        ...(editTankId ? { tankId: editTankId } : { clearTank: true }),
         startingReading: Number(editStartingReading),
         rolloverAt: editRolloverAt.trim() ? Number(editRolloverAt) : undefined,
       });
@@ -173,6 +189,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                 <tr>
                   <th>Label</th>
                   <th>Item</th>
+                  <th>Tank</th>
                   <th className="num">Starting reading</th>
                   <th className="num">Rollover at</th>
                   <th className="num">Next opening reading</th>
@@ -184,7 +201,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                 {nozzles.map((nozzle) =>
                   editingId === nozzle.id ? (
                     <tr key={nozzle.id}>
-                      <td colSpan={canManage ? 7 : 6}>
+                      <td colSpan={canManage ? 8 : 7}>
                         <form
                           onSubmit={(e) => {
                             void handleSaveEdit(e);
@@ -205,6 +222,18 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                             {items.map((item) => (
                               <option key={item.id} value={item.id}>
                                 {item.name}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={editTankId}
+                            onChange={(e) => setEditTankId(e.target.value)}
+                            title="Which physical tank this nozzle draws from — leave unset to fall back to matching by product."
+                          >
+                            <option value="">No tank linked</option>
+                            {tanks.map((tank) => (
+                              <option key={tank.id} value={tank.id}>
+                                {tank.productType}
                               </option>
                             ))}
                           </select>
@@ -247,6 +276,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                     <tr key={nozzle.id}>
                       <td style={{ fontWeight: 700 }}>{nozzle.label}</td>
                       <td>{nozzle.item.name}</td>
+                      <td>{nozzle.tank ? nozzle.tank.productType : <span className="card-sub">Not linked</span>}</td>
                       <td className="num">{nozzle.startingReading.toFixed(1)}</td>
                       <td className="num">{nozzle.rolloverAt != null ? nozzle.rolloverAt.toFixed(2) : '—'}</td>
                       <td className="num">{nozzle.nextOpeningReading.toFixed(1)}</td>
@@ -316,6 +346,20 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
               </select>
               {items.length === 0 && (
                 <div className="card-sub">No items registered yet — add one above first.</div>
+              )}
+            </div>
+            <div className="form-field" style={{ marginBottom: 0 }}>
+              <label htmlFor="nz-tank">Tank (optional)</label>
+              <select id="nz-tank" value={tankId} onChange={(e) => setTankId(e.target.value)}>
+                <option value="">No tank linked</option>
+                {tanks.map((tank) => (
+                  <option key={tank.id} value={tank.id}>
+                    {tank.productType}
+                  </option>
+                ))}
+              </select>
+              {tanks.length === 0 && (
+                <div className="card-sub">No tanks configured yet — add one in Tank Master above.</div>
               )}
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>

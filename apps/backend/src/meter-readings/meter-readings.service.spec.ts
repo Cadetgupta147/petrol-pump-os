@@ -62,7 +62,7 @@ describe('MeterReadingsService', () => {
       count: jest.Mock;
     };
     nozzle: { findUnique: jest.Mock; findMany: jest.Mock };
-    tank: { findFirst: jest.Mock; update: jest.Mock };
+    tank: { findFirst: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
     bill: { aggregate: jest.Mock };
     shiftSalesSummary: { findFirst: jest.Mock };
     rateHistory: { findFirst: jest.Mock };
@@ -88,7 +88,7 @@ describe('MeterReadingsService', () => {
         findUnique: jest.fn().mockResolvedValue(activeNozzle),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      tank: { findFirst: jest.fn(), update: jest.fn() },
+      tank: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
       bill: { aggregate: jest.fn().mockResolvedValue({ _sum: { litres: null } }) },
       shiftSalesSummary: { findFirst: jest.fn().mockResolvedValue(null) }, // no walk-in reconciliation logged by default
       rateHistory: { findFirst: jest.fn() },
@@ -334,6 +334,60 @@ describe('MeterReadingsService', () => {
       });
       expect(result).not.toHaveProperty('tankWarning');
       expect(result.litresSold).toBe(50);
+    });
+
+    it('prefers the nozzle-linked tank (Nozzle.tankId) over a productType match', async () => {
+      const linkedNozzle = { ...activeNozzle, tankId: 'tank-linked' };
+      prisma.meterReading.findUnique.mockResolvedValue({
+        ...openShiftRow,
+        nozzle: linkedNozzle,
+      });
+      prisma.meterReading.update.mockResolvedValue({
+        ...openShiftRow,
+        closingReading: 150,
+        shiftEnd: new Date(),
+        nozzle: linkedNozzle,
+      });
+      prisma.tank.findUnique.mockResolvedValue({
+        id: 'tank-linked',
+        productType: 'petrol',
+        currentStockLitres: 5000,
+      });
+      prisma.tank.update.mockResolvedValue({});
+
+      const result = await service.closeShift('mr-1', { closingReading: 150 }, dsmCaller);
+
+      expect(prisma.tank.findUnique).toHaveBeenCalledWith({ where: { id: 'tank-linked' } });
+      expect(prisma.tank.findFirst).not.toHaveBeenCalled();
+      expect(prisma.tank.update).toHaveBeenCalledWith({
+        where: { id: 'tank-linked' },
+        data: { currentStockLitres: { decrement: 50 } },
+      });
+      expect(result).not.toHaveProperty('tankWarning');
+    });
+
+    it('returns tankWarning when the nozzle-linked tank no longer exists, without falling back to productType matching', async () => {
+      const linkedNozzle = { ...activeNozzle, tankId: 'tank-deleted' };
+      prisma.meterReading.findUnique.mockResolvedValue({
+        ...openShiftRow,
+        nozzle: linkedNozzle,
+      });
+      prisma.meterReading.update.mockResolvedValue({
+        ...openShiftRow,
+        closingReading: 150,
+        shiftEnd: new Date(),
+        nozzle: linkedNozzle,
+      });
+      prisma.tank.findUnique.mockResolvedValue(null);
+
+      const result = await service.closeShift('mr-1', { closingReading: 150 }, dsmCaller);
+
+      expect(prisma.tank.findFirst).not.toHaveBeenCalled();
+      expect(prisma.tank.update).not.toHaveBeenCalled();
+      expect(result).toHaveProperty(
+        'tankWarning',
+        expect.stringContaining("linked tank no longer exists"),
+      );
     });
 
     it('returns tankWarning (does NOT block the close) when no Tank matches the productType', async () => {

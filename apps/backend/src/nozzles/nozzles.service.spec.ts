@@ -62,10 +62,11 @@ describe('NozzlesService', () => {
           pumpId: 'pump-1',
           label: 'N1',
           itemId: 'item-1',
+          tankId: undefined,
           startingReading: 1000,
           rolloverAt: undefined,
         },
-        include: { item: true },
+        include: { item: true, tank: true },
       });
       expect(result.nextOpeningReading).toBe(1000);
     });
@@ -180,6 +181,47 @@ describe('NozzlesService', () => {
       expect(prisma.nozzle.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'n1' }, data: { isActive: true } }),
       );
+    });
+  });
+
+  // Nozzle-to-Tank linking (Section 3.3.1 — "which physical tank does this
+  // nozzle draw from"). clearTank needs its own flag because a plain
+  // `tankId: undefined` PATCH body is indistinguishable from "not sent" —
+  // see UpdateNozzleDto's comment.
+  describe('update — tank linking', () => {
+    it('sets tankId when provided', async () => {
+      prisma.nozzle.findUnique.mockResolvedValue({ id: 'n1', label: 'N1', startingReading: 500 });
+      prisma.nozzle.update.mockResolvedValue({ id: 'n1', tankId: 'tank-1' });
+
+      await service.update('n1', { tankId: 'tank-1' });
+
+      expect(prisma.nozzle.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'n1' }, data: { tankId: 'tank-1' } }),
+      );
+    });
+
+    it('clearTank unlinks the tank even if a stray tankId is also present', async () => {
+      prisma.nozzle.findUnique.mockResolvedValue({ id: 'n1', label: 'N1', startingReading: 500 });
+      prisma.nozzle.update.mockResolvedValue({ id: 'n1', tankId: null });
+
+      await service.update('n1', { clearTank: true, tankId: 'tank-1' });
+
+      expect(prisma.nozzle.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'n1' }, data: { tankId: null } }),
+      );
+    });
+
+    it('leaves tankId untouched when neither tankId nor clearTank is sent', async () => {
+      prisma.nozzle.findUnique.mockResolvedValue({ id: 'n1', label: 'N1', startingReading: 500 });
+      prisma.nozzle.update.mockResolvedValue({ id: 'n1' });
+
+      await service.update('n1', { label: 'N1-renamed' });
+
+      expect(prisma.nozzle.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'n1' }, data: { label: 'N1-renamed' } }),
+      );
+      const call = prisma.nozzle.update.mock.calls[0][0] as { data: object };
+      expect(call.data).not.toHaveProperty('tankId');
     });
   });
 });

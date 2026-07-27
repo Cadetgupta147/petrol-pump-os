@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TanksService, DIP_VARIANCE_TOLERANCE_LITRES } from './tanks.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,10 +19,14 @@ describe('TanksService', () => {
       findUniqueOrThrow: jest.Mock;
       findMany: jest.Mock;
       update: jest.Mock;
+      delete: jest.Mock;
     };
-    dipReading: { create: jest.Mock; findMany: jest.Mock };
-    densityLog: { create: jest.Mock };
+    dipReading: { create: jest.Mock; findMany: jest.Mock; count: jest.Mock };
+    densityLog: { create: jest.Mock; count: jest.Mock };
     densityRangeConfig: { findMany: jest.Mock };
+    generatorDieselLog: { count: jest.Mock };
+    machineTestingLog: { count: jest.Mock };
+    nozzle: { count: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -44,10 +48,14 @@ describe('TanksService', () => {
         findUniqueOrThrow: jest.fn(),
         findMany: jest.fn(),
         update: jest.fn(),
+        delete: jest.fn(),
       },
-      dipReading: { create: jest.fn(), findMany: jest.fn() },
-      densityLog: { create: jest.fn() },
+      dipReading: { create: jest.fn(), findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
+      densityLog: { create: jest.fn(), count: jest.fn().mockResolvedValue(0) },
       densityRangeConfig: { findMany: jest.fn().mockResolvedValue([]) },
+      generatorDieselLog: { count: jest.fn().mockResolvedValue(0) },
+      machineTestingLog: { count: jest.fn().mockResolvedValue(0) },
+      nozzle: { count: jest.fn().mockResolvedValue(0) },
       $transaction: jest.fn((cb: TxCallback) => cb(prisma)),
     };
 
@@ -226,6 +234,53 @@ describe('TanksService', () => {
 
         expect(prisma.densityLog.create).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  // Section 7.1 — Tank Master delete. Rule-heavy per CLAUDE.md: this is the
+  // "add or delete a tank" gate that stops real inventory/history from
+  // silently vanishing (mirrors NozzlesService.update()'s open-shift/
+  // shift-history guards, adapted to Tank's hard-delete instead of a
+  // soft-disable flag).
+  describe('remove', () => {
+    it('404s on an unknown tankId', async () => {
+      prisma.tank.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove('nope')).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.tank.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks deletion when currentStockLitres is non-zero', async () => {
+      prisma.tank.findUnique.mockResolvedValue({ ...tank, currentStockLitres: 120 });
+
+      await expect(service.remove('tank-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.tank.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks deletion while a nozzle is still linked to this tank', async () => {
+      prisma.tank.findUnique.mockResolvedValue({ ...tank, currentStockLitres: 0 });
+      prisma.nozzle.count.mockResolvedValue(1);
+
+      await expect(service.remove('tank-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.tank.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks deletion when the tank has recorded DIP/density/generator/testing history', async () => {
+      prisma.tank.findUnique.mockResolvedValue({ ...tank, currentStockLitres: 0 });
+      prisma.dipReading.count.mockResolvedValue(2);
+
+      await expect(service.remove('tank-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.tank.delete).not.toHaveBeenCalled();
+    });
+
+    it('deletes a tank with zero stock, no linked nozzles, and no history', async () => {
+      prisma.tank.findUnique.mockResolvedValue({ ...tank, currentStockLitres: 0 });
+      prisma.tank.delete.mockResolvedValue({ id: 'tank-1' });
+
+      const result = await service.remove('tank-1');
+
+      expect(prisma.tank.delete).toHaveBeenCalledWith({ where: { id: 'tank-1' } });
+      expect(result).toEqual({ id: 'tank-1' });
     });
   });
 

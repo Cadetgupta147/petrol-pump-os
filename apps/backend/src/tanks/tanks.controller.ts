@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -49,6 +49,11 @@ export class TanksController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateTankDto) {
     return this.tanksService.update(id, dto);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.tanksService.remove(id);
   }
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)

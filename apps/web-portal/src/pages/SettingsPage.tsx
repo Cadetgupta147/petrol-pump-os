@@ -8,6 +8,7 @@ import { useAuth } from '../context/useAuth';
 import { todayIsoDate } from '../utils/format';
 import { ItemSettings } from '../components/settings/ItemSettings';
 import { LubricantStockSettings } from '../components/settings/LubricantStockSettings';
+import { TankSettings } from '../components/settings/TankSettings';
 import { NozzleSettings } from '../components/settings/NozzleSettings';
 import { ShiftScheduleSettings } from '../components/settings/ShiftScheduleSettings';
 import type { BusinessProfile } from '../api/types';
@@ -28,6 +29,7 @@ export function SettingsPage() {
   const { staff } = useAuth();
   const isOwner = staff?.role === 'OWNER';
   const canManageNozzles = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT';
+  const canManageTanks = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT';
   const canManageItems =
     staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT' || staff?.role === 'MANAGER';
 
@@ -45,6 +47,16 @@ export function SettingsPage() {
   const [exportTo, setExportTo] = useState(todayIsoDate());
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+
+  // TanksPage's first-time-user empty state links here as
+  // `/settings#tank-master` (Section 7.1) — React Router doesn't auto-scroll
+  // to a hash on client-side navigation the way a real page load would, so
+  // this does it manually once the section it's targeting has rendered.
+  useEffect(() => {
+    if (!window.location.hash) return;
+    const target = document.getElementById(window.location.hash.slice(1));
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,6 +190,8 @@ export function SettingsPage() {
         <ItemSettings canManage={canManageItems} />
 
         <LubricantStockSettings canManage={canManageItems} />
+
+        <TankSettings canManage={canManageTanks} />
 
         <NozzleSettings canManage={canManageNozzles} />
 

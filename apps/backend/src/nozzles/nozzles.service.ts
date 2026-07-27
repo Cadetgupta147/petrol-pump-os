@@ -33,10 +33,11 @@ export class NozzlesService {
           pumpId: requireTenantContext().pumpId,
           label: dto.label.trim(),
           itemId: dto.itemId,
+          tankId: dto.tankId,
           startingReading: dto.startingReading,
           rolloverAt: dto.rolloverAt,
         },
-        include: { item: true },
+        include: { item: true, tank: true },
       });
       return this.withNextOpeningReading(created);
     } catch (error) {
@@ -54,7 +55,7 @@ export class NozzlesService {
     const nozzles = await this.prisma.nozzle.findMany({
       where: includeInactive ? undefined : { isActive: true },
       orderBy: { label: 'asc' },
-      include: { item: true },
+      include: { item: true, tank: true },
     });
     return Promise.all(nozzles.map((nozzle) => this.withNextOpeningReading(nozzle)));
   }
@@ -62,7 +63,7 @@ export class NozzlesService {
   async findOne(id: string) {
     const nozzle = await this.prisma.nozzle.findUnique({
       where: { id },
-      include: { item: true },
+      include: { item: true, tank: true },
     });
     if (!nozzle) {
       throw new NotFoundException(`Nozzle ${id} not found`);
@@ -116,11 +117,15 @@ export class NozzlesService {
         data: {
           ...(dto.label !== undefined && { label: dto.label.trim() }),
           ...(dto.itemId !== undefined && { itemId: dto.itemId }),
+          // clearTank wins over a same-request tankId (shouldn't both be
+          // sent, but explicit-unlink takes precedence if they are) — see
+          // UpdateNozzleDto's comment for why unlinking needs its own flag.
+          ...(dto.clearTank ? { tankId: null } : dto.tankId !== undefined && { tankId: dto.tankId }),
           ...(dto.startingReading !== undefined && { startingReading: dto.startingReading }),
           ...(dto.rolloverAt !== undefined && { rolloverAt: dto.rolloverAt }),
           ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         },
-        include: { item: true },
+        include: { item: true, tank: true },
       });
       return this.withNextOpeningReading(updated);
     } catch (error) {
@@ -155,7 +160,9 @@ export class NozzlesService {
         );
       }
       if (error.code === 'P2003') {
-        throw new BadRequestException('itemId does not reference an existing Item record');
+        throw new BadRequestException(
+          'itemId or tankId does not reference an existing Item/Tank record',
+        );
       }
     }
     throw error;

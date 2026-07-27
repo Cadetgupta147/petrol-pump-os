@@ -206,11 +206,18 @@ export interface UpdateItemRequest {
 // rolloverAt is null unless this nozzle's physical meter is configured to
 // roll over to zero at a fixed digit count (older mechanical/electronic
 // totalizers) — see CloseShiftRequest.meterRolledOver.
+// tankId/tank — Section 3.3.1 nozzle-to-tank link: which physical
+// underground tank this nozzle is plumbed to. Nullable — an unlinked nozzle
+// falls back to the backend's productType-string match against Tank
+// (MeterReadingsService.deductTankStock()) exactly like before this field
+// existed.
 export interface Nozzle {
   id: string;
   label: string;
   itemId: string;
   item: Item;
+  tankId: string | null;
+  tank: Tank | null;
   startingReading: number;
   rolloverAt: number | null;
   isActive: boolean;
@@ -222,6 +229,7 @@ export interface Nozzle {
 export interface CreateNozzleRequest {
   label: string;
   itemId: string;
+  tankId?: string;
   startingReading: number;
   rolloverAt?: number;
 }
@@ -230,10 +238,14 @@ export interface CreateNozzleRequest {
 // NozzlesService.update() rejects a startingReading change once the nozzle
 // has any shift history (409), and rejects isActive:false while an open
 // shift exists on this nozzle (409) — both surfaced as an ApiError, not
-// re-validated client-side.
+// re-validated client-side. clearTank unlinks this nozzle's tank — a plain
+// `tankId: undefined` is indistinguishable from "not sent" (see the DTO's
+// comment), so unlinking needs this separate flag.
 export interface UpdateNozzleRequest {
   label?: string;
   itemId?: string;
+  tankId?: string;
+  clearTank?: boolean;
   startingReading?: number;
   rolloverAt?: number;
   isActive?: boolean;
@@ -587,6 +599,18 @@ export interface Tank {
   lastDipAt: string | null;
   calibrationChartRef: string | null;
 }
+
+// Mirrors apps/backend/src/tanks/dto/create-tank.dto.ts — Tank Master
+// (Settings), add/delete just like Nozzle Master.
+export interface CreateTankRequest {
+  productType: string;
+  capacityLitres: number;
+  currentStockLitres: number;
+  calibrationChartRef?: string;
+}
+
+// Mirrors apps/backend/src/tanks/dto/update-tank.dto.ts — any subset.
+export type UpdateTankRequest = Partial<CreateTankRequest>;
 
 // One physical DIP stick reading, as embedded in a VarianceReportRow (GET
 // /tanks/variance-report) — see TanksService.varianceReport(). Not the same

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { getTanks } from '../api/tanks';
@@ -8,10 +9,10 @@ import type { Tank } from '../api/types';
 
 // Section 7.1 — read-only Tank Stock view: one row per Tank, current stock
 // vs. capacity, last DIP reading, calibration chart reference. Tank
-// creation/editing isn't part of this slice (POST/PATCH /tanks are unused
-// here) — nothing in this codebase's UI creates a Tank row yet, matching
-// TanksController's own comment that PurchaseEntry/DipReading both assume a
-// Tank already exists.
+// creation/editing itself lives in Settings — Tank Master
+// (components/settings/TankSettings.tsx) — this page just displays levels;
+// the empty state below is a first-time-user nudge to go configure one, not
+// a duplicate add form.
 //
 // 45% fill-level threshold below is the same UI-only display judgment call
 // as components/dashboard/StockPanel.tsx's REORDER_THRESHOLD_PCT — not a
@@ -52,7 +53,14 @@ export function TanksPage() {
         {error && <div className="error-box">{error}</div>}
         {!error && !tanks && <div className="loading">Loading tanks…</div>}
         {!error && tanks && tanks.length === 0 && (
-          <div className="empty-box">No tanks configured yet.</div>
+          <div className="empty-box">
+            <div>No tanks configured yet — add this pump&rsquo;s first tank in Tank Master before stock can show up here.</div>
+            <div className="modal-actions">
+              <Link to="/settings#tank-master" className="export-btn">
+                + Add a tank in Tank Master
+              </Link>
+            </div>
+          </div>
         )}
         {!error && tanks && tanks.length > 0 && (
           <div className="table-card">

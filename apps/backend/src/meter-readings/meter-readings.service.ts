@@ -262,25 +262,55 @@ export class MeterReadingsService {
       include: { nozzle: { include: { item: true } } },
     });
 
-    let tankWarning: string | undefined;
-    if (!existing.productType) {
-      tankWarning =
-        'This shift has no productType recorded (legacy shift) — tank stock was not auto-deducted.';
-    } else {
-      const tank = await client.tank.findFirst({
-        where: { productType: existing.productType },
-      });
-      if (!tank) {
-        tankWarning = `No tank configured for product ${existing.productType} — tank stock was not auto-deducted.`;
-      } else {
-        await client.tank.update({
-          where: { id: tank.id },
-          data: { currentStockLitres: { decrement: litresSold } },
-        });
-      }
-    }
+    const tankWarning = await this.deductTankStock(existing.nozzle, existing.productType, litresSold, client);
 
     return { updated: updatedReading, tankWarning };
+  }
+
+  // Shared by closeOneReading() (litresSold, a plain decrement) and
+  // correctMeterReading() (delta between old/new litresSold, which can be
+  // negative — a correction that lowers litresSold gives fuel BACK to the
+  // tank). Tank resolution order, matching the schema comment on
+  // Nozzle.tankId:
+  //   1. nozzle.tankId, if this nozzle has been explicitly linked to a Tank
+  //      (Settings — Section 3.3.1 Nozzle Master) — authoritative, and the
+  //      only way to disambiguate two tanks holding the same product.
+  //   2. Otherwise, fall back to matching Tank.productType against this
+  //      shift's captured productType string (the pre-tankId behavior,
+  //      still needed for nozzles nobody has linked to a tank yet).
+  // Returns a tankWarning string (same shape as the old inline logic) when
+  // stock could NOT be adjusted — this never blocks the caller, exactly like
+  // the code it replaced.
+  private async deductTankStock(
+    nozzle: NozzleWithItem,
+    productType: string | null,
+    litres: number,
+    client: Prisma.TransactionClient,
+    options?: { forCorrection?: boolean },
+  ): Promise<string | undefined> {
+    const action = options?.forCorrection ? 'adjusted for this correction' : 'auto-deducted';
+
+    const tank = nozzle.tankId
+      ? await client.tank.findUnique({ where: { id: nozzle.tankId } })
+      : productType
+        ? await client.tank.findFirst({ where: { productType } })
+        : null;
+
+    if (tank) {
+      await client.tank.update({
+        where: { id: tank.id },
+        data: { currentStockLitres: { decrement: litres } },
+      });
+      return undefined;
+    }
+
+    if (nozzle.tankId) {
+      return `Nozzle ${nozzle.id}'s linked tank no longer exists — tank stock was not ${action}.`;
+    }
+    if (!productType) {
+      return `This shift has no productType recorded (legacy shift) and this nozzle has no linked tank — tank stock was not ${action}.`;
+    }
+    return `No tank configured for product ${productType} — tank stock was not ${action}.`;
   }
 
   // POST /meter-readings/batch-close — Meter Reading redesign (Section 3.3).
@@ -569,20 +599,9 @@ export class MeterReadingsService {
       if (dto.closingReading !== undefined && oldLitresSold !== null && newLitresSold !== null) {
         const delta = newLitresSold - oldLitresSold;
         if (delta !== 0) {
-          if (!existing.productType) {
-            warning =
-              'This shift has no productType recorded — tank stock was not adjusted for this correction.';
-          } else {
-            const tank = await tx.tank.findFirst({ where: { productType: existing.productType } });
-            if (!tank) {
-              warning = `No tank configured for product ${existing.productType} — tank stock was not adjusted for this correction.`;
-            } else {
-              await tx.tank.update({
-                where: { id: tank.id },
-                data: { currentStockLitres: { decrement: delta } },
-              });
-            }
-          }
+          warning = await this.deductTankStock(existing.nozzle, existing.productType, delta, tx, {
+            forCorrection: true,
+          });
         }
       }
 

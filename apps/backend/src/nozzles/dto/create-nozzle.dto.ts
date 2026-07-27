@@ -20,6 +20,11 @@ import { IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator'
 // actually rolls over to zero at a fixed digit count. Leaving it unset (the
 // common case for modern electronic totalizers) keeps closeShift()'s
 // existing hard block on closingReading < openingReading.
+//
+// tankId is optional: which physical underground Tank this nozzle is
+// plumbed to (see the schema comment on Nozzle.tankId). Leaving it unset
+// keeps closeShift()'s existing productType-string-match fallback — set it
+// to disambiguate pumps with more than one tank of the same product.
 export class CreateNozzleDto {
   @IsString()
   @MinLength(1)
@@ -27,6 +32,10 @@ export class CreateNozzleDto {
 
   @IsString()
   itemId!: string;
+
+  @IsOptional()
+  @IsString()
+  tankId?: string;
 
   @IsNumber()
   @Min(0)

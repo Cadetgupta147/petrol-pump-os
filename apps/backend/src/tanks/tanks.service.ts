@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -76,6 +77,58 @@ export class TanksService {
         }),
       },
     });
+  }
+
+  // DELETE /tanks/:id — Owner/Accountant only (see TanksController). Hard
+  // delete, unlike Nozzle's soft-disable pattern (Tank has no isActive
+  // field) — but only when it's safe to actually remove: this pump's Tank
+  // Master is a genuinely dealer-editable list (add/delete a tank, same as
+  // Nozzle Master's add/soft-disable), so a tank added by mistake, or one
+  // being decommissioned before it's ever recorded a real drop of fuel,
+  // should be removable outright rather than left as permanent dead data.
+  //
+  // Blocked (409) when either:
+  //   - currentStockLitres is non-zero — deleting a tank that still shows
+  //     fuel in it would silently vanish that stock instead of it being
+  //     accounted for (drawn off, transferred, or corrected to 0 first).
+  //   - any DipReading/DensityLog/GeneratorDieselLog/MachineTestingLog or
+  //     linked Nozzle (Section 3.3.1, Nozzle.tankId) still references this
+  //     tank — those are real history/configuration, not something a delete
+  //     should cascade through. A dealer must unlink every nozzle (Settings)
+  //     and accept those log rows are permanent before this tank can go.
+  //   (PurchaseEntry is NOT in this list — see prisma/schema.prisma's
+  //   comment: it still stores productType as a plain string, no tankId FK,
+  //   so it can never block a delete here.)
+  async remove(id: string) {
+    const tank = await this.findOne(id);
+
+    if (tank.currentStockLitres !== 0) {
+      throw new ConflictException(
+        `Tank ${id} still shows ${tank.currentStockLitres}L of stock — bring it to 0 (record the drawdown, e.g. a correcting PATCH or a GeneratorDieselLog/MachineTestingLog entry) before deleting.`,
+      );
+    }
+
+    const [dipReadings, densityLogs, generatorLogs, testingLogs, nozzles] = await Promise.all([
+      this.prisma.dipReading.count({ where: { tankId: id } }),
+      this.prisma.densityLog.count({ where: { tankId: id } }),
+      this.prisma.generatorDieselLog.count({ where: { tankId: id } }),
+      this.prisma.machineTestingLog.count({ where: { tankId: id } }),
+      this.prisma.nozzle.count({ where: { tankId: id } }),
+    ]);
+
+    if (nozzles > 0) {
+      throw new ConflictException(
+        `Tank ${id} still has ${nozzles} nozzle(s) linked to it (Settings — Nozzle Master) — unlink them before deleting this tank.`,
+      );
+    }
+    if (dipReadings + densityLogs + generatorLogs + testingLogs > 0) {
+      throw new ConflictException(
+        `Tank ${id} has recorded history (DIP/density/generator/testing logs) — it can't be deleted once it has real history against it.`,
+      );
+    }
+
+    await this.prisma.tank.delete({ where: { id } });
+    return { id };
   }
 
   // Section 7.2 step 3 — physical DIP stick reading vs. system-calculated
