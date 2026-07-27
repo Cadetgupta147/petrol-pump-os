@@ -149,6 +149,7 @@ model Pump {
   vehicleBlacklists      VehicleBlacklist[]
   densityRangeConfigs    DensityRangeConfig[]
   taxRateConfigs         TaxRateConfig[]
+  staffAdvances          StaffAdvance[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -195,6 +196,13 @@ model Staff {
   active    Boolean       @default(true)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
+  // Section 17.23 — staff wage/advances, FIXED MONTHLY SALARY (the only
+  // wage structure this schema supports — see StaffAdvance below and
+  // attendance.service.ts's getSummary() for the "no proration across an
+  // arbitrary date range" limitation this implies). Null means no salary
+  // has been configured for this staff member yet — a real gap the
+  // reporting UI surfaces, not defaulted to 0.
+  monthlySalary Float?
 
   billsEntered              Bill[]               @relation("BillEnteredBy")
   billsLastEdited           Bill[]               @relation("BillLastEditedBy")
@@ -212,8 +220,35 @@ model Staff {
   itemSales                 ItemSale[]
   vehicleBlacklistsCreated  VehicleBlacklist[]   @relation("VehicleBlacklistedBy")
   vehicleBlacklistsResolved VehicleBlacklist[]   @relation("VehicleBlacklistResolvedBy")
+  staffAdvancesReceived     StaffAdvance[]       @relation("StaffAdvanceStaff")
+  staffAdvancesRecorded     StaffAdvance[]       @relation("StaffAdvanceRecordedBy")
 
   @@unique([accountId, pumpId])
+}
+
+// Section 17.23 — staff wage/advances. A cash advance given to a staff
+// member against their (fixed monthly, per Staff.monthlySalary) salary.
+// SIMPLIFICATION, flagged rather than silently picked: repayment is
+// all-or-nothing (repaidAt set = fully settled) — no partial-repayment
+// ledger. A real payroll system would likely need partial repayments
+// deducted across multiple pay cycles; that's a materially bigger feature
+// this slice doesn't build. staffId is who RECEIVED the advance (assignable
+// — a Manager can record one for a DSM who isn't the one submitting, same
+// pattern as AttendanceLog.staffId); recordedById is the PURE ACTOR who
+// entered this transaction (unconditionally the caller, like
+// CashCustodyLog.handledById's sibling fields — see resolve-assignable-actor.ts).
+model StaffAdvance {
+  id          String    @id @default(cuid())
+  pump        Pump      @relation(fields: [pumpId], references: [id])
+  pumpId      String
+  staff       Staff     @relation("StaffAdvanceStaff", fields: [staffId], references: [id])
+  staffId     String
+  amount      Float
+  givenAt     DateTime  @default(now())
+  note        String?
+  repaidAt    DateTime?
+  recordedBy   Staff    @relation("StaffAdvanceRecordedBy", fields: [recordedById], references: [id])
+  recordedById String
 }
 
 model AttendanceLog {

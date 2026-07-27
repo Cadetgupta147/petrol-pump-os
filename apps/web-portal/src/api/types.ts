@@ -838,6 +838,8 @@ export interface Staff {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  // Section 17.23 — fixed monthly salary. null = not yet configured.
+  monthlySalary: number | null;
 }
 
 // Mirrors apps/backend/src/staff-management/dto/create-staff.dto.ts. Exactly
@@ -861,6 +863,7 @@ export interface UpdateStaffRequest {
   active?: boolean;
   pin?: string;
   password?: string;
+  monthlySalary?: number;
 }
 
 // GET /attendance — AttendanceService.findAll(). Every clock-in/out session,
@@ -1111,6 +1114,11 @@ export interface AttendanceStaffRow {
   totalHoursWorked: number;
   sessionCount: number;
   stillClockedIn: boolean;
+  // Section 17.23 — monthlySalary null means not yet configured, not 0.
+  // outstandingAdvances is the current running unpaid balance, not scoped
+  // to [from, to] — see AttendanceService.getSummary()'s comment.
+  monthlySalary: number | null;
+  outstandingAdvances: number;
 }
 
 export interface AttendanceSummary {
@@ -1118,4 +1126,24 @@ export interface AttendanceSummary {
   to: string;
   staff: AttendanceStaffRow[];
   salaryAndAdvancesNote: string;
+}
+
+// Mirrors prisma StaffAdvance — Section 17.23. repaidAt null = outstanding;
+// set = fully settled (all-or-nothing, no partial-repayment ledger — see
+// prisma/schema.prisma's comment).
+export interface StaffAdvance {
+  id: string;
+  staffId: string;
+  staff: { id: string; name: string };
+  amount: number;
+  givenAt: string;
+  note: string | null;
+  repaidAt: string | null;
+  recordedById: string;
+}
+
+export interface CreateStaffAdvanceRequest {
+  staffId?: string;
+  amount: number;
+  note?: string;
 }

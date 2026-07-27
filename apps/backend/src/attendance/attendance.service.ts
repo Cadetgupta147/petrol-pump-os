@@ -11,6 +11,7 @@ import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
 import { ClockInDto } from './dto/clock-in.dto';
 import { DateRangeQueryDto } from '../common/dto/date-range-query.dto';
 import { parseDateRangeStrings } from '../common/date-range.util';
+import { StaffAdvancesService } from '../staff-advances/staff-advances.service';
 
 // Section 12 — "Staff attendance & salary summary: hours worked, advances,
 // salary due." `AttendanceLog` already existed in schema.prisma
@@ -21,24 +22,27 @@ import { parseDateRangeStrings } from '../common/date-range.util';
 // hardcode a guess — surface it if it blocks you" rule rather than silently
 // skipped:
 //   - Clock-in / clock-out + hours-worked summary: BUILT, fully, below.
-//   - "Advances" and "salary due": NOT built, and deliberately so. There is
-//     no wage/salary-rate field anywhere on `Staff`, and no advances table
-//     in schema.prisma. Building this for real needs an actual decision
-//     this codebase doesn't have yet — daily wage vs. monthly salary vs.
-//     per-litre commission, and how an advance gets recorded/repaid (a
-//     ledger mirroring Customer's credit ledger? a running balance on
-//     Staff?). Inventing any of that here would be exactly the kind of
-//     undocumented salary-structure guess CLAUDE.md tells this agent to
-//     surface instead of silently picking. getSummary() below returns an
-//     explicit `salaryAndAdvancesNote` field explaining this, rather than a
-//     hardcoded 0 or an omitted field a caller could mistake for "nothing
-//     owed".
+//   - "Advances" and "salary due" (Section 17.23, resolved as FIXED MONTHLY
+//     SALARY — see Staff.monthlySalary and the StaffAdvance model): BUILT,
+//     with one remaining, explicitly flagged gap — a genuine "net salary
+//     due for THIS date range" figure needs a payroll-period/cutoff-date
+//     decision (prorating a flat monthly figure across an arbitrary from/to
+//     range is its own undocumented assumption) that hasn't been made
+//     either. So getSummary() below reports monthlySalary (the configured
+//     rate, informational) and outstandingAdvances (the running unpaid
+//     balance as of NOW, not scoped to the query range — see
+//     StaffAdvancesService.getOutstandingTotalsByStaff()) side by side,
+//     rather than a single computed "amount payable" this range doesn't
+//     have a well-defined meaning for yet.
 //
 // Auth: enforced at the controller level (global JwtAuthGuard + RolesGuard,
 // see attendance.controller.ts).
 @Injectable()
 export class AttendanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly staffAdvancesService: StaffAdvancesService,
+  ) {}
 
   // Finding A1 — staffId is resolved via resolveAssignableActorId() (see
   // that function's header comment): omitted -> the caller; explicitly set
@@ -131,6 +135,8 @@ export class AttendanceService {
         totalHoursWorked: number;
         sessionCount: number;
         stillClockedIn: boolean;
+        monthlySalary: number | null;
+        outstandingAdvances: number;
       }
     >();
 
@@ -148,6 +154,8 @@ export class AttendanceService {
         totalHoursWorked: 0,
         sessionCount: 0,
         stillClockedIn: false,
+        monthlySalary: null,
+        outstandingAdvances: 0,
       };
       entry.totalHoursWorked += hours;
       entry.sessionCount += 1;
@@ -157,16 +165,36 @@ export class AttendanceService {
       byStaff.set(log.staffId, entry);
     }
 
+    // Section 17.23 — fold in monthlySalary (the configured rate) and
+    // outstandingAdvances (current unpaid running balance, not scoped to
+    // [start, end] — see this class's header comment for why) for every
+    // staff member who has at least one attendance session in range.
+    const staffIds = Array.from(byStaff.keys());
+    const [staffRows, outstandingByStaff] = await Promise.all([
+      this.prisma.staff.findMany({
+        where: { id: { in: staffIds } },
+        select: { id: true, monthlySalary: true },
+      }),
+      this.staffAdvancesService.getOutstandingTotalsByStaff(),
+    ]);
+    const monthlySalaryByStaff = new Map(staffRows.map((row) => [row.id, row.monthlySalary]));
+    for (const entry of byStaff.values()) {
+      entry.monthlySalary = monthlySalaryByStaff.get(entry.staffId) ?? null;
+      entry.outstandingAdvances = outstandingByStaff[entry.staffId] ?? 0;
+    }
+
     return {
       from: start,
       to: end,
       staff: Array.from(byStaff.values()).sort(
         (a, b) => b.totalHoursWorked - a.totalHoursWorked,
       ),
-      // See the class-level comment above: advances/salary-due are a
-      // genuine BLOCKED gap, not a silent zero.
+      // See the class-level comment above: monthlySalary/outstandingAdvances
+      // are now real, per-staff numbers — this note now only flags the one
+      // remaining gap (no payroll-period proration), not "nothing computed
+      // at all".
       salaryAndAdvancesNote:
-        'Not computed: this schema has no wage/salary-rate field on Staff and no advances table, so "salary due" cannot be derived yet. Needs a real decision (daily wage / monthly salary / per-litre commission, and how advances are recorded/repaid) before this can be built — see the handback notes for this slice.',
+        'monthlySalary and outstandingAdvances are now computed per staff member (Section 17.23, fixed monthly salary). monthlySalary is null for any staff member with no configured rate — not defaulted to 0. There is still no "net salary due for this date range" figure: prorating a flat monthly salary across an arbitrary from/to range needs a payroll-period/cutoff-date decision this codebase has not made — see AttendanceService for the full writeup.',
     };
   }
 

@@ -8,6 +8,7 @@ import { Role } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+import { StaffAdvancesService } from '../staff-advances/staff-advances.service';
 
 const dsmCaller: AuthenticatedUser = {
   staffId: 'dsm-1',
@@ -34,7 +35,9 @@ describe('AttendanceService', () => {
       create: jest.Mock;
       update: jest.Mock;
     };
+    staff: { findMany: jest.Mock };
   };
+  let staffAdvancesService: { getOutstandingTotalsByStaff: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -45,12 +48,17 @@ describe('AttendanceService', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      staff: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    staffAdvancesService = {
+      getOutstandingTotalsByStaff: jest.fn().mockResolvedValue({}),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AttendanceService,
         { provide: PrismaService, useValue: prisma },
+        { provide: StaffAdvancesService, useValue: staffAdvancesService },
       ],
     }).compile();
 
@@ -185,6 +193,8 @@ describe('AttendanceService', () => {
           totalHoursWorked: 12,
           sessionCount: 2,
           stillClockedIn: false,
+          monthlySalary: null,
+          outstandingAdvances: 0,
         },
       ]);
     });
@@ -246,6 +256,60 @@ describe('AttendanceService', () => {
         'staff-high',
         'staff-low',
       ]);
+    });
+
+    // Section 17.23 — fixed monthly salary + outstanding advances folded
+    // into the same report.
+    it('reports the configured monthlySalary for a staff member with one set', async () => {
+      prisma.attendanceLog.findMany.mockResolvedValue([
+        {
+          staffId: 'staff-1',
+          staff: { name: 'Ramesh' },
+          clockIn: new Date('2026-07-01T08:00:00Z'),
+          clockOut: new Date('2026-07-01T16:00:00Z'),
+        },
+      ]);
+      prisma.staff.findMany.mockResolvedValue([{ id: 'staff-1', monthlySalary: 25000 }]);
+
+      const summary = await service.getSummary({ from: '2026-07-01', to: '2026-07-31' });
+
+      expect(prisma.staff.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['staff-1'] } },
+        select: { id: true, monthlySalary: true },
+      });
+      expect(summary.staff[0].monthlySalary).toBe(25000);
+    });
+
+    it('reports null (not 0) monthlySalary for a staff member with none configured', async () => {
+      prisma.attendanceLog.findMany.mockResolvedValue([
+        {
+          staffId: 'staff-1',
+          staff: { name: 'Ramesh' },
+          clockIn: new Date('2026-07-01T08:00:00Z'),
+          clockOut: new Date('2026-07-01T16:00:00Z'),
+        },
+      ]);
+      prisma.staff.findMany.mockResolvedValue([{ id: 'staff-1', monthlySalary: null }]);
+
+      const summary = await service.getSummary({ from: '2026-07-01', to: '2026-07-31' });
+
+      expect(summary.staff[0].monthlySalary).toBeNull();
+    });
+
+    it('folds in the outstanding advances total regardless of the query date range', async () => {
+      prisma.attendanceLog.findMany.mockResolvedValue([
+        {
+          staffId: 'staff-1',
+          staff: { name: 'Ramesh' },
+          clockIn: new Date('2026-07-01T08:00:00Z'),
+          clockOut: new Date('2026-07-01T16:00:00Z'),
+        },
+      ]);
+      staffAdvancesService.getOutstandingTotalsByStaff.mockResolvedValue({ 'staff-1': 3000 });
+
+      const summary = await service.getSummary({ from: '2026-07-01', to: '2026-07-31' });
+
+      expect(summary.staff[0].outstandingAdvances).toBe(3000);
     });
   });
 });

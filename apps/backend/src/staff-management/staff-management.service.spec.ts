@@ -57,6 +57,7 @@ describe('StaffManagementService', () => {
             active: true,
             createdAt: true,
             updatedAt: true,
+            monthlySalary: true,
             account: { select: { phone: true } },
           },
         }),
@@ -261,6 +262,37 @@ describe('StaffManagementService', () => {
       const accountCall = tx.staffAccount.update.mock.calls[0][0] as { data: Record<string, unknown> };
       expect(accountCall.data).not.toHaveProperty('pinHash');
       expect(accountCall.data).not.toHaveProperty('passwordHash');
+    });
+
+    // Section 17.23 — fixed monthly salary, Owner-only (same DTO/gate as
+    // every other field here).
+    it('sets monthlySalary on the membership row', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.MANAGER,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.MANAGER,
+        active: true,
+        monthlySalary: 25000,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { monthlySalary: 25000 });
+
+      expect(tx.staff.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 's1' },
+          data: expect.objectContaining({ monthlySalary: 25000 }),
+        }),
+      );
     });
 
     it('hashes a matching pin reset for a DSM staff member, applied to the account not the membership', async () => {

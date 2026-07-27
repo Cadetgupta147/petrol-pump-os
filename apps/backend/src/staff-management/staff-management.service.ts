@@ -21,6 +21,7 @@ const SAFE_SELECT = {
   active: true,
   createdAt: true,
   updatedAt: true,
+  monthlySalary: true,
   account: { select: { phone: true } },
 } satisfies Prisma.StaffSelect;
 
@@ -142,6 +143,7 @@ export class StaffManagementService {
           data: {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
             ...(dto.active !== undefined ? { active: dto.active } : {}),
+            ...(dto.monthlySalary !== undefined ? { monthlySalary: dto.monthlySalary } : {}),
           },
           select: SAFE_SELECT,
         });

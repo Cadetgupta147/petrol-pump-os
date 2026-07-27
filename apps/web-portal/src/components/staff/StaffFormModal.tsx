@@ -27,6 +27,14 @@ export function StaffFormModal({ staffMember, onClose, onSaved }: StaffFormModal
   const [phone, setPhone] = useState(staffMember?.phone ?? '');
   const [role, setRole] = useState<Role>(staffMember?.role ?? 'DSM');
   const [active, setActive] = useState(staffMember?.active ?? true);
+  // Section 17.23 — fixed monthly salary, Owner-only, edit-mode-only (a
+  // brand-new staff member has no attendance history to pay against yet;
+  // same "only surfaced in edit mode" convention as `active` below).
+  const [monthlySalary, setMonthlySalary] = useState(
+    staffMember?.monthlySalary !== undefined && staffMember?.monthlySalary !== null
+      ? String(staffMember.monthlySalary)
+      : '',
+  );
   const [credential, setCredential] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -40,11 +48,15 @@ export function StaffFormModal({ staffMember, onClose, onSaved }: StaffFormModal
     try {
       const trimmedCredential = credential.trim();
 
+      const trimmedSalary = monthlySalary.trim();
+
       const saved = isEdit
         ? await updateStaff(staffMember.id, {
             name: name.trim(),
             phone: phone.trim(),
             active,
+            // Blank = leave unchanged (never sent as 0 — see UpdateStaffDto).
+            ...(trimmedSalary === '' ? {} : { monthlySalary: Number(trimmedSalary) }),
             // Blank credential field in edit mode = "leave it unchanged".
             ...(trimmedCredential === ''
               ? {}
@@ -111,6 +123,21 @@ export function StaffFormModal({ staffMember, onClose, onSaved }: StaffFormModal
             <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
             Active
           </label>
+        )}
+
+        {isEdit && (
+          <div className="form-field">
+            <label htmlFor="sf-salary">Monthly salary (Rs.) — Section 17.23</label>
+            <input
+              id="sf-salary"
+              type="number"
+              min="0"
+              step="any"
+              value={monthlySalary}
+              onChange={(e) => setMonthlySalary(e.target.value)}
+              placeholder="Not yet configured"
+            />
+          </div>
         )}
 
         <div className="form-field">

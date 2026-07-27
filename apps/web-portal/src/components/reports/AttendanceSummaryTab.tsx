@@ -1,13 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { getAttendanceSummary } from '../../api/attendance';
 import { ApiError } from '../../api/client';
-import { formatDateTime, todayIsoDate } from '../../utils/format';
+import { formatDateTime, formatRupees, todayIsoDate } from '../../utils/format';
 import type { AttendanceSummary } from '../../api/types';
 
-// GET /attendance/summary?from=&to= — Section 12. Hours-worked half only —
-// salaryAndAdvancesNote must stay visible (not just fetched and ignored), per
-// this slice's explicit requirement, so the UI never implies "$0 due" when
-// the truth is "not computed at all".
+// GET /attendance/summary?from=&to= — Section 12. monthlySalary/
+// outstandingAdvances (Section 17.23) are now real per-staff numbers —
+// salaryAndAdvancesNote must still stay visible (not just fetched and
+// ignored): it now flags the one remaining gap (no payroll-period
+// proration of a flat monthly figure across an arbitrary date range), not
+// "nothing computed at all".
 export function AttendanceSummaryTab() {
   const [from, setFrom] = useState(todayIsoDate());
   const [to, setTo] = useState(todayIsoDate());
@@ -80,7 +82,7 @@ export function AttendanceSummaryTab() {
       {!error && report && (
         <>
           <div className="banner">
-            <strong>Salary/advances not computed:</strong> {report.salaryAndAdvancesNote}
+            <strong>Salary/advances note:</strong> {report.salaryAndAdvancesNote}
           </div>
 
           {report.staff.length === 0 ? (
@@ -94,6 +96,8 @@ export function AttendanceSummaryTab() {
                     <th className="num">Hours worked</th>
                     <th className="num">Sessions</th>
                     <th>Status</th>
+                    <th className="num">Monthly salary</th>
+                    <th className="num">Outstanding advances</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -109,6 +113,18 @@ export function AttendanceSummaryTab() {
                           </span>
                         ) : (
                           '—'
+                        )}
+                      </td>
+                      <td className="num">
+                        {row.monthlySalary === null ? 'Not configured' : formatRupees(row.monthlySalary)}
+                      </td>
+                      <td className="num">
+                        {row.outstandingAdvances > 0 ? (
+                          <span style={{ color: 'var(--amber)', fontWeight: 600 }}>
+                            {formatRupees(row.outstandingAdvances)}
+                          </span>
+                        ) : (
+                          formatRupees(0)
                         )}
                       </td>
                     </tr>

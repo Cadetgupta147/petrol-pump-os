@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsPhoneNumber, IsString, Matches, MinLength } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsPhoneNumber, IsPositive, IsString, Matches, MinLength } from 'class-validator';
 
 // Section 3.7 edit — name/phone/active toggle, plus resetting whichever
 // credential this staff member's EXISTING role uses (pin for DSM, password
@@ -31,4 +31,12 @@ export class UpdateStaffDto {
   @IsString()
   @MinLength(8)
   password?: string;
+
+  // Section 17.23 — fixed monthly salary. Owner-only, same as every other
+  // field on this DTO (see the class comment on why this whole surface is
+  // Owner-only rather than gating just the credential fields).
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  monthlySalary?: number;
 }

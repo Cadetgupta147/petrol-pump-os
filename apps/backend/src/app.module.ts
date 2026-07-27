@@ -30,6 +30,7 @@ import { UpiCaptureConfigModule } from './upi-capture-config/upi-capture-config.
 import { CreditAgingModule } from './credit-aging/credit-aging.module';
 import { SalesPurchaseRegisterModule } from './sales-purchase-register/sales-purchase-register.module';
 import { TaxRateConfigModule } from './tax-rate-config/tax-rate-config.module';
+import { StaffAdvancesModule } from './staff-advances/staff-advances.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { StaffModule } from './staff/staff.module';
 import { StaffManagementModule } from './staff-management/staff-management.module';
@@ -99,6 +100,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     CreditAgingModule,
     SalesPurchaseRegisterModule,
     TaxRateConfigModule,
+    StaffAdvancesModule,
     AttendanceModule,
     StaffModule,
     StaffManagementModule,

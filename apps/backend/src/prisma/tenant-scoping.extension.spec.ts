@@ -138,6 +138,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'UpiCaptureConfig',
       'DensityRangeConfig',
       'TaxRateConfig',
+      'StaffAdvance',
     ];
     expect([...TENANT_SCOPED_MODELS].sort()).toEqual([...expected].sort());
   });
