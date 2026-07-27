@@ -189,6 +189,22 @@ model StaffAccount {
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime?
 
+  // Rung on the escalating-lockout ladder (see LOCKOUT_ESCALATION_DURATIONS_MS
+  // in src/auth/login-throttle.constants.ts): 0 until the account has ever
+  // been locked out. Each time recordFailedLoginAttempt() crosses
+  // LOGIN_LOCKOUT_THRESHOLD, this increments BEFORE picking the next
+  // lockedUntil duration, so the 1st lockout gets a short 2-minute cooldown
+  // but repeat lockouts (a returning brute-force attempt, or someone who
+  // keeps mistyping right after a cooldown expires) escalate to 15 minutes,
+  // then 1 hour, and stay at 1 hour for every lockout after that. A lockout
+  // that merely EXPIRES naturally does NOT reset this — the ladder only
+  // resets to 0 on an actual successful login (see resetLoginLockout()),
+  // so waiting out a short lockout and failing again immediately escalates
+  // rather than restarting at the bottom rung. An Owner/Accountant can also
+  // reset this early via StaffManagementService.clearLockout() (manual
+  // unlock) — that path zeroes it the same way a successful login does.
+  lockoutEscalationLevel Int    @default(0)
+
   // Staff-side JWT "kill switch", mirroring CustomerAccount.tokenVersion
   // above (same mechanism, staff-specific wording): a property of the LOGIN
   // SESSION, not of any one pump membership, since a person can hold

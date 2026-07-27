@@ -24,9 +24,34 @@ export const LOGIN_IP_THROTTLE_LIMIT = 5;
 export const LOGIN_IP_THROTTLE_TTL_MS = 15 * 60 * 1000;
 
 // Layer 2 — DB-backed account lockout (see AuthService.login/pinLogin).
-// Deliberately the same numbers as layer 1 above per this task's spec, but
-// kept as separate constants since the two layers are independent
-// mechanisms that could reasonably diverge later (e.g. if the IP throttle
-// window is loosened, the account lockout doesn't have to move with it).
+// The threshold below is deliberately the same number as layer 1's request
+// limit per this task's original spec, but kept as a separate constant since
+// the two layers are independent mechanisms that could reasonably diverge
+// later (e.g. if the IP throttle window is loosened, the account lockout
+// doesn't have to move with it).
 export const LOGIN_LOCKOUT_THRESHOLD = 5;
-export const LOGIN_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+
+// Escalating lockout schedule — replaces what used to be a single flat
+// LOGIN_LOCKOUT_DURATION_MS. Each time an account crosses
+// LOGIN_LOCKOUT_THRESHOLD, StaffAccount.lockoutEscalationLevel (see that
+// field's comment in prisma/schema.prisma) increments, and the cooldown
+// length is looked up here by the NEW level: the 1st lockout gets a short
+// 2-minute cooldown (cheap to recover from if it was a genuine typo spree),
+// but an account that keeps getting locked out — i.e. failing the threshold
+// again shortly after a previous cooldown expired — escalates to a much
+// longer wait, on the theory that repeat lockouts look increasingly like an
+// actual brute-force attempt rather than a one-off mistake. The level (and
+// therefore the cooldown) only resets to the bottom rung on an actual
+// successful login (AuthService.resetLoginLockout) or a manual unlock
+// (StaffManagementService.clearLockout) — merely waiting out an expired
+// lockout does NOT reset it.
+//
+// Indexed via `Math.min(level, LOCKOUT_ESCALATION_DURATIONS_MS.length) - 1`
+// (see AuthService.recordFailedLoginAttempt) so level 1 -> index 0 (2 min),
+// level 2 -> index 1 (15 min), and level 3 and every level after reuses the
+// last entry (1 hour) rather than needing an entry per level forever.
+export const LOCKOUT_ESCALATION_DURATIONS_MS = [
+  2 * 60 * 1000, // 1st lockout
+  15 * 60 * 1000, // 2nd lockout
+  60 * 60 * 1000, // 3rd and every subsequent lockout
+];

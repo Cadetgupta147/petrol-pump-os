@@ -30,6 +30,8 @@ import { TanksService } from '../tanks/tanks.service';
 import { PurchasesModule } from '../purchases/purchases.module';
 import { PurchasesService } from '../purchases/purchases.service';
 import { OcrService } from '../ocr/ocr.service';
+import { StaffManagementModule } from '../staff-management/staff-management.module';
+import { StaffManagementService } from '../staff-management/staff-management.service';
 
 // Closes the "real controllers, not just the synthetic test controller"
 // coverage gap called out in the RBAC decorator task: confirms the
@@ -66,6 +68,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
         CreditConfigModule,
         TanksModule,
         PurchasesModule,
+        StaffManagementModule,
       ],
       providers: [
         { provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -119,6 +122,12 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       // ocr.service.spec.ts for that).
       .overrideProvider(OcrService)
       .useValue({ extractInvoiceFields: () => ({}) })
+      // Section 2 amendment — manual lockout unlock. New real route
+      // (POST /staff-management/:id/clear-lockout) inheriting the
+      // controller's class-level @Roles(Role.OWNER, Role.ACCOUNTANT) rather
+      // than a narrower override — see the `clear-lockout` cases below.
+      .overrideProvider(StaffManagementService)
+      .useValue({ clearLockout: () => ({}) })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -345,6 +354,42 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
   it('rejects a DSM token on GET /tanks/:id/dip-readings (403 — reads stay Owner/Accountant only)', async () => {
     const token = await dsmToken();
     const res = await fetch(`${baseUrl}/tanks/some-id/dip-readings`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  // Section 2 amendment — manual lockout unlock
+  // (POST /staff-management/:id/clear-lockout). Unlike create()/update() on
+  // this same controller (both narrowed to @Roles(Role.OWNER)), this route
+  // deliberately inherits the class-level @Roles(Role.OWNER, Role.ACCOUNTANT)
+  // unchanged — an Accountant should be able to unlock a colleague's account
+  // just as an Owner can, since it doesn't touch a credential or grant any
+  // new privilege.
+  it('allows an Owner token through POST /staff-management/:id/clear-lockout', async () => {
+    const token = await ownerToken();
+    const res = await fetch(`${baseUrl}/staff-management/some-id/clear-lockout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+  });
+
+  it('allows an Accountant token through POST /staff-management/:id/clear-lockout', async () => {
+    const token = await accountantToken();
+    const res = await fetch(`${baseUrl}/staff-management/some-id/clear-lockout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+  });
+
+  it('rejects a DSM token on POST /staff-management/:id/clear-lockout (403)', async () => {
+    const token = await dsmToken();
+    const res = await fetch(`${baseUrl}/staff-management/some-id/clear-lockout`, {
+      method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(403);

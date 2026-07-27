@@ -207,6 +207,7 @@ describe('AuthService', () => {
       active: true,
       failedLoginAttempts: 2,
       lockedUntil: null,
+      lockoutEscalationLevel: 0,
     });
 
     await expect(
@@ -219,7 +220,7 @@ describe('AuthService', () => {
     });
   });
 
-  it('sets lockedUntil once the failed-attempt threshold is reached', async () => {
+  it('sets lockedUntil to a 2-minute cooldown the FIRST time the failed-attempt threshold is reached', async () => {
     prisma.staffAccount.findUnique.mockResolvedValue({
       id: 'account-12',
       phone: '9990000012',
@@ -227,8 +228,10 @@ describe('AuthService', () => {
       active: true,
       failedLoginAttempts: 4, // this attempt is the 5th — crosses the threshold
       lockedUntil: null,
+      lockoutEscalationLevel: 0, // never locked out before — lands on rung 1
     });
 
+    const before = Date.now();
     await expect(
       service.login({ phone: '9990000012', password: 'wrong-password' }),
     ).rejects.toBeInstanceOf(UnauthorizedException);
@@ -237,12 +240,76 @@ describe('AuthService', () => {
       where: { id: 'account-12' },
       data: {
         failedLoginAttempts: { increment: 1 },
+        lockoutEscalationLevel: { increment: 1 },
         lockedUntil: expect.any(Date),
       },
     });
+    const call = prisma.staffAccount.update.mock.calls[0][0] as {
+      data: { lockedUntil: Date };
+    };
+    const lockedForMs = call.data.lockedUntil.getTime() - before;
+    // ~2 minutes — generous bounds to absorb test execution jitter.
+    expect(lockedForMs).toBeGreaterThan(1.5 * 60 * 1000);
+    expect(lockedForMs).toBeLessThanOrEqual(2 * 60 * 1000 + 1000);
   });
 
-  it('resets failedLoginAttempts and lockedUntil to 0/null on a successful login', async () => {
+  // Escalating lockout (Section 2 amendment) — a SECOND lockout (the
+  // account crosses the threshold again after already having been locked
+  // out once before) must escalate to the 15-minute rung, not repeat the
+  // 2-minute one.
+  it('escalates to a 15-minute cooldown on the SECOND lockout', async () => {
+    prisma.staffAccount.findUnique.mockResolvedValue({
+      id: 'account-12b',
+      phone: '9990000018',
+      passwordHash: knownPasswordHash,
+      active: true,
+      failedLoginAttempts: 4,
+      lockedUntil: null,
+      lockoutEscalationLevel: 1, // already locked out once before
+    });
+
+    const before = Date.now();
+    await expect(
+      service.login({ phone: '9990000018', password: 'wrong-password' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+
+    const call = prisma.staffAccount.update.mock.calls[0][0] as {
+      data: { lockedUntil: Date };
+    };
+    const lockedForMs = call.data.lockedUntil.getTime() - before;
+    expect(lockedForMs).toBeGreaterThan(14 * 60 * 1000);
+    expect(lockedForMs).toBeLessThanOrEqual(15 * 60 * 1000 + 1000);
+  });
+
+  // Third and every subsequent lockout escalates to (and stays at) 1 hour.
+  it('escalates to a 1-hour cooldown on the THIRD lockout, and stays there on a fourth', async () => {
+    for (const priorLevel of [2, 3]) {
+      prisma.staffAccount.update.mockClear();
+      prisma.staffAccount.findUnique.mockResolvedValue({
+        id: 'account-12c',
+        phone: '9990000019',
+        passwordHash: knownPasswordHash,
+        active: true,
+        failedLoginAttempts: 4,
+        lockedUntil: null,
+        lockoutEscalationLevel: priorLevel,
+      });
+
+      const before = Date.now();
+      await expect(
+        service.login({ phone: '9990000019', password: 'wrong-password' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      const call = prisma.staffAccount.update.mock.calls[0][0] as {
+        data: { lockedUntil: Date };
+      };
+      const lockedForMs = call.data.lockedUntil.getTime() - before;
+      expect(lockedForMs).toBeGreaterThan(59 * 60 * 1000);
+      expect(lockedForMs).toBeLessThanOrEqual(60 * 60 * 1000 + 1000);
+    }
+  });
+
+  it('resets failedLoginAttempts, lockedUntil, and lockoutEscalationLevel to 0/null on a successful login', async () => {
     prisma.staffAccount.findUnique.mockResolvedValue({
       id: 'account-13',
       phone: '9990000013',
@@ -250,6 +317,7 @@ describe('AuthService', () => {
       active: true,
       failedLoginAttempts: 3,
       lockedUntil: null,
+      lockoutEscalationLevel: 2,
     });
     prisma.staff.findFirst.mockResolvedValue({
       id: 'staff-13',
@@ -265,8 +333,66 @@ describe('AuthService', () => {
     expect(result.accessToken).toBe('signed.jwt.token');
     expect(prisma.staffAccount.update).toHaveBeenCalledWith({
       where: { id: 'account-13' },
-      data: { failedLoginAttempts: 0, lockedUntil: null },
+      data: { failedLoginAttempts: 0, lockedUntil: null, lockoutEscalationLevel: 0 },
     });
+  });
+
+  // A successful login must fully clear the escalation ladder, not just the
+  // immediate lockout — so a LATER lockout (after a clean login in between)
+  // starts back at the bottom (2-minute) rung rather than continuing from
+  // wherever the ladder left off.
+  it('restarts the escalation ladder at the 2-minute rung after a successful login resets it', async () => {
+    // First: this account had already escalated to level 2 (would be a
+    // 1-hour lockout next) — but then logs in successfully.
+    prisma.staffAccount.findUnique.mockResolvedValueOnce({
+      id: 'account-14',
+      phone: '9990000020',
+      passwordHash: knownPasswordHash,
+      active: true,
+      failedLoginAttempts: 3,
+      lockedUntil: null,
+      lockoutEscalationLevel: 2,
+    });
+    prisma.staff.findFirst.mockResolvedValueOnce({
+      id: 'staff-14',
+      accountId: 'account-14',
+      pumpId: 'pump-1',
+      name: 'Test Owner',
+      role: Role.OWNER,
+      active: true,
+    });
+    await service.login({ phone: '9990000020', password: knownPassword });
+    expect(prisma.staffAccount.update).toHaveBeenLastCalledWith({
+      where: { id: 'account-14' },
+      data: { failedLoginAttempts: 0, lockedUntil: null, lockoutEscalationLevel: 0 },
+    });
+
+    // Now the account fails through to a lockout again — since the reset
+    // above zeroed lockoutEscalationLevel, findUnique reflects level 0 for
+    // this next read.
+    prisma.staffAccount.update.mockClear();
+    prisma.staffAccount.findUnique.mockResolvedValueOnce({
+      id: 'account-14',
+      phone: '9990000020',
+      passwordHash: knownPasswordHash,
+      active: true,
+      failedLoginAttempts: 4,
+      lockedUntil: null,
+      lockoutEscalationLevel: 0,
+    });
+
+    const before = Date.now();
+    await expect(
+      service.login({ phone: '9990000020', password: 'wrong-password' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+
+    const call = prisma.staffAccount.update.mock.calls[0][0] as {
+      data: { lockedUntil: Date };
+    };
+    const lockedForMs = call.data.lockedUntil.getTime() - before;
+    // Back to the SHORT 2-minute rung, not a continuation at 1 hour.
+    expect(lockedForMs).toBeGreaterThan(1.5 * 60 * 1000);
+    expect(lockedForMs).toBeLessThanOrEqual(2 * 60 * 1000 + 1000);
   });
 });
 
@@ -444,7 +570,7 @@ describe('AuthService.pinLogin', () => {
     });
   });
 
-  it('sets lockedUntil once the failed-attempt threshold is reached', async () => {
+  it('sets lockedUntil to a 2-minute cooldown once the failed-attempt threshold is reached (first lockout)', async () => {
     prisma.staffAccount.findUnique.mockResolvedValue({
       id: 'account-16',
       phone: '9990000016',
@@ -452,8 +578,10 @@ describe('AuthService.pinLogin', () => {
       active: true,
       failedLoginAttempts: 4,
       lockedUntil: null,
+      lockoutEscalationLevel: 0,
     });
 
+    const before = Date.now();
     await expect(
       service.pinLogin({ phone: '9990000016', pin: '0000' }),
     ).rejects.toBeInstanceOf(UnauthorizedException);
@@ -462,12 +590,19 @@ describe('AuthService.pinLogin', () => {
       where: { id: 'account-16' },
       data: {
         failedLoginAttempts: { increment: 1 },
+        lockoutEscalationLevel: { increment: 1 },
         lockedUntil: expect.any(Date),
       },
     });
+    const call = prisma.staffAccount.update.mock.calls[0][0] as {
+      data: { lockedUntil: Date };
+    };
+    const lockedForMs = call.data.lockedUntil.getTime() - before;
+    expect(lockedForMs).toBeGreaterThan(1.5 * 60 * 1000);
+    expect(lockedForMs).toBeLessThanOrEqual(2 * 60 * 1000 + 1000);
   });
 
-  it('resets failedLoginAttempts and lockedUntil to 0/null on a successful PIN login', async () => {
+  it('resets failedLoginAttempts, lockedUntil, and lockoutEscalationLevel to 0/null on a successful PIN login', async () => {
     prisma.staffAccount.findUnique.mockResolvedValue({
       id: 'account-17',
       phone: '9990000017',
@@ -475,6 +610,7 @@ describe('AuthService.pinLogin', () => {
       active: true,
       failedLoginAttempts: 2,
       lockedUntil: null,
+      lockoutEscalationLevel: 1,
     });
     prisma.staff.findFirst.mockResolvedValue({
       id: 'staff-17',
@@ -490,7 +626,7 @@ describe('AuthService.pinLogin', () => {
     expect(result.accessToken).toBe('signed.jwt.token');
     expect(prisma.staffAccount.update).toHaveBeenCalledWith({
       where: { id: 'account-17' },
-      data: { failedLoginAttempts: 0, lockedUntil: null },
+      data: { failedLoginAttempts: 0, lockedUntil: null, lockoutEscalationLevel: 0 },
     });
   });
 });

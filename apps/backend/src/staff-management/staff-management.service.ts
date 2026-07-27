@@ -231,6 +231,50 @@ export class StaffManagementService {
     }
   }
 
+  // Manual unlock — lets an Owner/Accountant (see the controller's
+  // class-level @Roles) immediately clear another staff member's login
+  // lockout instead of making them wait out the escalating cooldown (see
+  // LOCKOUT_ESCALATION_DURATIONS_MS in auth/login-throttle.constants.ts).
+  // Deliberately does NOT call bumpStaffAccountTokenVersion() — unlike
+  // update()'s deactivation/credential-reset/role-change triggers, clearing
+  // a lockout doesn't invalidate an already-issued session; it only stops
+  // BLOCKING new login attempts, so there is no outstanding JWT that needs
+  // to be killed here.
+  //
+  // Resets the same three fields, the same way, as AuthService's private
+  // resetLoginLockout() (a successful login) — see that method's comment —
+  // but implemented separately here since it lives on a different
+  // service/table-of-concerns and isn't triggered by a login at all.
+  async clearLockout(id: string) {
+    const existing = await this.prisma.staff.findUnique({
+      where: { id },
+      include: { account: true },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Staff ${id} not found`);
+    }
+    if (!existing.accountId || !existing.account) {
+      // Mirrors update()'s identical guard above — shouldn't happen post
+      // Phase 0.2, but a staff row with no linked account has no lockout
+      // state to clear either.
+      throw new BadRequestException(`Staff ${id} has no linked account — cannot clear lockout`);
+    }
+
+    await this.prisma.staffAccount.update({
+      where: { id: existing.accountId },
+      data: { failedLoginAttempts: 0, lockedUntil: null, lockoutEscalationLevel: 0 },
+    });
+
+    // Re-select through the same SAFE_SELECT projection used everywhere else
+    // in this service, so the response shape stays consistent with
+    // findAll()/create()/update() rather than inventing a new one.
+    const membership = await this.prisma.staff.findUniqueOrThrow({
+      where: { id },
+      select: SAFE_SELECT,
+    });
+    return toStaffDto(membership);
+  }
+
   // Section 4 / StaffAccount schema comment — DSM logs in with a pin only,
   // every other role logs in with a password only. Rejects the wrong
   // credential for the role (not just "requires the right one is missing"),

@@ -29,4 +29,15 @@ export class StaffManagementController {
   update(@Param('id') id: string, @Body() dto: UpdateStaffDto) {
     return this.staffManagementService.update(id, dto);
   }
+
+  // Manual unlock — deliberately NOT narrowed to @Roles(Role.OWNER) the way
+  // create()/update() are above: this action is available to the class-level
+  // Owner/Accountant gate (unlike a credential reset or role change, clearing
+  // a lockout doesn't touch a PIN/password or grant any new privilege — it
+  // only lets a legitimate but currently-locked-out staff member try logging
+  // in again sooner).
+  @Post(':id/clear-lockout')
+  clearLockout(@Param('id') id: string) {
+    return this.staffManagementService.clearLockout(id);
+  }
 }

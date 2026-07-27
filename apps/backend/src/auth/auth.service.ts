@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { PinLoginDto } from './dto/pin-login.dto';
 import { JwtPayload } from './types/jwt-payload.interface';
-import { LOGIN_LOCKOUT_DURATION_MS, LOGIN_LOCKOUT_THRESHOLD } from './login-throttle.constants';
+import { LOCKOUT_ESCALATION_DURATIONS_MS, LOGIN_LOCKOUT_THRESHOLD } from './login-throttle.constants';
 
 // Section 2 — web portal login (Owner/Accountant today; Manager/Read-only
 // once those roles get real endpoints) via `login()`, plus Section 4's DSM
@@ -45,7 +45,11 @@ export class AuthService {
 
     const passwordMatches = await bcrypt.compare(dto.password, account.passwordHash);
     if (!passwordMatches) {
-      await this.recordFailedLoginAttempt(account.id, account.failedLoginAttempts);
+      await this.recordFailedLoginAttempt(
+        account.id,
+        account.failedLoginAttempts,
+        account.lockoutEscalationLevel,
+      );
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -107,7 +111,11 @@ export class AuthService {
 
     const pinMatches = await bcrypt.compare(dto.pin, account.pinHash);
     if (!pinMatches) {
-      await this.recordFailedLoginAttempt(account.id, account.failedLoginAttempts);
+      await this.recordFailedLoginAttempt(
+        account.id,
+        account.failedLoginAttempts,
+        account.lockoutEscalationLevel,
+      );
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -168,40 +176,66 @@ export class AuthService {
   // Records a failed credential check and locks the account out once the
   // threshold is reached, in a single update.
   //
-  // `currentFailedAttempts` is the count as of the findUnique() the caller
-  // already did earlier in the same request — used only to decide whether
-  // THIS attempt crosses the lockout threshold, so the lockedUntil write can
-  // happen in the same round trip as the increment. The increment itself
-  // uses Prisma's `{ increment: 1 }` (translates to `SET x = x + 1` in SQL)
-  // rather than writing back a JS-computed "current + 1" value, so it stays
-  // correct under a race between two concurrent wrong-credential requests
-  // for the same account — a plain read-then-write could silently lose one
-  // of the two increments. The lockout decision below is necessarily based
-  // on the pre-race read, which is a reasonable approximation: worst case, a
-  // concurrent burst crosses the threshold and locks out slightly "early"
+  // `currentFailedAttempts`/`currentEscalationLevel` are the counts as of the
+  // findUnique() the caller already did earlier in the same request — used
+  // only to decide whether THIS attempt crosses the lockout threshold (and,
+  // if so, which rung of the escalation ladder the new lockout lands on), so
+  // both writes can happen in the same round trip as the increment. The
+  // increments themselves use Prisma's `{ increment: 1 }` (translates to
+  // `SET x = x + 1` in SQL) rather than writing back a JS-computed
+  // "current + 1" value, so they stay correct under a race between two
+  // concurrent wrong-credential requests for the same account — a plain
+  // read-then-write could silently lose one of the two increments. The
+  // lockout decision below is necessarily based on the pre-race read, which
+  // is a reasonable approximation: worst case, a concurrent burst crosses the
+  // threshold and locks out slightly "early" (or escalates one rung sooner)
   // rather than "late" — the safe direction to be wrong in for a
   // brute-force defense.
   private async recordFailedLoginAttempt(
     accountId: string,
     currentFailedAttempts: number,
+    currentEscalationLevel: number,
   ): Promise<void> {
     const nextAttemptCount = currentFailedAttempts + 1;
+    const crossesThreshold = nextAttemptCount >= LOGIN_LOCKOUT_THRESHOLD;
+
+    // Escalating lockout (see login-throttle.constants.ts's
+    // LOCKOUT_ESCALATION_DURATIONS_MS comment for the full design): the
+    // level is bumped BEFORE picking the duration, so the 1st time this
+    // account ever crosses the threshold lands on index 0 (the shortest
+    // cooldown), not index -1.
+    const nextEscalationLevel = currentEscalationLevel + 1;
+    const lockoutDurationMs =
+      LOCKOUT_ESCALATION_DURATIONS_MS[
+        Math.min(nextEscalationLevel, LOCKOUT_ESCALATION_DURATIONS_MS.length) - 1
+      ];
+
     await this.prisma.staffAccount.update({
       where: { id: accountId },
       data: {
         failedLoginAttempts: { increment: 1 },
-        ...(nextAttemptCount >= LOGIN_LOCKOUT_THRESHOLD
-          ? { lockedUntil: new Date(Date.now() + LOGIN_LOCKOUT_DURATION_MS) }
+        ...(crossesThreshold
+          ? {
+              lockoutEscalationLevel: { increment: 1 },
+              lockedUntil: new Date(Date.now() + lockoutDurationMs),
+            }
           : {}),
       },
     });
   }
 
-  // Clears both lockout fields after a fully successful login.
+  // Clears all three lockout fields after a fully successful login — a clean
+  // login resets the escalation ladder back to its bottom rung, not just the
+  // immediate lockout, so a later lockout starts again at the short 2-minute
+  // cooldown rather than continuing to escalate from wherever it left off.
+  // (StaffManagementService.clearLockout() — the Owner/Accountant manual
+  // unlock — resets the same three fields the same way, but lives on a
+  // different service/table-of-concerns than this one, so it's a separate,
+  // not-shared, implementation rather than a call into this private method.)
   private async resetLoginLockout(accountId: string): Promise<void> {
     await this.prisma.staffAccount.update({
       where: { id: accountId },
-      data: { failedLoginAttempts: 0, lockedUntil: null },
+      data: { failedLoginAttempts: 0, lockedUntil: null, lockoutEscalationLevel: 0 },
     });
   }
 }

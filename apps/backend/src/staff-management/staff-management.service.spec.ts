@@ -23,7 +23,12 @@ describe('StaffManagementService', () => {
     staff: { create: jest.Mock; update: jest.Mock };
   };
   let prisma: {
-    staff: { findMany: jest.Mock; findUnique: jest.Mock };
+    staff: { findMany: jest.Mock; findUnique: jest.Mock; findUniqueOrThrow: jest.Mock };
+    // Top-level staffAccount.update — used ONLY by clearLockout(), which
+    // (unlike create()/update()) doesn't need transactional atomicity with
+    // any other write, so it goes straight through `this.prisma` rather than
+    // a `tx` handed to it inside `$transaction(...)`.
+    staffAccount: { update: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -33,7 +38,8 @@ describe('StaffManagementService', () => {
       staff: { create: jest.fn(), update: jest.fn() },
     };
     prisma = {
-      staff: { findMany: jest.fn(), findUnique: jest.fn() },
+      staff: { findMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
+      staffAccount: { update: jest.fn() },
       $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(tx)),
     };
 
@@ -612,6 +618,79 @@ describe('StaffManagementService', () => {
         where: { id: 'account-1' },
         data: { tokenVersion: { increment: 1 } },
       });
+    });
+  });
+
+  // Manual unlock (Section 2 amendment) — lets an Owner/Accountant clear
+  // another staff member's lockout state immediately instead of waiting out
+  // the escalating cooldown. Mirrors update()'s NotFoundException/
+  // BadRequestException guard pattern for a missing staff row / a staff row
+  // with no linked account, since clearLockout() reuses the exact same
+  // findUnique + guard shape.
+  describe('clearLockout', () => {
+    it('throws NotFoundException for a missing staff id', async () => {
+      prisma.staff.findUnique.mockResolvedValue(null);
+      await expect(service.clearLockout('missing')).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws BadRequestException for a membership with no linked account', async () => {
+      prisma.staff.findUnique.mockResolvedValue({ id: 's1', accountId: null, account: null });
+      await expect(service.clearLockout('s1')).rejects.toThrow(BadRequestException);
+      expect(prisma.staffAccount.update).not.toHaveBeenCalled();
+    });
+
+    it('resets failedLoginAttempts, lockedUntil, and lockoutEscalationLevel to 0/null', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      prisma.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      prisma.staff.findUniqueOrThrow.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.DSM,
+        active: true,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      const result = await service.clearLockout('s1');
+
+      expect(prisma.staffAccount.update).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { failedLoginAttempts: 0, lockedUntil: null, lockoutEscalationLevel: 0 },
+      });
+      // Consistent with the rest of this service's flattened toStaffDto
+      // response shape (account.phone flattened onto `phone`).
+      expect(result.phone).toBe('+911234567890');
+    });
+
+    // Clearing a lockout does not invalidate an outstanding session — there
+    // is nothing to revoke, unlike deactivation/credential-reset/role-change
+    // in update() above — so tokenVersion must be left untouched.
+    it('does not bump tokenVersion', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      prisma.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      prisma.staff.findUniqueOrThrow.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.DSM,
+        active: true,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.clearLockout('s1');
+
+      const call = prisma.staffAccount.update.mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(call.data).not.toHaveProperty('tokenVersion');
     });
   });
 });
