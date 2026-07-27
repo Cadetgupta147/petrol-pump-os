@@ -183,6 +183,34 @@ export class StaffManagementService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+        // Owner is the ONLY role that can create/edit staff at all (see
+        // StaffManagementController's class/method-level @Roles(Role.OWNER)
+        // on create/update) — so demoting or deactivating the LAST remaining
+        // active Owner at a pump would strand it with nobody able to fix the
+        // mistake, including by re-promoting someone back to Owner. Checked
+        // here, inside the transaction, against `tx` rather than
+        // `this.prisma`: not a full fix for the race between this count and
+        // the write landing (that would need a stricter isolation level),
+        // but it meaningfully narrows the window compared to a check done
+        // before the transaction even opens.
+        const wasActiveOwner = existing.role === Role.OWNER && existing.active;
+        const losingActiveOwnerStatus =
+          wasActiveOwner &&
+          ((dto.role !== undefined && dto.role !== Role.OWNER) || dto.active === false);
+        if (losingActiveOwnerStatus) {
+          const otherActiveOwners = await tx.staff.count({
+            where: { pumpId: existing.pumpId, role: Role.OWNER, active: true, id: { not: existing.id } },
+          });
+          if (otherActiveOwners === 0) {
+            const isRoleChange = dto.role !== undefined && dto.role !== Role.OWNER;
+            throw new BadRequestException(
+              isRoleChange
+                ? 'Cannot change role: at least one Owner must remain for this pump'
+                : 'Cannot deactivate: at least one Owner must remain for this pump',
+            );
+          }
+        }
+
         // name/phone/credential live on the account; active/role are
         // per-membership (role also lives on Staff, not StaffAccount — see
         // schema comment). name is also denormalized onto the membership

@@ -20,7 +20,7 @@ describe('StaffManagementService', () => {
   let service: StaffManagementService;
   let tx: {
     staffAccount: { create: jest.Mock; update: jest.Mock };
-    staff: { create: jest.Mock; update: jest.Mock };
+    staff: { create: jest.Mock; update: jest.Mock; count: jest.Mock };
   };
   let prisma: {
     staff: { findMany: jest.Mock; findUnique: jest.Mock; findUniqueOrThrow: jest.Mock };
@@ -35,7 +35,7 @@ describe('StaffManagementService', () => {
   beforeEach(async () => {
     tx = {
       staffAccount: { create: jest.fn(), update: jest.fn() },
-      staff: { create: jest.fn(), update: jest.fn() },
+      staff: { create: jest.fn(), update: jest.fn(), count: jest.fn() },
     };
     prisma = {
       staff: { findMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
@@ -617,6 +617,141 @@ describe('StaffManagementService', () => {
       expect(tx.staffAccount.update).toHaveBeenCalledWith({
         where: { id: 'account-1' },
         data: { tokenVersion: { increment: 1 } },
+      });
+    });
+
+    // Last-Owner guard — Owner is the ONLY role that can create/edit staff
+    // at all (StaffManagementController's @Roles(Role.OWNER) on
+    // create/update), so losing the last active Owner would strand the pump
+    // with nobody able to recover, including by re-promoting someone.
+    describe('last-Owner guard', () => {
+      it('rejects demoting the sole active Owner (role change away from OWNER, no other active Owner)', async () => {
+        prisma.staff.findUnique.mockResolvedValue({
+          id: 's1',
+          pumpId: 'pump-1',
+          role: Role.OWNER,
+          active: true,
+          accountId: 'account-1',
+          account: { id: 'account-1', phone: '+911234567890' },
+        });
+        tx.staff.count.mockResolvedValue(0);
+
+        await expect(service.update('s1', { role: Role.ACCOUNTANT })).rejects.toThrow(
+          BadRequestException,
+        );
+        expect(tx.staff.count).toHaveBeenCalledWith({
+          where: { pumpId: 'pump-1', role: Role.OWNER, active: true, id: { not: 's1' } },
+        });
+        // The rejection happens before any write — neither the account nor
+        // the membership row should have been touched.
+        expect(tx.staffAccount.update).not.toHaveBeenCalled();
+        expect(tx.staff.update).not.toHaveBeenCalled();
+      });
+
+      it('rejects deactivating the sole active Owner (dto.active: false, no other active Owner)', async () => {
+        prisma.staff.findUnique.mockResolvedValue({
+          id: 's1',
+          pumpId: 'pump-1',
+          role: Role.OWNER,
+          active: true,
+          accountId: 'account-1',
+          account: { id: 'account-1', phone: '+911234567890' },
+        });
+        tx.staff.count.mockResolvedValue(0);
+
+        await expect(service.update('s1', { active: false })).rejects.toThrow(BadRequestException);
+        expect(tx.staff.count).toHaveBeenCalledWith({
+          where: { pumpId: 'pump-1', role: Role.OWNER, active: true, id: { not: 's1' } },
+        });
+        expect(tx.staffAccount.update).not.toHaveBeenCalled();
+        expect(tx.staff.update).not.toHaveBeenCalled();
+      });
+
+      it('allows demoting an Owner when a second active Owner exists at the same pump', async () => {
+        prisma.staff.findUnique.mockResolvedValue({
+          id: 's1',
+          pumpId: 'pump-1',
+          role: Role.OWNER,
+          active: true,
+          accountId: 'account-1',
+          account: { id: 'account-1', phone: '+911234567890' },
+        });
+        tx.staff.count.mockResolvedValue(1);
+        tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+        tx.staff.update.mockResolvedValue({
+          id: 's1',
+          name: 'A',
+          role: Role.ACCOUNTANT,
+          active: true,
+          createdAt: 'x',
+          updatedAt: 'y',
+          account: { phone: '+911234567890' },
+        });
+
+        await service.update('s1', { role: Role.ACCOUNTANT });
+
+        expect(tx.staff.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 's1' },
+            data: expect.objectContaining({ role: Role.ACCOUNTANT }),
+          }),
+        );
+      });
+
+      it('allows deactivating an Owner when a second active Owner exists at the same pump', async () => {
+        prisma.staff.findUnique.mockResolvedValue({
+          id: 's1',
+          pumpId: 'pump-1',
+          role: Role.OWNER,
+          active: true,
+          accountId: 'account-1',
+          account: { id: 'account-1', phone: '+911234567890' },
+        });
+        tx.staff.count.mockResolvedValue(1);
+        tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+        tx.staff.update.mockResolvedValue({
+          id: 's1',
+          name: 'A',
+          role: Role.OWNER,
+          active: false,
+          createdAt: 'x',
+          updatedAt: 'y',
+          account: { phone: '+911234567890' },
+        });
+
+        await service.update('s1', { active: false });
+
+        expect(tx.staff.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 's1' },
+            data: expect.objectContaining({ active: false }),
+          }),
+        );
+      });
+
+      it('never triggers the guard for a role change or deactivation on a non-Owner staff member', async () => {
+        prisma.staff.findUnique.mockResolvedValue({
+          id: 's1',
+          pumpId: 'pump-1',
+          role: Role.MANAGER,
+          active: true,
+          accountId: 'account-1',
+          account: { id: 'account-1', phone: '+911234567890' },
+        });
+        tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+        tx.staff.update.mockResolvedValue({
+          id: 's1',
+          name: 'A',
+          role: Role.MANAGER,
+          active: false,
+          createdAt: 'x',
+          updatedAt: 'y',
+          account: { phone: '+911234567890' },
+        });
+
+        await service.update('s1', { active: false });
+
+        expect(tx.staff.count).not.toHaveBeenCalled();
       });
     });
   });
