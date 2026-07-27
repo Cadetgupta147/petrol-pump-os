@@ -597,6 +597,24 @@ export interface DensityLog {
   recordedAt: string;
 }
 
+// Mirrors prisma DensityRangeConfig — Section 17.19. One row per
+// (pump, productType); a product with no row here falls back to the
+// backend's built-in placeholder default (density-logs.service.ts's
+// DEFAULT_DENSITY_RANGE_BY_PRODUCT).
+export interface DensityRangeConfig {
+  id: string;
+  productType: string;
+  minDensity: number;
+  maxDensity: number;
+  updatedAt: string;
+}
+
+export interface UpsertDensityRangeConfigRequest {
+  productType: string;
+  minDensity: number;
+  maxDensity: number;
+}
+
 // Mirrors apps/backend/src/ocr/invoice-text-parser.util.ts's
 // ExtractedInvoiceFields — every field is nullable, best-effort OCR
 // (Section 9, Google Cloud Vision DOCUMENT_TEXT_DETECTION). invoiceDate is

@@ -3,7 +3,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, PurchaseEntry } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePurchaseEntryDto } from './dto/create-purchase-entry.dto';
-import { computeDensityFlag } from '../density-logs/density-logs.service';
+import { computeDensityFlag, resolveDensityRangeMap } from '../density-logs/density-logs.service';
 
 // Section 7.1/7.2 — manual purchase entry. Tanker delivery -> Purchase
 // Entry created -> tank level increases, all in one transaction.
@@ -92,6 +92,7 @@ export class PurchasesService {
     ];
 
     if (dto.densityValue !== undefined) {
+      const rangeMap = await resolveDensityRangeMap(this.prisma);
       operations.push(
         this.prisma.densityLog.create({
           data: {
@@ -101,7 +102,7 @@ export class PurchasesService {
             ppmValue: dto.ppmValue,
             recordedById,
             purchaseEntryId,
-            flagged: computeDensityFlag(dto.productType, dto.densityValue),
+            flagged: computeDensityFlag(dto.productType, dto.densityValue, rangeMap),
           },
         }),
       );

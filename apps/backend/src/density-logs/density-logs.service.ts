@@ -21,18 +21,19 @@ import { CreateDensityLogDto } from './dto/create-density-log.dto';
 // Section 7.3 says "optional acceptable-range flag (out-of-range readings
 // can trigger an alert same as low stock)" but specifies no numbers — same
 // situation as DIP_VARIANCE_TOLERANCE_LITRES (tanks.service.ts) and
-// VARIANCE_TOLERANCE_LITRES (meter-readings.service.ts); read both of those
-// comments as the template for this one. This is a placeholder constant:
-// reasonable real-world density bands (g/mL) for the two common fuel grades,
-// explicitly NOT sourced from any dealer configuration — a
-// dealer-configurable range (mirroring the CreditConfig singleton pattern)
-// would be a natural follow-up, out of scope here.
+// VARIANCE_TOLERANCE_LITRES (meter-readings.service.ts). Kept only as a
+// built-in fallback (Section 17.19) for a pump that hasn't configured its
+// own range yet — reasonable real-world density bands (g/mL) for the two
+// common fuel grades, NOT sourced from any dealer/OMC configuration. Real
+// per-pump ranges belong in DensityRangeConfig (prisma/schema.prisma) —
+// see resolveDensityRangeMap() below, which is what every real call site
+// actually uses.
 //
-// A product not present in this map has NO known range to flag against, so
-// flagged always stays false for it — this is documented, intentional
-// behavior (not a bug / not an attempt to guess a range for an unlisted
-// product), see computeDensityFlag() below.
-export const DENSITY_RANGE_BY_PRODUCT: Record<
+// A product with no default AND no configured DensityRangeConfig row has NO
+// known range to flag against, so flagged always stays false for it — this
+// is documented, intentional behavior (not a bug / not an attempt to guess a
+// range for an unlisted product), see computeDensityFlag() below.
+export const DEFAULT_DENSITY_RANGE_BY_PRODUCT: Record<
   string,
   { min: number; max: number }
 > = {
@@ -40,16 +41,41 @@ export const DENSITY_RANGE_BY_PRODUCT: Record<
   diesel: { min: 0.82, max: 0.87 }, // HSD (high-speed diesel), g/mL
 };
 
+// Section 17.19 — merges this pump's DensityRangeConfig rows (if any) over
+// DEFAULT_DENSITY_RANGE_BY_PRODUCT, so a dealer-configured range always wins
+// for a product it covers. Every real call site (DensityLogsService.create()
+// below, PurchasesService.create(), TanksService.recordDipReading()) awaits
+// this before calling computeDensityFlag() — it's a separate async step
+// rather than folded into that function so computeDensityFlag() itself stays
+// a plain, easily-unit-tested pure function.
+export async function resolveDensityRangeMap(
+  prisma: PrismaService,
+): Promise<Record<string, { min: number; max: number }>> {
+  const overrides = await prisma.densityRangeConfig.findMany();
+  const map = { ...DEFAULT_DENSITY_RANGE_BY_PRODUCT };
+  for (const row of overrides) {
+    map[row.productType] = { min: row.minDensity, max: row.maxDensity };
+  }
+  return map;
+}
+
 // Pure function, shared by DensityLogsService.create() below and the linked
 // creation paths inside PurchasesService.create() / TanksService.
 // recordDipReading() (both create the DensityLog row inside their own
 // transaction, so they can't go through this service's create() — see those
-// files).
+// files). `rangeByProduct` defaults to the built-in placeholder map so
+// existing unit tests that only care about the flagging math itself don't
+// need to fetch/construct one — real callers always pass an explicit,
+// resolved map from resolveDensityRangeMap() above.
 export function computeDensityFlag(
   productType: string,
   densityValue: number,
+  rangeByProduct: Record<
+    string,
+    { min: number; max: number }
+  > = DEFAULT_DENSITY_RANGE_BY_PRODUCT,
 ): boolean {
-  const range = DENSITY_RANGE_BY_PRODUCT[productType];
+  const range = rangeByProduct[productType];
   if (!range) {
     // Unknown product — no known range to flag against. Documented
     // behavior, not a silent guess (see the map's comment above).
@@ -72,7 +98,8 @@ export class DensityLogsService {
       throw new NotFoundException(`Tank ${dto.tankId} not found`);
     }
 
-    const flagged = computeDensityFlag(tank.productType, dto.densityValue);
+    const rangeMap = await resolveDensityRangeMap(this.prisma);
+    const flagged = computeDensityFlag(tank.productType, dto.densityValue, rangeMap);
 
     return this.prisma.densityLog.create({
       data: {

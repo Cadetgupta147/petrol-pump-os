@@ -15,6 +15,7 @@ describe('PurchasesService', () => {
     tank: { findFirst: jest.Mock; update: jest.Mock };
     purchaseEntry: { create: jest.Mock; findMany: jest.Mock; findUnique: jest.Mock };
     densityLog: { create: jest.Mock };
+    densityRangeConfig: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -40,6 +41,7 @@ describe('PurchasesService', () => {
         findUnique: jest.fn(),
       },
       densityLog: { create: jest.fn() },
+      densityRangeConfig: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
     };
 

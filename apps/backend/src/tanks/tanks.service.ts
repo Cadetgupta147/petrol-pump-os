@@ -6,7 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
-import { computeDensityFlag } from '../density-logs/density-logs.service';
+import { computeDensityFlag, resolveDensityRangeMap } from '../density-logs/density-logs.service';
 import { CreateTankDto } from './dto/create-tank.dto';
 import { UpdateTankDto } from './dto/update-tank.dto';
 import { CreateDipReadingDto } from './dto/create-dip-reading.dto';
@@ -131,6 +131,7 @@ export class TanksService {
         // DensityLog's recordedById — see CreateDipReadingDto's comment for
         // why there's no separate field.
         if (dto.densityValue !== undefined) {
+          const rangeMap = await resolveDensityRangeMap(this.prisma);
           await tx.densityLog.create({
             data: {
               pumpId: tank.pumpId,
@@ -139,7 +140,7 @@ export class TanksService {
               ppmValue: dto.ppmValue,
               recordedById: staffId,
               dipReadingId: created.id,
-              flagged: computeDensityFlag(tank.productType, dto.densityValue),
+              flagged: computeDensityFlag(tank.productType, dto.densityValue, rangeMap),
             },
           });
         }

@@ -26,6 +26,7 @@ import {
   ChevronDown,
   Ban,
   Smartphone,
+  Droplet,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -79,6 +80,7 @@ const NAV_ENTRIES: NavEntry[] = [
       { label: 'Purchase entry', to: '/purchases', icon: Truck },
       { label: 'Variance report', to: '/variance-report', icon: Scale },
       { label: 'Rate master', to: '/rate-master', icon: Tag },
+      { label: 'Density thresholds', to: '/density-range-settings', icon: Droplet },
       { label: 'Generator diesel', to: '/generator-diesel', icon: Zap },
       { label: 'Machine testing', to: '/machine-testing', icon: Wrench },
       { label: 'Lubricant & Urea sales', to: '/item-sales', icon: FlaskConical },

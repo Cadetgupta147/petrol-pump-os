@@ -136,6 +136,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'MemberIdCounter',
       'VehicleBlacklist',
       'UpiCaptureConfig',
+      'DensityRangeConfig',
     ];
     expect([...TENANT_SCOPED_MODELS].sort()).toEqual([...expected].sort());
   });

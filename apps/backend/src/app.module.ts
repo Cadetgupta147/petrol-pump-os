@@ -22,6 +22,7 @@ import { TanksModule } from './tanks/tanks.module';
 import { PurchasesModule } from './purchases/purchases.module';
 import { RateMasterModule } from './rate-master/rate-master.module';
 import { DensityLogsModule } from './density-logs/density-logs.module';
+import { DensityRangeConfigModule } from './density-range-config/density-range-config.module';
 import { CashCustodyModule } from './cash-custody/cash-custody.module';
 import { ShiftSalesModule } from './shift-sales/shift-sales.module';
 import { UpiWebhookModule } from './upi-webhook/upi-webhook.module';
@@ -89,6 +90,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     PurchasesModule,
     RateMasterModule,
     DensityLogsModule,
+    DensityRangeConfigModule,
     CashCustodyModule,
     ShiftSalesModule,
     UpiWebhookModule,

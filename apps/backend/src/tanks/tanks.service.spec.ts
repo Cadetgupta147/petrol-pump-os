@@ -22,6 +22,7 @@ describe('TanksService', () => {
     };
     dipReading: { create: jest.Mock; findMany: jest.Mock };
     densityLog: { create: jest.Mock };
+    densityRangeConfig: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -46,6 +47,7 @@ describe('TanksService', () => {
       },
       dipReading: { create: jest.fn(), findMany: jest.fn() },
       densityLog: { create: jest.fn() },
+      densityRangeConfig: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((cb: TxCallback) => cb(prisma)),
     };
 

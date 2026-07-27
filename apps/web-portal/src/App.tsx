@@ -19,6 +19,7 @@ import { TanksPage } from './pages/TanksPage';
 import { PurchaseEntryPage } from './pages/PurchaseEntryPage';
 import { VarianceReportPage } from './pages/VarianceReportPage';
 import { RateMasterPage } from './pages/RateMasterPage';
+import { DensityRangeSettingsPage } from './pages/DensityRangeSettingsPage';
 import { CashCustodyPage } from './pages/CashCustodyPage';
 import { CashCustodyStatusPage } from './pages/CashCustodyStatusPage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -164,6 +165,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <RateMasterPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/density-range-settings"
+        element={
+          <RequireAuth>
+            <DensityRangeSettingsPage />
           </RequireAuth>
         }
       />

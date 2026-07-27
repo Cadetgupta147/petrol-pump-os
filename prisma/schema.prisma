@@ -147,6 +147,7 @@ model Pump {
   customerOtps           CustomerOtp[]
   memberIdCounters       MemberIdCounter[]
   vehicleBlacklists      VehicleBlacklist[]
+  densityRangeConfigs    DensityRangeConfig[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -786,10 +787,31 @@ model DensityLog {
   purchaseEntryId String?
   dipReading      DipReading?    @relation(fields: [dipReadingId], references: [id])
   dipReadingId    String?
-  // Out-of-range flag — see DENSITY_RANGE_BY_PRODUCT in density-logs.service.ts
-  // for the placeholder acceptable-range map and what "unknown product" means.
+  // Out-of-range flag — see resolveDensityRangeMap() in density-logs.service.ts:
+  // starts from DEFAULT_DENSITY_RANGE_BY_PRODUCT (a placeholder), then layers
+  // this pump's DensityRangeConfig rows (if any) on top. "Unknown product"
+  // (no default AND no configured row) never flags — documented behavior.
   flagged         Boolean        @default(false)
   recordedAt      DateTime       @default(now())
+}
+
+// Section 17.19 — dealer/accountant-configurable acceptable density range
+// per product, so this pump's actual OMC-quoted/regulatory bands can replace
+// the hardcoded placeholder in density-logs.service.ts instead of an
+// engineer guessing real-world numbers. One row per (pump, productType); a
+// product with no row here just falls back to the built-in placeholder
+// default (see resolveDensityRangeMap()). Matches CreditConfig's singleton-
+// PER-PRODUCT-per-pump pattern, not a true global singleton.
+model DensityRangeConfig {
+  id           String   @id @default(cuid())
+  pump         Pump     @relation(fields: [pumpId], references: [id])
+  pumpId       String
+  productType  String
+  minDensity   Float
+  maxDensity   Float
+  updatedAt    DateTime @updatedAt
+
+  @@unique([pumpId, productType])
 }
 
 // ---------- Walk-in Sales Aggregation (Section 8A) ----------
