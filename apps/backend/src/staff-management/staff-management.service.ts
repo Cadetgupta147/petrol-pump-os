@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
+import { bumpStaffAccountTokenVersion } from './bump-staff-account-token-version';
 
 const SALT_ROUNDS = 10;
 
@@ -109,34 +110,92 @@ export class StaffManagementService {
       throw new BadRequestException(`Staff ${id} has no linked account — cannot update credentials`);
     }
 
-    if (dto.pin && existing.role !== Role.DSM) {
+    // Once dto.role can change the role in the SAME request as a pin/password
+    // reset, the pin-vs-password validation below must check against the
+    // EFFECTIVE role this update will leave the staff member in
+    // (dto.role ?? existing.role), not the stale pre-update role — otherwise
+    // e.g. supplying a new pin alongside a role change TO DSM would
+    // incorrectly fail against existing.role (still non-DSM at this point).
+    const effectiveRole = dto.role ?? existing.role;
+    if (dto.pin && effectiveRole !== Role.DSM) {
       throw new BadRequestException(
-        `Staff ${id} has role ${existing.role}, which logs in with a password, not a pin — a pin reset only applies to role DSM`,
+        `Staff ${id} has role ${effectiveRole}, which logs in with a password, not a pin — a pin reset only applies to role DSM`,
       );
     }
-    if (dto.password && existing.role === Role.DSM) {
+    if (dto.password && effectiveRole === Role.DSM) {
       throw new BadRequestException(
         `Staff ${id} has role DSM, which logs in with a pin, not a password — a password reset does not apply to role DSM`,
+      );
+    }
+
+    // Section 3.7 gap resolution (see UpdateStaffDto's class comment) — a
+    // role change that crosses the DSM <-> non-DSM boundary changes which
+    // credential field is valid, so the caller MUST supply the new
+    // credential type in this same request rather than leaving the staff
+    // member unable to log in with either. A role change that does NOT
+    // cross the boundary (e.g. OWNER -> ACCOUNTANT, or DSM -> DSM as a
+    // no-op) needs no forced reset — the checks above already reject the
+    // WRONG credential type being supplied optionally, same as before.
+    const roleBoundaryCrossed =
+      dto.role !== undefined && (existing.role === Role.DSM) !== (dto.role === Role.DSM);
+    if (roleBoundaryCrossed && dto.role === Role.DSM && !dto.pin) {
+      throw new BadRequestException(
+        `Staff ${id} is changing role to DSM — a new pin is required in this same request, since the existing passwordHash will no longer be valid for a DSM login`,
+      );
+    }
+    if (roleBoundaryCrossed && dto.role !== Role.DSM && !dto.password) {
+      throw new BadRequestException(
+        `Staff ${id} is changing role away from DSM (to ${dto.role}) — a new password is required in this same request, since the existing pinHash will no longer be valid for role ${dto.role}`,
       );
     }
 
     const pinHash = dto.pin ? await bcrypt.hash(dto.pin, SALT_ROUNDS) : undefined;
     const passwordHash = dto.password ? await bcrypt.hash(dto.password, SALT_ROUNDS) : undefined;
 
+    // Session revocation triggers — bumping StaffAccount.tokenVersion
+    // invalidates every JWT issued before this update at once (see
+    // JwtStrategy.validate(), which re-checks the token's tokenVersion claim
+    // against this live DB value on every request). Three independent
+    // reasons this update needs to kill outstanding sessions, all funnelled
+    // through the same bumpStaffAccountTokenVersion() helper:
+    //   - Deactivation (dto.active === false) — the account should stop
+    //     working immediately, not linger until the token's natural 12h
+    //     expiry.
+    //   - A pin or password reset (pinHash/passwordHash being set) —
+    //     resetting a credential is often a response to it being
+    //     compromised; leaving an old session alive on the OLD credential
+    //     would defeat the point of resetting it.
+    //   - A role change (dto.role !== undefined && dto.role !== existing.role)
+    //     — RolesGuard reads `role` straight off the JWT payload (see
+    //     jwt-payload.interface.ts's comment), so an un-bumped token would
+    //     keep authorizing requests under the OLD role until it naturally
+    //     expires. That's not minor staleness, it's real privilege drift: an
+    //     Owner demoting someone to READ_ONLY (or promoting them) expects it
+    //     to take effect immediately, not up to 12h later.
+    // Reactivating (dto.active === true) deliberately does NOT bump it —
+    // there's nothing to revoke on the way back in — and an update that
+    // touches none of the above is unrelated to this mechanism entirely.
+    const shouldBumpTokenVersion =
+      dto.active === false ||
+      pinHash !== undefined ||
+      passwordHash !== undefined ||
+      (dto.role !== undefined && dto.role !== existing.role);
+
     try {
       return await this.prisma.$transaction(async (tx) => {
-        // name/phone/credential live on the account; active is per-membership.
-        // name is also denormalized onto the membership row (see schema
-        // comment) — kept in sync here so existing readers of Staff.name
-        // never see it drift from the account.
+        // name/phone/credential live on the account; active/role are
+        // per-membership (role also lives on Staff, not StaffAccount — see
+        // schema comment). name is also denormalized onto the membership
+        // row (see schema comment) — kept in sync here so existing readers
+        // of Staff.name never see it drift from the account.
         //
-        // Deactivation (dto.active === false) also bumps the account's
-        // tokenVersion — see StaffAccount.tokenVersion's schema comment. This
-        // immediately invalidates any JWT already issued for this person,
-        // instead of leaving it valid until its natural 12h expiry.
-        // Reactivating (dto.active === true) deliberately does NOT bump it —
-        // there's nothing to revoke on the way back in — and an update that
-        // doesn't touch `active` at all is unrelated to this mechanism.
+        // When a role change crosses the DSM <-> non-DSM boundary, the
+        // now-invalid OLD credential field is explicitly nulled out here
+        // (moving TO DSM nulls passwordHash; moving AWAY FROM DSM nulls
+        // pinHash) rather than left as a stale hash nobody can use — the
+        // validation above already guaranteed the NEW credential
+        // (pinHash/passwordHash) is being set in the same request, so no
+        // staff member is ever left with zero valid credentials.
         await tx.staffAccount.update({
           where: { id: existing.accountId! },
           data: {
@@ -144,15 +203,24 @@ export class StaffManagementService {
             ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
             ...(pinHash ? { pinHash } : {}),
             ...(passwordHash ? { passwordHash } : {}),
-            ...(dto.active === false ? { tokenVersion: { increment: 1 } } : {}),
+            ...(roleBoundaryCrossed && dto.role === Role.DSM ? { passwordHash: null } : {}),
+            ...(roleBoundaryCrossed && dto.role !== Role.DSM ? { pinHash: null } : {}),
           },
         });
+        // Separate statement in the SAME transaction as the account update
+        // above (and the membership update below) — still one atomic unit,
+        // see bumpStaffAccountTokenVersion()'s own comment for why this
+        // takes `tx` rather than reaching for `this.prisma` directly.
+        if (shouldBumpTokenVersion) {
+          await bumpStaffAccountTokenVersion(tx, existing.accountId!);
+        }
         const membership = await tx.staff.update({
           where: { id },
           data: {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
             ...(dto.active !== undefined ? { active: dto.active } : {}),
             ...(dto.monthlySalary !== undefined ? { monthlySalary: dto.monthlySalary } : {}),
+            ...(dto.role !== undefined ? { role: dto.role } : {}),
           },
           select: SAFE_SELECT,
         });

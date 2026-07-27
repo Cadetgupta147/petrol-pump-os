@@ -266,9 +266,14 @@ describe('StaffManagementService', () => {
 
     // JWT revocation (StaffAccount.tokenVersion) — deactivating a staff
     // member must kill any outstanding session immediately, not just block
-    // future logins, so this bumps tokenVersion on the SAME account update
-    // that flips active to false (see JwtStrategy.validate()'s per-request
-    // check against this value).
+    // future logins. The bump now happens via the centralized
+    // bumpStaffAccountTokenVersion(tx, accountId) helper — a SEPARATE
+    // tx.staffAccount.update() call within the same transaction as the main
+    // account update (see that helper's file comment for why it's a second
+    // statement in one transaction rather than a field merged onto the main
+    // update, or a standalone transaction of its own) — so this asserts
+    // tx.staffAccount.update was called at all with the increment shape,
+    // rather than pinning it to a specific call index.
     it('bumps the account tokenVersion when deactivating a staff member (dto.active: false)', async () => {
       prisma.staff.findUnique.mockResolvedValue({
         id: 's1',
@@ -289,8 +294,10 @@ describe('StaffManagementService', () => {
 
       await service.update('s1', { active: false });
 
-      const accountCall = tx.staffAccount.update.mock.calls[0][0] as { data: Record<string, unknown> };
-      expect(accountCall.data).toHaveProperty('tokenVersion', { increment: 1 });
+      expect(tx.staffAccount.update).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { tokenVersion: { increment: 1 } },
+      });
     });
 
     // Reactivating must NOT bump tokenVersion — there's nothing to revoke on
@@ -404,6 +411,207 @@ describe('StaffManagementService', () => {
       await expect(bcrypt.compare('5678', accountCall.data.pinHash)).resolves.toBe(true);
       const membershipCall = tx.staff.update.mock.calls[0][0] as { data: Record<string, unknown> };
       expect(membershipCall.data).not.toHaveProperty('pinHash');
+    });
+
+    // Section 3.7 gap resolution — a credential reset is often a response to
+    // that credential being compromised (a lost phone with the pin visible,
+    // a shared/guessed password); leaving an old session alive on the OLD
+    // credential would defeat the point of resetting it. Both reset paths
+    // now bump tokenVersion via the same bumpStaffAccountTokenVersion(tx,
+    // accountId) helper used for deactivation.
+    it('bumps tokenVersion on a pin reset', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.DSM,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.DSM,
+        active: true,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { pin: '5678' });
+
+      expect(tx.staffAccount.update).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { tokenVersion: { increment: 1 } },
+      });
+    });
+
+    it('bumps tokenVersion on a password reset', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.ACCOUNTANT,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.ACCOUNTANT,
+        active: true,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { password: 'longenoughpassword' });
+
+      expect(tx.staffAccount.update).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { tokenVersion: { increment: 1 } },
+      });
+    });
+
+    // Section 3.7 — role is now editable. A role change that does NOT cross
+    // the DSM <-> non-DSM credential boundary (OWNER -> ACCOUNTANT here)
+    // needs no forced credential reset, but must still bump tokenVersion —
+    // RolesGuard reads `role` straight off the JWT, so an un-bumped token
+    // would keep authorizing the OLD role until it naturally expires.
+    it('changes a non-boundary-crossing role (OWNER -> ACCOUNTANT) without requiring a new pin/password, and bumps tokenVersion', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.OWNER,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.ACCOUNTANT,
+        active: true,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { role: Role.ACCOUNTANT });
+
+      expect(tx.staff.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 's1' },
+          data: expect.objectContaining({ role: Role.ACCOUNTANT }),
+        }),
+      );
+      expect(tx.staffAccount.update).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { tokenVersion: { increment: 1 } },
+      });
+    });
+
+    // Section 3.7 gap resolution — moving TO role DSM without a new pin
+    // would leave the account with only a passwordHash, which DSM logins
+    // never check — rejected before any write happens.
+    it('rejects a role change TO DSM with no new pin', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.ACCOUNTANT,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+
+      await expect(service.update('s1', { role: Role.DSM })).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('accepts a role change TO DSM with a new pin — sets pinHash, nulls passwordHash, bumps tokenVersion', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.ACCOUNTANT,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.DSM,
+        active: true,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { role: Role.DSM, pin: '1234' });
+
+      const mainAccountCall = tx.staffAccount.update.mock.calls[0][0] as {
+        data: { pinHash?: string; passwordHash?: null };
+      };
+      await expect(bcrypt.compare('1234', mainAccountCall.data.pinHash!)).resolves.toBe(true);
+      expect(mainAccountCall.data.passwordHash).toBeNull();
+      expect(tx.staff.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 's1' },
+          data: expect.objectContaining({ role: Role.DSM }),
+        }),
+      );
+      expect(tx.staffAccount.update).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { tokenVersion: { increment: 1 } },
+      });
+    });
+
+    // Section 3.7 gap resolution — moving AWAY FROM role DSM without a new
+    // password would leave the account with only a pinHash, which no
+    // non-DSM login path checks — rejected before any write happens.
+    it('rejects a role change AWAY FROM DSM with no new password', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.DSM,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+
+      await expect(service.update('s1', { role: Role.MANAGER })).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('accepts a role change AWAY FROM DSM with a new password — sets passwordHash, nulls pinHash, bumps tokenVersion', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.DSM,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        name: 'A',
+        role: Role.MANAGER,
+        active: true,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { role: Role.MANAGER, password: 'longenoughpassword' });
+
+      const mainAccountCall = tx.staffAccount.update.mock.calls[0][0] as {
+        data: { passwordHash?: string; pinHash?: null };
+      };
+      await expect(bcrypt.compare('longenoughpassword', mainAccountCall.data.passwordHash!)).resolves.toBe(
+        true,
+      );
+      expect(mainAccountCall.data.pinHash).toBeNull();
+      expect(tx.staff.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 's1' },
+          data: expect.objectContaining({ role: Role.MANAGER }),
+        }),
+      );
+      expect(tx.staffAccount.update).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { tokenVersion: { increment: 1 } },
+      });
     });
   });
 });
