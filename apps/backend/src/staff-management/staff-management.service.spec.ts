@@ -21,6 +21,7 @@ describe('StaffManagementService', () => {
   let tx: {
     staffAccount: { create: jest.Mock; update: jest.Mock };
     staff: { create: jest.Mock; update: jest.Mock; count: jest.Mock };
+    $queryRaw: jest.Mock;
   };
   let prisma: {
     staff: { findMany: jest.Mock; findUnique: jest.Mock; findUniqueOrThrow: jest.Mock };
@@ -36,6 +37,14 @@ describe('StaffManagementService', () => {
     tx = {
       staffAccount: { create: jest.fn(), update: jest.fn() },
       staff: { create: jest.fn(), update: jest.fn(), count: jest.fn() },
+      // Last-Owner guard race fix — a SELECT ... FOR UPDATE issued via
+      // tx.$queryRaw immediately before the tx.staff.count() below (see
+      // update()'s comment). The mocked resolved value's contents don't
+      // matter here (the real guard only reads tx.staff.count() for its
+      // decision) — this only needs to exist so the call doesn't throw
+      // "tx.$queryRaw is not a function" in every test that drives
+      // losingActiveOwnerStatus to true.
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
     prisma = {
       staff: { findMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },

@@ -187,26 +187,57 @@ export class StaffManagementService {
         // StaffManagementController's class/method-level @Roles(Role.OWNER)
         // on create/update) — so demoting or deactivating the LAST remaining
         // active Owner at a pump would strand it with nobody able to fix the
-        // mistake, including by re-promoting someone back to Owner. Checked
-        // here, inside the transaction, against `tx` rather than
-        // `this.prisma`: not a full fix for the race between this count and
-        // the write landing (that would need a stricter isolation level),
-        // but it meaningfully narrows the window compared to a check done
-        // before the transaction even opens.
+        // mistake, including by re-promoting someone back to Owner.
+        //
+        // RACE FIX: this used to just run tx.staff.count() inside the
+        // transaction with no lock — that NARROWS the race window (vs.
+        // checking before the transaction even opens) but doesn't CLOSE it:
+        // two concurrent transactions demoting/deactivating two DIFFERENT
+        // Owners at the same pump could each independently count "1 other
+        // active Owner" (each other) before either commits, and both would
+        // proceed, leaving zero. A stricter isolation level (SERIALIZABLE)
+        // was considered and rejected in favor of a targeted row lock — it
+        // would force this transaction to retry-on-conflict against ANY
+        // concurrent write anywhere it touches, not just concurrent writes
+        // to the same pump's active-Owner rows, and pushes the burden of
+        // handling serialization failures (40001) onto every caller of
+        // update(), for a problem that's really about one specific set of
+        // rows.
+        //
+        // Instead: SELECT ... FOR UPDATE on every currently-active-Owner row
+        // at this pump, taken BEFORE the count, inside this same
+        // transaction. This locks those rows for the duration of the
+        // transaction — a concurrent transaction running the same guard for
+        // the SAME pump blocks on this exact SELECT until the first
+        // transaction commits or rolls back, at which point Postgres
+        // re-evaluates the WHERE clause against the now-current (post-
+        // commit) data. So the second transaction sees the REAL, up-to-date
+        // set of active Owners (including the first transaction's already-
+        // committed demotion/deactivation), not a stale snapshot — which is
+        // what actually closes the race, rather than merely narrowing it.
+        //
+        // Uses $queryRaw's tagged-template form (NOT $queryRawUnsafe) so
+        // `existing.pumpId` is passed as a parameterized value rather than
+        // string-concatenated into the SQL. Table/column names have no
+        // @@map in schema.prisma, so the bare model name "Staff" (quoted,
+        // case-sensitive) is the real Postgres table name — confirmed
+        // against the real dev DB, not just assumed.
         const wasActiveOwner = existing.role === Role.OWNER && existing.active;
         const losingActiveOwnerStatus =
           wasActiveOwner &&
           ((dto.role !== undefined && dto.role !== Role.OWNER) || dto.active === false);
         if (losingActiveOwnerStatus) {
+          await tx.$queryRaw`
+            SELECT id FROM "Staff"
+            WHERE "pumpId" = ${existing.pumpId} AND "role" = 'OWNER' AND "active" = true
+            FOR UPDATE
+          `;
           const otherActiveOwners = await tx.staff.count({
             where: { pumpId: existing.pumpId, role: Role.OWNER, active: true, id: { not: existing.id } },
           });
           if (otherActiveOwners === 0) {
-            const isRoleChange = dto.role !== undefined && dto.role !== Role.OWNER;
             throw new BadRequestException(
-              isRoleChange
-                ? 'Cannot change role: at least one Owner must remain for this pump'
-                : 'Cannot deactivate: at least one Owner must remain for this pump',
+              'Cannot deactivate or change role: at least one active Owner must remain for this pump',
             );
           }
         }
