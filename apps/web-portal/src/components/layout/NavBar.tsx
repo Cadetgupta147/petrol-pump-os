@@ -27,6 +27,7 @@ import {
   Ban,
   Smartphone,
   Droplet,
+  Percent,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -93,6 +94,7 @@ const NAV_ENTRIES: NavEntry[] = [
       { label: 'Cash custody', to: '/cash-custody', icon: Banknote },
       { label: 'Expenses', to: '/expenses', icon: ReceiptText },
       { label: 'UPI capture', to: '/upi-capture-settings', icon: Smartphone },
+      { label: 'GST / tax rates', to: '/tax-rate-settings', icon: Percent },
     ],
   },
   { label: 'Staff', to: '/staff', icon: Users },

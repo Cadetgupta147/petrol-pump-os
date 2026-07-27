@@ -90,6 +90,9 @@ export function SalesPurchaseRegisterTab() {
               <span className="section-note">
                 {formatDateTime(report.from)} to {formatDateTime(report.to)} &middot; totals:{' '}
                 {formatLitres(report.salesTotals.quantityLitres)}, {formatRupees(report.salesTotals.amount)}
+                {report.salesTotals.taxAmount > 0 && (
+                  <> &middot; tax: {formatRupees(report.salesTotals.taxAmount)}</>
+                )}
               </span>
             </div>
             {report.salesRegister.length === 0 ? (
@@ -106,6 +109,7 @@ export function SalesPurchaseRegisterTab() {
                       <th className="num">Qty (L)</th>
                       <th className="num">Rate</th>
                       <th className="num">Amount</th>
+                      <th className="num">Tax</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -118,6 +122,11 @@ export function SalesPurchaseRegisterTab() {
                         <td className="num">{formatLitres(row.quantityLitres)}</td>
                         <td className="num">{formatRupees(row.rate)}</td>
                         <td className="num">{formatRupees(row.amount)}</td>
+                        <td className="num">
+                          {row.taxAmount === null
+                            ? '—'
+                            : `${formatRupees(row.taxAmount)} (${row.taxRatePercent}%)`}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -132,6 +141,9 @@ export function SalesPurchaseRegisterTab() {
               <span className="section-note">
                 totals: {formatLitres(report.purchaseTotals.quantityLitres)},{' '}
                 {formatRupees(report.purchaseTotals.amount)}
+                {report.purchaseTotals.taxAmount > 0 && (
+                  <> &middot; tax: {formatRupees(report.purchaseTotals.taxAmount)}</>
+                )}
               </span>
             </div>
             {report.purchaseRegister.length === 0 ? (
@@ -148,6 +160,7 @@ export function SalesPurchaseRegisterTab() {
                       <th className="num">Qty (L)</th>
                       <th className="num">Rate</th>
                       <th className="num">Amount</th>
+                      <th className="num">Tax</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -160,6 +173,11 @@ export function SalesPurchaseRegisterTab() {
                         <td className="num">{formatLitres(row.quantityLitres)}</td>
                         <td className="num">{formatRupees(row.rate)}</td>
                         <td className="num">{formatRupees(row.amount)}</td>
+                        <td className="num">
+                          {row.taxAmount === null
+                            ? '—'
+                            : `${formatRupees(row.taxAmount)} (${row.taxRatePercent}%)`}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

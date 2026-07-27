@@ -1017,8 +1017,11 @@ export interface GiftRedemptionReportRow {
 }
 
 // GET /sales-purchase-register?from=&to= — SalesPurchaseRegisterService.
-// getRegister(). Plain register, NOT a tax-rate breakup — see taxModelingGap,
-// which must be surfaced prominently in the UI (Section 12 handback note).
+// getRegister(). NOT a certified GST tax breakup — see taxModelingGap, which
+// must be surfaced prominently in the UI (Section 12 handback note).
+// taxRatePercent/taxAmount (Section 17.22) reflect a dealer-configured rate
+// (see TaxRateConfig below), applied additively on `amount`. null (not 0)
+// means no rate is configured for this row's product.
 export interface SalesRegisterRow {
   date: string;
   partyName: string;
@@ -1027,6 +1030,8 @@ export interface SalesRegisterRow {
   quantityLitres: number;
   rate: number;
   amount: number;
+  taxRatePercent: number | null;
+  taxAmount: number | null;
 }
 
 export interface PurchaseRegisterRow {
@@ -1037,16 +1042,33 @@ export interface PurchaseRegisterRow {
   quantityLitres: number;
   rate: number;
   amount: number;
+  taxRatePercent: number | null;
+  taxAmount: number | null;
 }
 
 export interface SalesPurchaseRegister {
   from: string;
   to: string;
   salesRegister: SalesRegisterRow[];
-  salesTotals: { quantityLitres: number; amount: number };
+  salesTotals: { quantityLitres: number; amount: number; taxAmount: number };
   purchaseRegister: PurchaseRegisterRow[];
-  purchaseTotals: { quantityLitres: number; amount: number };
+  purchaseTotals: { quantityLitres: number; amount: number; taxAmount: number };
   taxModelingGap: string;
+}
+
+// Mirrors prisma TaxRateConfig — Section 17.22. One row per (pump,
+// productType); a product with no row here is treated as untaxed in the
+// sales/purchase register, not defaulted to a guessed rate.
+export interface TaxRateConfig {
+  id: string;
+  productType: string;
+  taxRatePercent: number;
+  updatedAt: string;
+}
+
+export interface UpsertTaxRateConfigRequest {
+  productType: string;
+  taxRatePercent: number;
 }
 
 // GET /attendance/summary?from=&to= — AttendanceService.getSummary().

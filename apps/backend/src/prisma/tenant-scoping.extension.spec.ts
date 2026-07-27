@@ -137,6 +137,7 @@ describe('TENANT_SCOPED_MODELS', () => {
       'VehicleBlacklist',
       'UpiCaptureConfig',
       'DensityRangeConfig',
+      'TaxRateConfig',
     ];
     expect([...TENANT_SCOPED_MODELS].sort()).toEqual([...expected].sort());
   });

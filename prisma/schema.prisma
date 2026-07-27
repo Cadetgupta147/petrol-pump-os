@@ -148,6 +148,7 @@ model Pump {
   memberIdCounters       MemberIdCounter[]
   vehicleBlacklists      VehicleBlacklist[]
   densityRangeConfigs    DensityRangeConfig[]
+  taxRateConfigs         TaxRateConfig[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -810,6 +811,28 @@ model DensityRangeConfig {
   minDensity   Float
   maxDensity   Float
   updatedAt    DateTime @updatedAt
+
+  @@unique([pumpId, productType])
+}
+
+// Section 17.22 — "GST report has no real tax-rate modeling." Fuel (MS/HSD)
+// is outside GST in India (state VAT applies instead, unmodeled here); only
+// non-fuel productTypes (lubricants, etc.) plausibly need a real GST rate.
+// Rather than an engineer inventing a tax percentage or guessing a fuel/
+// non-fuel split from the free-text productType string (both Bill and
+// PurchaseEntry use loose string-typed products, no category enum — see
+// sales-purchase-register.service.ts's original writeup), this makes the
+// rate a dealer/accountant-entered value PER productType string they
+// actually use. A productType with no row here is treated as untaxed in the
+// report (e.g. every fuel grade, left unconfigured) — not a guess, an
+// explicit opt-in per product.
+model TaxRateConfig {
+  id             String   @id @default(cuid())
+  pump           Pump     @relation(fields: [pumpId], references: [id])
+  pumpId         String
+  productType    String
+  taxRatePercent Float
+  updatedAt      DateTime @updatedAt
 
   @@unique([pumpId, productType])
 }

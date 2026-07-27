@@ -20,6 +20,7 @@ import { PurchaseEntryPage } from './pages/PurchaseEntryPage';
 import { VarianceReportPage } from './pages/VarianceReportPage';
 import { RateMasterPage } from './pages/RateMasterPage';
 import { DensityRangeSettingsPage } from './pages/DensityRangeSettingsPage';
+import { TaxRateSettingsPage } from './pages/TaxRateSettingsPage';
 import { CashCustodyPage } from './pages/CashCustodyPage';
 import { CashCustodyStatusPage } from './pages/CashCustodyStatusPage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -173,6 +174,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <DensityRangeSettingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/tax-rate-settings"
+        element={
+          <RequireAuth>
+            <TaxRateSettingsPage />
           </RequireAuth>
         }
       />
