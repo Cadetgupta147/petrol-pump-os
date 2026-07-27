@@ -139,6 +139,15 @@ class FakePrisma {
     },
   };
 
+  // JwtStrategy (staff side) now hits PrismaService.staff.findUnique() on
+  // every request (the tokenVersion revocation check — see
+  // jwt.strategy.ts). This test only ever authenticates as the one fixed
+  // 'staff-1' member at tokenVersion 0, so a minimal fixed stub is enough —
+  // no need to model real Staff/StaffAccount rows here.
+  staff = {
+    findUnique: () => Promise.resolve({ account: { tokenVersion: 0 } }),
+  };
+
   memberIdCounter = {
     update: ({ data }: { data: { lastSeq: { increment: number } } }) => {
       this.counterSeq += data.lastSeq.increment;
@@ -269,6 +278,7 @@ describe('Web-portal-created customer can OTP-login with a differently-formatted
       staffId: 'staff-1',
       pumpId: 'pump-1',
       role: Role.OWNER,
+      tokenVersion: 0,
       sub: 'staff-1',
     });
 

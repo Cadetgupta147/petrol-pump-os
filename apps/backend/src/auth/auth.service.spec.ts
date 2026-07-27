@@ -57,6 +57,7 @@ describe('AuthService', () => {
       phone: '9990000001',
       passwordHash: knownPasswordHash,
       active: true,
+      tokenVersion: 0,
     });
     prisma.staff.findFirst.mockResolvedValue({
       id: 'staff-1',
@@ -77,7 +78,13 @@ describe('AuthService', () => {
       role: Role.OWNER,
     });
     expect(jwtService.signAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ staffId: 'staff-1', pumpId: 'pump-1', role: Role.OWNER, sub: 'staff-1' }),
+      expect.objectContaining({
+        staffId: 'staff-1',
+        pumpId: 'pump-1',
+        role: Role.OWNER,
+        tokenVersion: 0,
+        sub: 'staff-1',
+      }),
     );
     expect(prisma.staff.findFirst).toHaveBeenCalledWith({
       where: { accountId: 'account-1', active: true },
@@ -304,6 +311,7 @@ describe('AuthService.pinLogin', () => {
       phone: '9990000004',
       pinHash: knownPinHash,
       active: true,
+      tokenVersion: 1,
     });
     prisma.staff.findFirst.mockResolvedValue({
       id: 'staff-4',
@@ -324,7 +332,13 @@ describe('AuthService.pinLogin', () => {
       role: Role.DSM,
     });
     expect(jwtService.signAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ staffId: 'staff-4', pumpId: 'pump-1', role: Role.DSM, sub: 'staff-4' }),
+      expect.objectContaining({
+        staffId: 'staff-4',
+        pumpId: 'pump-1',
+        role: Role.DSM,
+        tokenVersion: 1,
+        sub: 'staff-4',
+      }),
     );
   });
 

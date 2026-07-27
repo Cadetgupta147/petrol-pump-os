@@ -129,6 +129,14 @@ export class StaffManagementService {
         // name is also denormalized onto the membership row (see schema
         // comment) — kept in sync here so existing readers of Staff.name
         // never see it drift from the account.
+        //
+        // Deactivation (dto.active === false) also bumps the account's
+        // tokenVersion — see StaffAccount.tokenVersion's schema comment. This
+        // immediately invalidates any JWT already issued for this person,
+        // instead of leaving it valid until its natural 12h expiry.
+        // Reactivating (dto.active === true) deliberately does NOT bump it —
+        // there's nothing to revoke on the way back in — and an update that
+        // doesn't touch `active` at all is unrelated to this mechanism.
         await tx.staffAccount.update({
           where: { id: existing.accountId! },
           data: {
@@ -136,6 +144,7 @@ export class StaffManagementService {
             ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
             ...(pinHash ? { pinHash } : {}),
             ...(passwordHash ? { passwordHash } : {}),
+            ...(dto.active === false ? { tokenVersion: { increment: 1 } } : {}),
           },
         });
         const membership = await tx.staff.update({

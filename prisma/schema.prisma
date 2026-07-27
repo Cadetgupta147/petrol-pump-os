@@ -189,6 +189,20 @@ model StaffAccount {
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime?
 
+  // Staff-side JWT "kill switch", mirroring CustomerAccount.tokenVersion
+  // above (same mechanism, staff-specific wording): a property of the LOGIN
+  // SESSION, not of any one pump membership, since a person can hold
+  // memberships (Staff rows, with their own pumpId/role) at more than one
+  // pump while sharing a single login identity here. Embedded as a claim in
+  // every staff JWT at issuance (AuthService.login/pinLogin) and re-checked
+  // against this live DB value on every staff-authenticated request
+  // (JwtStrategy.validate). Bumping this value invalidates every
+  // previously-issued token at once — e.g. StaffManagementService.update()
+  // bumps it when an Owner deactivates a Staff membership, so an outstanding
+  // JWT for that person stops working immediately rather than lingering
+  // until its natural 12h expiry.
+  tokenVersion        Int       @default(0)
+
   memberships Staff[]
 }
 

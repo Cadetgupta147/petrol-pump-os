@@ -68,6 +68,7 @@ export class AuthService {
       staffId: membership.id,
       pumpId: membership.pumpId,
       role: membership.role,
+      tokenVersion: account.tokenVersion,
       sub: membership.id,
     };
 
@@ -125,6 +126,7 @@ export class AuthService {
       staffId: membership.id,
       pumpId: membership.pumpId,
       role: membership.role,
+      tokenVersion: account.tokenVersion,
       sub: membership.id,
     };
 

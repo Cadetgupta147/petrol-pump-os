@@ -73,7 +73,15 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       ],
     })
       .overrideProvider(PrismaService)
-      .useValue({})
+      .useValue({
+        // JwtStrategy now hits PrismaService.staff.findUnique() on every
+        // request (the tokenVersion revocation check — see
+        // jwt.strategy.ts); stubbed to a fixed tokenVersion matching every
+        // signed token below, same reasoning as auth-guards.integration.spec.ts.
+        staff: {
+          findUnique: jest.fn().mockResolvedValue({ account: { tokenVersion: 0 } }),
+        },
+      })
       .overrideProvider(BillsService)
       .useValue({ findAll: () => [], create: () => ({}), remove: () => ({}) })
       .overrideProvider(CustomersService)
@@ -131,6 +139,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       staffId: 'staff-accountant',
       pumpId: 'pump-1',
       role: Role.ACCOUNTANT,
+      tokenVersion: 0,
       sub: 'staff-accountant',
     });
   }
@@ -140,6 +149,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       staffId: 'staff-dsm',
       pumpId: 'pump-1',
       role: Role.DSM,
+      tokenVersion: 0,
       sub: 'staff-dsm',
     });
   }
@@ -149,6 +159,7 @@ describe('@Roles(Role.OWNER, Role.ACCOUNTANT) on real controllers — integratio
       staffId: 'staff-owner',
       pumpId: 'pump-1',
       role: Role.OWNER,
+      tokenVersion: 0,
       sub: 'staff-owner',
     });
   }

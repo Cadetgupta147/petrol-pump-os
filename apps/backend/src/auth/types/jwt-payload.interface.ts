@@ -17,6 +17,12 @@ export interface JwtPayload {
   // available once that lands.
   pumpId: string;
   role: Role;
+  // Session "kill switch" claim — see prisma/schema.prisma's
+  // StaffAccount.tokenVersion comment and JwtStrategy.validate(), which
+  // re-checks this against the live DB value on every request. Bumping
+  // StaffAccount.tokenVersion invalidates every token minted with an older
+  // value at once.
+  tokenVersion: number;
   // Standard JWT claims populated by @nestjs/jwt (sub mirrors staffId).
   sub: string;
   iat?: number;

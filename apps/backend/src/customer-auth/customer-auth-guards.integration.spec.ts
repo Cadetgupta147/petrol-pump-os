@@ -85,6 +85,13 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
             return Promise.resolve(account ? { account } : null);
           },
         },
+        // JwtStrategy (staff side) now hits PrismaService.staff.findUnique()
+        // on every request too (the same tokenVersion revocation check — see
+        // jwt.strategy.ts). Every staff token signed below uses staffId 's1'
+        // at tokenVersion 0, so this fixed stub is enough.
+        staff: {
+          findUnique: () => Promise.resolve({ account: { tokenVersion: 0 } }),
+        },
       })
       .compile();
 
@@ -119,7 +126,13 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   });
 
   it('rejects a staff token on a customer-only route (401)', async () => {
-    const token = await staffJwtService.signAsync({ staffId: 's1', pumpId: 'pump-1', role: Role.OWNER, sub: 's1' });
+    const token = await staffJwtService.signAsync({
+      staffId: 's1',
+      pumpId: 'pump-1',
+      role: Role.OWNER,
+      tokenVersion: 0,
+      sub: 's1',
+    });
     const res = await fetch(`${baseUrl}/test-customer-only/protected`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -157,7 +170,13 @@ describe('Customer JWT vs Staff JWT — cross-guard rejection (integration)', ()
   });
 
   it('allows a staff token on a staff-only route (regression sanity check)', async () => {
-    const token = await staffJwtService.signAsync({ staffId: 's1', pumpId: 'pump-1', role: Role.OWNER, sub: 's1' });
+    const token = await staffJwtService.signAsync({
+      staffId: 's1',
+      pumpId: 'pump-1',
+      role: Role.OWNER,
+      tokenVersion: 0,
+      sub: 's1',
+    });
     const res = await fetch(`${baseUrl}/test-staff-only/protected`, {
       headers: { Authorization: `Bearer ${token}` },
     });

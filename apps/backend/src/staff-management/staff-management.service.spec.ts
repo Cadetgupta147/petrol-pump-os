@@ -264,6 +264,89 @@ describe('StaffManagementService', () => {
       expect(accountCall.data).not.toHaveProperty('passwordHash');
     });
 
+    // JWT revocation (StaffAccount.tokenVersion) — deactivating a staff
+    // member must kill any outstanding session immediately, not just block
+    // future logins, so this bumps tokenVersion on the SAME account update
+    // that flips active to false (see JwtStrategy.validate()'s per-request
+    // check against this value).
+    it('bumps the account tokenVersion when deactivating a staff member (dto.active: false)', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.DSM,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        active: false,
+        name: 'A',
+        role: Role.DSM,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { active: false });
+
+      const accountCall = tx.staffAccount.update.mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(accountCall.data).toHaveProperty('tokenVersion', { increment: 1 });
+    });
+
+    // Reactivating must NOT bump tokenVersion — there's nothing to revoke on
+    // the way back in, and doing so anyway would be surprising/undocumented
+    // behavior.
+    it('does not bump tokenVersion when reactivating a staff member (dto.active: true)', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.DSM,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        active: true,
+        name: 'A',
+        role: Role.DSM,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { active: true });
+
+      const accountCall = tx.staffAccount.update.mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(accountCall.data).not.toHaveProperty('tokenVersion');
+    });
+
+    // An update that doesn't touch `active` at all (e.g. just a name change)
+    // is unrelated to session revocation and must not bump tokenVersion
+    // either.
+    it('does not bump tokenVersion when the update does not touch `active` at all', async () => {
+      prisma.staff.findUnique.mockResolvedValue({
+        id: 's1',
+        role: Role.DSM,
+        accountId: 'account-1',
+        account: { id: 'account-1', phone: '+911234567890' },
+      });
+      tx.staffAccount.update.mockResolvedValue({ id: 'account-1' });
+      tx.staff.update.mockResolvedValue({
+        id: 's1',
+        active: true,
+        name: 'B',
+        role: Role.DSM,
+        createdAt: 'x',
+        updatedAt: 'y',
+        account: { phone: '+911234567890' },
+      });
+
+      await service.update('s1', { name: 'B' });
+
+      const accountCall = tx.staffAccount.update.mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(accountCall.data).not.toHaveProperty('tokenVersion');
+    });
+
     // Section 17.23 — fixed monthly salary, Owner-only (same DTO/gate as
     // every other field here).
     it('sets monthlySalary on the membership row', async () => {

@@ -60,9 +60,17 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
     })
       // AuthModule's AuthService depends on PrismaService; not exercised by
       // this test (no /auth/login calls here), so a stub is enough — avoids
-      // needing a real DB connection just to test guard wiring.
+      // needing a real DB connection just to test guard wiring. JwtStrategy
+      // now also hits PrismaService.staff.findUnique() on every request (the
+      // tokenVersion revocation check — see jwt.strategy.ts) so this stub
+      // needs that one method wired to a fixed tokenVersion; every signed
+      // token below uses the matching value.
       .overrideProvider(PrismaService)
-      .useValue({})
+      .useValue({
+        staff: {
+          findUnique: jest.fn().mockResolvedValue({ account: { tokenVersion: 0 } }),
+        },
+      })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -100,6 +108,7 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
       staffId: 'staff-1',
       pumpId: 'pump-1',
       role: Role.ACCOUNTANT,
+      tokenVersion: 0,
       sub: 'staff-1',
     });
 
@@ -114,6 +123,7 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
       staffId: 'staff-2',
       pumpId: 'pump-1',
       role: Role.ACCOUNTANT,
+      tokenVersion: 0,
       sub: 'staff-2',
     });
 
@@ -128,6 +138,7 @@ describe('Global auth guards (JwtAuthGuard + RolesGuard) — integration', () =>
       staffId: 'staff-3',
       pumpId: 'pump-1',
       role: Role.OWNER,
+      tokenVersion: 0,
       sub: 'staff-3',
     });
 
