@@ -36,6 +36,21 @@ export class StaffManagementController {
   // a lockout doesn't touch a PIN/password or grant any new privilege — it
   // only lets a legitimate but currently-locked-out staff member try logging
   // in again sooner).
+  //
+  // This is a DELIBERATE, reviewed deviation from the Owner-only pattern on
+  // create()/update() above — not an oversight to "fix" back to Owner-only.
+  // The reasoning: unlocking an account RESTORES existing access rather than
+  // GRANTING new privilege (it can't be used to promote anyone, reset a
+  // credential, or change a role — see StaffManagementService.clearLockout(),
+  // which only ever resets the three lockout fields). Restricting it to
+  // Owner-only would create a real operational-downtime risk: if the one
+  // person who happens to be locked out IS the Owner, or the Owner is simply
+  // unreachable at the moment a legitimate staff member gets locked out
+  // (e.g. after work hours, traveling), nobody could unlock anyone until the
+  // escalating cooldown (see LOCKOUT_ESCALATION_DURATIONS_MS) expires on its
+  // own — up to an hour, repeatedly, for a repeat lockout. Accountant access
+  // avoids that single point of failure without expanding what the action
+  // can actually do.
   @Post(':id/clear-lockout')
   clearLockout(@Param('id') id: string) {
     return this.staffManagementService.clearLockout(id);
