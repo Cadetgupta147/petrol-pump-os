@@ -20,6 +20,7 @@ import {
 } from '../api/billsApi';
 import type { CustomerLookup, CustomerSummary } from '../api/customersApi';
 import { calculatePointsPreview, type PointsPreview } from '../api/loyaltyApi';
+import { getCurrentRate } from '../api/rateMasterApi';
 import { checkVehicleBlacklist } from '../api/vehicleBlacklistApi';
 import { generateAndSaveReceiptPdf, ReceiptError, shareReceiptPdf, type SavedReceipt } from '../receipts/billReceipt';
 import { enqueueBill } from '../offline/offlineBillQueue';
@@ -68,6 +69,14 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
   const [amountInput, setAmountInput] = useState('');
   const [litresInput, setLitresInput] = useState('');
   const [productType, setProductType] = useState<ProductType>('PETROL');
+  // Section 7.4 — current Rs./L for the selected product, used only to
+  // auto-calculate amount/litres off each other below. null means "not
+  // known yet / no Rate Master entry for this product" — the two fields
+  // just stay independent text inputs in that case, same as before this was
+  // added. The server still resolves rateApplied itself authoritatively at
+  // Save (BillsService.create()), so a stale/missing value here can never
+  // desync what the bill actually charges.
+  const [currentRate, setCurrentRate] = useState<number | null>(null);
 
   const [lines, setLines] = useState<LocalPaymentLine[]>([]);
 
@@ -134,6 +143,55 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
 
   const amount = Number(amountInput) || 0;
   const litres = Number(litresInput) || 0;
+
+  // Re-fetches whenever the DSM taps a different product button. Not
+  // debounced — this is a discrete tap, not free-typed text (contrast with
+  // AddBillModal.tsx's web-portal equivalent, which debounces because its
+  // product field is a free-text datalist input).
+  //
+  // Also recomputes litres off whatever amount is already entered, in the
+  // resolved-rate callback rather than a separate effect keyed on
+  // currentRate — setState from an async callback is the pattern the
+  // set-state-in-effect lint rule itself recommends, unlike setState
+  // synchronously in the effect body. Covers the product-picked-after-
+  // amount-typed order; the more common order (product already selected,
+  // then amount typed) is handled directly by handleAmountChange below.
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentRate(productType, accessToken).then((result) => {
+      if (cancelled) return;
+      const rate = result?.rate ?? null;
+      setCurrentRate(rate);
+      if (rate && amount > 0) {
+        setLitresInput((amount / rate).toFixed(2));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productType, accessToken]);
+
+  // Section [new] — amount/litres auto-calculate off each other once the
+  // product's current rate is known: type one, the other fills in. Purely a
+  // convenience — the server still resolves rateApplied itself
+  // authoritatively at Save (Section 7.4), and both fields stay freely
+  // editable by hand afterward.
+  function handleAmountChange(value: string) {
+    setAmountInput(value);
+    const parsedAmount = Number(value);
+    if (currentRate && parsedAmount > 0) {
+      setLitresInput((parsedAmount / currentRate).toFixed(2));
+    }
+  }
+
+  function handleLitresChange(value: string) {
+    setLitresInput(value);
+    const parsedLitres = Number(value);
+    if (currentRate && parsedLitres > 0) {
+      setAmountInput((parsedLitres * currentRate).toFixed(2));
+    }
+  }
 
   const sumIn = lines.filter((line) => line.direction === 'IN').reduce((total, line) => total + line.amount, 0);
   const sumOut = lines.filter((line) => line.direction === 'OUT').reduce((total, line) => total + line.amount, 0);
@@ -631,7 +689,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
         <TextInput
           style={styles.input}
           value={amountInput}
-          onChangeText={setAmountInput}
+          onChangeText={handleAmountChange}
           placeholder="e.g. 1000"
           keyboardType="decimal-pad"
           editable={!submitting}
@@ -642,7 +700,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
         <TextInput
           style={styles.input}
           value={litresInput}
-          onChangeText={setLitresInput}
+          onChangeText={handleLitresChange}
           placeholder="e.g. 20"
           keyboardType="decimal-pad"
           editable={!submitting}
@@ -665,6 +723,11 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
             </Pressable>
           ))}
         </View>
+        {currentRate ? (
+          <Text style={styles.hint} testID="current-rate-hint">
+            Current rate: ₹{currentRate.toFixed(2)}/L — amount/litres auto-fill off this.
+          </Text>
+        ) : null}
 
         {pointsPreview && scannedCustomerId && (amount > 0 || litres > 0) ? (
           // Section 6.3 step 4 / Section 14 mockup — the DSM sees the points

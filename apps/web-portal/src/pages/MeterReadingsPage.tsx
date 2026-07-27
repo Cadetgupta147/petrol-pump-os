@@ -89,6 +89,7 @@ export function MeterReadingsPage() {
   const [correctingShift, setCorrectingShift] = useState<MeterReading | null>(null);
   const [batchClosing, setBatchClosing] = useState(false);
   const [tankWarning, setTankWarning] = useState<string | null>(null);
+  const [rateReminder, setRateReminder] = useState<string | null>(null);
 
   const canCorrect = currentStaff?.role === 'OWNER' || currentStaff?.role === 'ACCOUNTANT';
 
@@ -247,6 +248,11 @@ export function MeterReadingsPage() {
     setBatchClosing(false);
     const warnings = updated.map((reading) => reading.tankWarning).filter((w): w is string => Boolean(w));
     setTankWarning(warnings.length > 0 ? warnings.join(' ') : null);
+    // rateReminder is the SAME string on every reading in the response
+    // (only ever set on the first close of the day, see
+    // MeterReadingsService.buildRateReminder()) — grab it off any one,
+    // unlike tankWarning above which is genuinely per-nozzle and gets joined.
+    setRateReminder(updated.find((reading) => reading.rateReminder)?.rateReminder ?? null);
     void load();
   }
 
@@ -350,6 +356,7 @@ export function MeterReadingsPage() {
 
         {error && <div className="error-box">{error}</div>}
         {tankWarning && <div className="banner">{tankWarning}</div>}
+        {rateReminder && <div className="banner">{rateReminder}</div>}
         {varianceCheckError && <div className="banner">{varianceCheckError}</div>}
         {!error && !readings && <div className="loading">Loading meter readings…</div>}
         {!error && readings && filteredReadings.length === 0 && (

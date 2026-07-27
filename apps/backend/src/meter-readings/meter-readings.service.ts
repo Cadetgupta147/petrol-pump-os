@@ -10,6 +10,7 @@ import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
 import { assertNonDsmOverride } from '../common/assert-non-dsm-override';
 import { requireTenantContext } from '../common/tenant-context';
+import { formatLocalDate } from '../common/date-range.util';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
 import { CorrectMeterReadingDto } from './dto/correct-meter-reading.dto';
@@ -324,9 +325,14 @@ export class MeterReadingsService {
   async batchClose(dto: BatchCloseDto, user: AuthenticatedUser) {
     const pumpId = requireTenantContext().pumpId;
 
+    // Computed BEFORE the transaction below touches anything, so "was
+    // ANYTHING closed today yet" reflects state prior to this batch — see
+    // buildRateReminder()'s own comment for what this is actually for.
+    const rateReminder = await this.buildRateReminder(dto);
+
     return this.prisma.$transaction(
       async (tx) => {
-        const results: Array<MeterReadingWithLitres & { tankWarning?: string }> = [];
+        const results: Array<MeterReadingWithLitres & { tankWarning?: string; rateReminder?: string }> = [];
 
         for (const entry of dto.readings) {
           let staffId: string | undefined;
@@ -391,7 +397,13 @@ export class MeterReadingsService {
           }
         }
 
-        return results;
+        // Attached uniformly to every result (not just the affected
+        // nozzle's) rather than wrapping the response in an object — keeps
+        // the return type an unchanged MeterReadingWithLitres[] (same shape
+        // existing tests/callers already destructure), while still giving
+        // callers one single reminder string to show, same "grab it off any
+        // one result" pattern this file already uses for tankWarning.
+        return results.map((r) => ({ ...r, ...(rateReminder && { rateReminder }) }));
       },
       // A batch can cover many nozzles, each needing several sequential
       // round trips (nozzle lookup, open-shift lookup, maybe an auto-open
@@ -405,6 +417,62 @@ export class MeterReadingsService {
       // list like this, so none of them needed this override.
       { timeout: 30_000 },
     );
+  }
+
+  // A nudge, not a gate: right after the FIRST meter-reading close of the
+  // (server-local) day — across the whole pump, not per-nozzle — check
+  // whether any product being closed in THIS batch is still priced off a
+  // Rate Master entry from a PRIOR day. RateMasterService.getCurrentRate()'s
+  // own carry-forward already means every bill still prices correctly
+  // either way (see its comment) — this is purely a "did you mean to update
+  // today's price, or is it genuinely unchanged" reminder for whoever closes
+  // the first shift of the day, not a correctness fix. Returns null on every
+  // later close of the same day, or once every product in the batch has a
+  // rate dated today.
+  private async buildRateReminder(dto: BatchCloseDto): Promise<string | null> {
+    const startOfToday = this.getStartOfToday();
+
+    const closedToday = await this.prisma.meterReading.count({
+      where: { shiftEnd: { gte: startOfToday } },
+    });
+    if (closedToday > 0) return null;
+
+    const nozzleIds = [...new Set(dto.readings.map((r) => r.nozzleId))];
+    const nozzles = await this.prisma.nozzle.findMany({
+      where: { id: { in: nozzleIds } },
+      include: { item: true },
+    });
+    const productTypes = [...new Set(nozzles.map((n) => n.item.name))];
+
+    const staleRates: { productType: string; rate: number; effectiveFrom: Date }[] = [];
+    for (const productType of productTypes) {
+      const rate = await this.prisma.rateHistory.findFirst({
+        where: { productType, effectiveFrom: { lte: new Date() } },
+        orderBy: { effectiveFrom: 'desc' },
+      });
+      // No Rate Master entry at all isn't this reminder's job to flag — bill
+      // creation already hard-blocks that loudly (RateMasterService.
+      // getCurrentRate()); skip silently rather than duplicate that here.
+      if (!rate) continue;
+      if (rate.effectiveFrom < startOfToday) {
+        staleRates.push({ productType, rate: rate.rate, effectiveFrom: rate.effectiveFrom });
+      }
+    }
+    if (staleRates.length === 0) return null;
+
+    const parts = staleRates.map(
+      (s) => `${s.productType} ₹${s.rate.toFixed(2)}/L (since ${formatLocalDate(s.effectiveFrom)})`,
+    );
+    return `First meter reading of the day — today's fuel price hasn't been set yet, still using: ${parts.join(', ')}. Update Rate Master if the price actually changed.`;
+  }
+
+  // Server-local midnight — same convention as dashboard.service.ts's own
+  // getStartAndEndOfToday() (not pulled into date-range.util.ts's shared
+  // parseDateRangeStrings(), which parses an explicit 'YYYY-MM-DD' string
+  // rather than deriving "today" itself).
+  private getStartOfToday(): Date {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   }
 
   // PATCH /meter-readings/:id/correct — Owner/Accountant only (see

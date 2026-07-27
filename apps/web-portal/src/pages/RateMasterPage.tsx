@@ -6,6 +6,7 @@ import { getItems } from '../api/items';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { formatRatePerLitre, formatDateTime } from '../utils/format';
+import { computeCurrentRates } from '../utils/rateMaster';
 import type { Item, RateHistory } from '../api/types';
 
 // Section 7.4 — Rate Master: append-only, date-wise fuel pricing per
@@ -21,22 +22,9 @@ import type { Item, RateHistory } from '../api/types';
 // /rate-master/current — the latter needs a productType per call, which
 // would mean one request per distinct product just to render a "current
 // rate" summary. "Current" below is instead derived client-side from the
-// same history list already being displayed (computeCurrentRates mirrors
-// RateMasterService.getCurrentRate()'s own "latest effectiveFrom <= now"
-// logic), so the page only ever makes the one GET /rate-master call.
-function computeCurrentRates(history: RateHistory[]): RateHistory[] {
-  const now = Date.now();
-  const current = new Map<string, RateHistory>();
-  for (const row of history) {
-    const effectiveAt = new Date(row.effectiveFrom).getTime();
-    if (effectiveAt > now) continue; // future-dated, not yet in effect
-    const existing = current.get(row.productType);
-    if (!existing || effectiveAt > new Date(existing.effectiveFrom).getTime()) {
-      current.set(row.productType, row);
-    }
-  }
-  return Array.from(current.values()).sort((a, b) => a.productType.localeCompare(b.productType));
-}
+// same history list already being displayed (see utils/rateMaster.ts's
+// computeCurrentRates, shared with DashboardPage and AddBillModal), so the
+// page only ever makes the one GET /rate-master call.
 
 export function RateMasterPage() {
   const { staff } = useAuth();

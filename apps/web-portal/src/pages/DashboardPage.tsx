@@ -14,6 +14,8 @@ import { getSalesSummary, getTankStock, getRecentBills } from '../api/dashboard'
 import { getCreditAlerts, updateCreditAlert } from '../api/creditAlerts';
 import { getAllMeterReadings, getMeterVariance } from '../api/meterReadings';
 import { getAllBills } from '../api/bills';
+import { getRateHistory } from '../api/rateMaster';
+import { computeCurrentRates } from '../utils/rateMaster';
 import { getLoyaltyCostReport } from '../api/loyalty';
 import { getPurchaseEntries } from '../api/purchases';
 import { getAttendanceLog } from '../api/attendance';
@@ -32,6 +34,7 @@ import type {
   MeterReading,
   MeterVariance,
   Bill,
+  RateHistory,
   LoyaltyCostReport,
   PurchaseEntry,
   AttendanceLogRow,
@@ -109,25 +112,6 @@ function computeProductTotals(bills: Bill[]): { productType: string; litres: num
     .sort((a, b) => b.amount - a.amount);
 }
 
-// Rs./L chips in the sub-header aren't backed by a fuel-price/config entity
-// (none exists in the schema) — derived here from each product's most
-// recently entered bill's rateApplied. Deliberately fed ALL bills ever
-// entered, not the range-scoped set below — the rate chips should always
-// show the latest configured rate, even while viewing "Yesterday".
-function computeLatestRates(bills: Bill[]): Map<string, number> {
-  const latest = new Map<string, { rate: number; ts: number }>();
-  for (const bill of bills) {
-    const ts = new Date(bill.timestamp).getTime();
-    const existing = latest.get(bill.productType);
-    if (!existing || ts > existing.ts) {
-      latest.set(bill.productType, { rate: bill.rateApplied, ts });
-    }
-  }
-  const result = new Map<string, number>();
-  for (const [productType, v] of latest) result.set(productType, v.rate);
-  return result;
-}
-
 // Distinct customers with a CREDIT+IN line within the selected range — the
 // KPI's Rs. total comes from the server-aggregated sales-summary, but the
 // "N customers" subtext needs per-bill detail that endpoint doesn't return.
@@ -153,7 +137,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [rangeTab, setRangeTab] = useState<DateRangeTab>('today');
   const [rawMeterReadings, setRawMeterReadings] = useState<MeterReading[] | null>(null);
-  const [allBillsForRates, setAllBillsForRates] = useState<Bill[]>([]);
+  const [rateHistory, setRateHistory] = useState<RateHistory[]>([]);
   const [loyaltyCostReport, setLoyaltyCostReport] = useState<LoyaltyCostReport | null>(null);
   const [purchaseEntries, setPurchaseEntries] = useState<PurchaseEntry[] | null>(null);
   const [attendanceLog, setAttendanceLog] = useState<AttendanceLogRow[] | null>(null);
@@ -175,9 +159,19 @@ export function DashboardPage() {
   // Fetched once, unaffected by the selected range: meter-reading volume per
   // nozzle/day is low enough that pulling everything once and filtering
   // client-side by range (meterReadings below) is reasonable — same scope
-  // decision api/meterReadings.ts's own comment already documents. Bills for
-  // the rate chips are deliberately NOT range-scoped either — see
-  // computeLatestRates()'s comment.
+  // decision api/meterReadings.ts's own comment already documents.
+  //
+  // Rate history for the Rs./L chips is likewise fetched once, un-scoped by
+  // the selected range (the chips should always show the CURRENT price,
+  // even while viewing "Yesterday") — and, as of this fetch, sourced from
+  // Rate Master rather than from bills. Deriving "current rate" from the
+  // most recent Bill.rateApplied per raw productType string (the old
+  // approach) meant every casing variant a DSM ever typed ("Petrol",
+  // "PETROL", ...) rendered as its OWN chip — on this dev pump that showed
+  // up as 3 near-identical "PETROL" chips. Rate Master entries are typed
+  // once, deliberately, by an Owner/Accountant (RateMasterPage), so this is
+  // both the fix for that duplication and, incidentally, exactly "fuel
+  // prices only" — nobody enters a lubricant/other item's price here.
   useEffect(() => {
     let cancelled = false;
     getAllMeterReadings()
@@ -185,9 +179,9 @@ export function DashboardPage() {
         if (!cancelled) setRawMeterReadings(result);
       })
       .catch(() => undefined);
-    getAllBills()
+    getRateHistory()
       .then((result) => {
-        if (!cancelled) setAllBillsForRates(result.bills);
+        if (!cancelled) setRateHistory(result);
       })
       .catch(() => undefined);
     // Each fetched independently, not folded into the main Promise.all below
@@ -479,7 +473,7 @@ export function DashboardPage() {
   const extraProductCount = productTotals.length - topProducts.length;
   const creditForRange = Math.max(0, salesSummary.byPaymentType.CREDIT);
   const creditCustomersForRange = countCreditCustomers(rangeBills);
-  const latestRates = computeLatestRates(allBillsForRates);
+  const latestRates = computeCurrentRates(rateHistory);
   const kpiCount = topProducts.length + 2;
   const kpiGridClass = kpiCount >= 5 ? 'grid-5' : kpiCount === 4 ? 'grid-4' : 'grid-3';
 
@@ -491,12 +485,12 @@ export function DashboardPage() {
         <div className="content-header">
           <DateRangeTabs active={rangeTab} onChange={setRangeTab} />
           <div className="content-header-right">
-            {latestRates.size > 0 && (
+            {latestRates.length > 0 && (
               <div className="rate-chips">
-                {Array.from(latestRates.entries()).map(([productType, rate]) => (
-                  <div className="rate-chip" key={productType}>
-                    <div className="rate-chip-label">{productType.toUpperCase()}</div>
-                    <div className="rate-chip-value">{formatRatePerLitre(rate)}</div>
+                {latestRates.map((rate) => (
+                  <div className="rate-chip" key={rate.productType}>
+                    <div className="rate-chip-label">{rate.productType.toUpperCase()}</div>
+                    <div className="rate-chip-value">{formatRatePerLitre(rate.rate)}</div>
                   </div>
                 ))}
               </div>

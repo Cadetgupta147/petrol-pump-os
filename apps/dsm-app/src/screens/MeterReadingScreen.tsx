@@ -285,6 +285,16 @@ export function MeterReadingScreen({ staff, accessToken, onBack }: Props) {
           </View>
         ) : null}
 
+        {/* Section [new] — the SAME string on every reading in the response
+            (only ever set on the first close of the day, see
+            MeterReadingsService.buildRateReminder()), so grabbing it off the
+            first result is enough — one banner, not one per nozzle. */}
+        {results?.[0]?.rateReminder ? (
+          <View style={styles.warningBanner} testID="rate-reminder-banner">
+            <Text style={styles.warningBannerText}>{results[0].rateReminder}</Text>
+          </View>
+        ) : null}
+
         {nozzles && nozzles.length > 0 && (
           <Pressable
             style={[styles.button, !canSubmit && styles.buttonDisabled]}
@@ -339,6 +349,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  warningBanner: {
+    marginBottom: 16,
+    backgroundColor: '#fff8e1',
+    borderWidth: 1,
+    borderColor: '#f0c36d',
+    borderRadius: 8,
+    padding: 12,
+  },
+  warningBannerText: {
+    fontSize: 13,
+    color: '#7a5b00',
   },
   scrollContent: {
     paddingHorizontal: 24,

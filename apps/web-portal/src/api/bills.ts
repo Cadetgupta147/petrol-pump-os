@@ -1,5 +1,11 @@
 import { apiFetch } from './client';
-import type { Bill, BillsListResponse, ListBillsFilters, UpdateBillRequest } from './types';
+import type {
+  Bill,
+  BillsListResponse,
+  CreateBillRequest,
+  ListBillsFilters,
+  UpdateBillRequest,
+} from './types';
 
 // GET /bills?... — Section 3.2 bill register: filters (date range, customer,
 // DSM/staff, payment type, vehicle number) + opt-in pagination
@@ -23,6 +29,20 @@ export function getAllBills(filters: ListBillsFilters = {}): Promise<BillsListRe
 
 export function getBill(id: string): Promise<Bill> {
   return apiFetch<Bill>(`/bills/${id}`);
+}
+
+// POST /bills — Section 3.2 manual bill entry (web/DSM parity). Owner/
+// Accountant/DSM server-side (class-level @Roles(Role.OWNER,
+// Role.ACCOUNTANT) plus a method-level override adding Role.DSM on
+// create() — see BillsController). All money-side validation (Section 4's
+// vehicle-or-name rule, Section 5A.1's payment-line balance check, credit
+// limit/blacklist checks) happens in BillsService.create(); this page only
+// surfaces whatever the backend responds with.
+export function createBill(dto: CreateBillRequest): Promise<Bill> {
+  return apiFetch<Bill>('/bills', {
+    method: 'POST',
+    body: JSON.stringify(dto),
+  });
 }
 
 // PATCH /bills/:id — Owner/Accountant server-side (class-level

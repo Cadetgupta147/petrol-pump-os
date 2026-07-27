@@ -28,6 +28,12 @@ export interface MeterReading {
   // successfully, but tank stock wasn't auto-deducted (no productType, or no
   // matching Tank configured).
   tankWarning?: string;
+  // Present only on a batch-close response, and only on the FIRST close of
+  // the (server-local) day, when a product in that batch is still priced
+  // off an earlier day's Rate Master entry — see MeterReadingsService.
+  // buildRateReminder(). The SAME string on every reading in the response
+  // (not per-nozzle) — grab it off any one, same as tankWarning above.
+  rateReminder?: string;
 }
 
 // Thrown for both "server reachable but rejected the request" (e.g. 409 —

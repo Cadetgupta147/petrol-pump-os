@@ -59,11 +59,13 @@ describe('MeterReadingsService', () => {
       findUnique: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
+      count: jest.Mock;
     };
-    nozzle: { findUnique: jest.Mock };
+    nozzle: { findUnique: jest.Mock; findMany: jest.Mock };
     tank: { findFirst: jest.Mock; update: jest.Mock };
     bill: { aggregate: jest.Mock };
     shiftSalesSummary: { findFirst: jest.Mock };
+    rateHistory: { findFirst: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -75,11 +77,21 @@ describe('MeterReadingsService', () => {
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        // buildRateReminder()'s "was anything closed today yet" check — 0 by
+        // default so existing tests (none of which care about the reminder)
+        // don't need to also stub rateHistory.findFirst: with nozzle.findMany
+        // defaulting to [] below, productTypes ends up empty and the
+        // reminder short-circuits to null before ever touching rateHistory.
+        count: jest.fn().mockResolvedValue(0),
       },
-      nozzle: { findUnique: jest.fn().mockResolvedValue(activeNozzle) },
+      nozzle: {
+        findUnique: jest.fn().mockResolvedValue(activeNozzle),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       tank: { findFirst: jest.fn(), update: jest.fn() },
       bill: { aggregate: jest.fn().mockResolvedValue({ _sum: { litres: null } }) },
       shiftSalesSummary: { findFirst: jest.fn().mockResolvedValue(null) }, // no walk-in reconciliation logged by default
+      rateHistory: { findFirst: jest.fn() },
       $transaction: jest.fn((cb: TxCallback) => cb(prisma)),
     };
 
@@ -816,6 +828,67 @@ describe('MeterReadingsService', () => {
 
       const dto: BatchCloseDto = { readings: [{ nozzleId: 'does-not-exist', closingReading: 150 }] };
       await expect(batchClose(dto, dsmCaller)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    // buildRateReminder() — a nudge, not a gate: attaches a message to every
+    // result (not a per-nozzle warning) when this is the FIRST close of the
+    // (server-local) day and a product in the batch is still priced off an
+    // earlier day's Rate Master entry.
+    describe('rateReminder', () => {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      beforeEach(() => {
+        prisma.meterReading.findFirst.mockResolvedValueOnce(openReading);
+        prisma.meterReading.create.mockResolvedValue({ id: 'mr-reopened' });
+        prisma.meterReading.update.mockResolvedValue({ ...openReading, closingReading: 150 });
+        prisma.tank.findFirst.mockResolvedValue({ id: 'tank-1' });
+        prisma.nozzle.findMany.mockResolvedValue([activeNozzle]); // product(s) in this batch: 'petrol'
+      });
+
+      it('attaches a rateReminder to every result when this is the first close of the day and the rate is dated before today', async () => {
+        prisma.meterReading.count.mockResolvedValue(0); // nothing closed yet today
+        prisma.rateHistory.findFirst.mockResolvedValue({
+          productType: 'petrol',
+          rate: 100,
+          effectiveFrom: yesterday,
+        });
+
+        const dto: BatchCloseDto = { readings: [{ nozzleId: 'n1', closingReading: 150 }] };
+        const [result] = await batchClose(dto, dsmCaller);
+
+        expect(result.rateReminder).toContain('First meter reading of the day');
+        expect(result.rateReminder).toContain('petrol');
+      });
+
+      it('does not attach a rateReminder when a reading was already closed earlier today', async () => {
+        prisma.meterReading.count.mockResolvedValue(1); // something already closed today
+        prisma.rateHistory.findFirst.mockResolvedValue({
+          productType: 'petrol',
+          rate: 100,
+          effectiveFrom: yesterday,
+        });
+
+        const dto: BatchCloseDto = { readings: [{ nozzleId: 'n1', closingReading: 150 }] };
+        const [result] = await batchClose(dto, dsmCaller);
+
+        expect(result.rateReminder).toBeUndefined();
+        expect(prisma.rateHistory.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('does not attach a rateReminder when the current rate is already dated today', async () => {
+        prisma.meterReading.count.mockResolvedValue(0);
+        prisma.rateHistory.findFirst.mockResolvedValue({
+          productType: 'petrol',
+          rate: 100,
+          effectiveFrom: new Date(),
+        });
+
+        const dto: BatchCloseDto = { readings: [{ nozzleId: 'n1', closingReading: 150 }] };
+        const [result] = await batchClose(dto, dsmCaller);
+
+        expect(result.rateReminder).toBeUndefined();
+      });
     });
   });
 });

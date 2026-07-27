@@ -111,6 +111,38 @@ export interface BillsListResponse {
   total: number;
 }
 
+// Mirrors apps/backend/src/bills/dto/create-bill-payment-line.dto.ts —
+// Section 5A.1, one line of a bill's payment breakdown.
+export interface CreateBillPaymentLineRequest {
+  paymentType: PaymentType;
+  amount: number;
+  direction: PaymentDirection;
+}
+
+// Mirrors apps/backend/src/bills/dto/quick-add-customer.dto.ts — Section
+// 3.4A inline quick-add of an informal credit customer at bill time.
+export interface QuickAddCustomerRequest {
+  name: string;
+  vehicleNumber: string;
+}
+
+// Mirrors apps/backend/src/bills/dto/create-bill.dto.ts — Section 3.2 manual
+// bill entry (web/DSM parity). rateApplied and loyalty points are NOT
+// fields here: the server resolves both authoritatively (Rate Master +
+// LoyaltyConfig) rather than trusting client-supplied values, per CLAUDE.md's
+// "never trust the frontend" rule for money fields — see BillsService.create().
+export interface CreateBillRequest {
+  customerId?: string;
+  quickAddCustomer?: QuickAddCustomerRequest;
+  vehicleNumber?: string;
+  customerName?: string;
+  amount: number;
+  litres: number;
+  productType: string;
+  entryChannel: EntryChannel;
+  paymentLines: CreateBillPaymentLineRequest[];
+}
+
 // Mirrors apps/backend/src/bills/dto/update-bill.dto.ts — any subset of
 // vehicleNumber/customerName/amount/litres/productType/rateApplied/
 // customerId/paymentLines (PartialType of CreateBillDto minus entryChannel,
@@ -278,6 +310,13 @@ export interface MeterReading {
   // if productType is missing or no Tank matches it, tank stock wasn't
   // auto-deducted and this says so loudly instead of silently.
   tankWarning?: string;
+  // Present only on a batch-close response, and only on the FIRST close of
+  // the (server-local) day, when a product in that batch is still priced
+  // off an earlier day's Rate Master entry — see MeterReadingsService.
+  // buildRateReminder(). The SAME string on every reading in that response
+  // (not per-nozzle) — grab it off any one of them, same pattern as
+  // tankWarning above.
+  rateReminder?: string;
 }
 
 // One nozzle's entry within POST /meter-readings/batch-close — Meter Reading

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
+import { AddBillModal } from '../components/bills/AddBillModal';
 import { getAllBills } from '../api/bills';
 import { getAllCustomers } from '../api/customers';
 import { getStaffList } from '../api/staff';
@@ -66,6 +67,8 @@ export function BillingRegisterPage() {
   const [staff, setStaff] = useState<StaffListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [createdNotice, setCreatedNotice] = useState<string | null>(null);
 
   useEffect(() => {
     getAllCustomers().then(setCustomers).catch(() => undefined);
@@ -130,6 +133,18 @@ export function BillingRegisterPage() {
       .finally(() => setLoading(false));
   }
 
+  // A newly-added bill is inserted at the top of the current page rather
+  // than triggering a refetch — it always belongs there (bills are ordered
+  // newest-first) regardless of which filters/page are currently active.
+  function handleBillCreated(bill: Bill) {
+    setShowAddModal(false);
+    setBills((prev) => [bill, ...(prev ?? [])]);
+    setTotal((prev) => prev + 1);
+    setCreatedNotice(
+      bill.loyaltyWarning ? `Bill added. ${bill.loyaltyWarning}` : 'Bill added.',
+    );
+  }
+
   const pageStart = total === 0 ? 0 : offset + 1;
   const pageEnd = Math.min(offset + PAGE_SIZE, total);
   const canPrev = offset > 0;
@@ -145,7 +160,14 @@ export function BillingRegisterPage() {
             <h3>Billing register</h3>
             <span className="section-note">Section 3.2 — every bill, any channel. Click a row for the full detail/audit trail.</span>
           </div>
+          <div className="content-header-right">
+            <button type="button" className="export-btn" onClick={() => { setCreatedNotice(null); setShowAddModal(true); }}>
+              Add bill
+            </button>
+          </div>
         </div>
+
+        {createdNotice && <div className="empty-box">{createdNotice}</div>}
 
         <form className="section" onSubmit={handleSubmit}>
           <div className="grid grid-3" style={{ gap: 12 }}>
@@ -297,6 +319,14 @@ export function BillingRegisterPage() {
           </>
         )}
       </div>
+
+      {showAddModal && (
+        <AddBillModal
+          customers={customers}
+          onClose={() => setShowAddModal(false)}
+          onCreated={handleBillCreated}
+        />
+      )}
     </>
   );
 }
