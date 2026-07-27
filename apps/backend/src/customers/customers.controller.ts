@@ -70,6 +70,18 @@ export class CustomersController {
     return this.customersService.ledger(id);
   }
 
+  // Section 5B — printable outstanding statement (on letterhead) for
+  // settlement time. Deliberately broadened beyond the class-level
+  // Owner/Accountant @Roles to also include Manager — this is a day-to-day
+  // settlement task a Manager on shift needs to do without an
+  // Owner/Accountant present, unlike the Credit Aging Report it reuses the
+  // FIFO methodology from.
+  @Roles(Role.OWNER, Role.ACCOUNTANT, Role.MANAGER)
+  @Get(':id/outstanding-statement')
+  outstandingStatement(@Param('id') id: string) {
+    return this.customersService.outstandingStatement(id);
+  }
+
   // Section 3.4 — onboarding an existing (pre-system) credit customer with a
   // real outstanding balance from before this pump used the software.
   // Owner/Accountant via the class-level @Roles, same as the rest of

@@ -58,8 +58,12 @@ export async function apiFetch<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const token = getStoredToken();
+  // FormData bodies (Section 5B logo/letterhead upload) must NOT get a
+  // manual Content-Type — the browser sets multipart/form-data with the
+  // correct boundary itself, which a hardcoded 'application/json' would
+  // silently break.
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(!(options.body instanceof FormData) && { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string> | undefined),
   };
   if (token) {

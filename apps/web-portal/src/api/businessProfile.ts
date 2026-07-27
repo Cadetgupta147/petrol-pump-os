@@ -14,3 +14,25 @@ export function updateBusinessProfile(dto: UpdateBusinessProfileRequest): Promis
     body: JSON.stringify(dto),
   });
 }
+
+// POST /business-profile/logo, POST /business-profile/letterhead — Section
+// 5B.2. Owner-only server-side. FormData body — apiFetch skips the default
+// JSON Content-Type for FormData so the browser can set the multipart
+// boundary itself (see client.ts's comment).
+export function uploadBusinessLogo(file: File): Promise<BusinessProfile> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiFetch<BusinessProfile>('/business-profile/logo', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export function uploadBusinessLetterhead(file: File): Promise<BusinessProfile> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiFetch<BusinessProfile>('/business-profile/letterhead', {
+    method: 'POST',
+    body: formData,
+  });
+}

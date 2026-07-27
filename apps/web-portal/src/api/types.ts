@@ -972,6 +972,8 @@ export interface AttendanceLog {
 
 // ---------- Section 3.9 — Settings ----------
 
+export type OmcBrand = 'IOCL' | 'BPCL' | 'HPCL' | 'OTHER' | 'NONE';
+
 // GET /business-profile — BusinessProfileService.getOrCreate(). Every field
 // is null until the Owner fills it in (no placeholder defaults server-side).
 export interface BusinessProfile {
@@ -980,6 +982,12 @@ export interface BusinessProfile {
   gstin: string | null;
   pumpLicenseNo: string | null;
   address: string | null;
+  // Section 5B — credit statement letterhead.
+  phone: string | null;
+  omcBrand: OmcBrand;
+  logoImageData: string | null;
+  letterheadImageData: string | null;
+  useUploadedLetterhead: boolean;
   updatedAt: string;
 }
 
@@ -989,6 +997,80 @@ export interface UpdateBusinessProfileRequest {
   gstin?: string;
   pumpLicenseNo?: string;
   address?: string;
+  phone?: string;
+  omcBrand?: OmcBrand;
+  useUploadedLetterhead?: boolean;
+}
+
+// ---------- Section 5B — Credit Customer Outstanding Statement ----------
+
+export interface OutstandingStatementBillLine {
+  type: 'BILL';
+  billId: string;
+  timestamp: string;
+  vehicleNumber: string | null;
+  customerNameOnBill: string | null;
+  productType: string;
+  litres: number;
+  rateApplied: number;
+  billAmount: number;
+  outstandingAmount: number;
+}
+
+export interface OutstandingStatementOpeningBalanceLine {
+  type: 'OPENING_BALANCE';
+  openingBalanceId: string;
+  timestamp: string;
+  note: string | null;
+  amount: number;
+  outstandingAmount: number;
+}
+
+export type OutstandingStatementLine =
+  | OutstandingStatementBillLine
+  | OutstandingStatementOpeningBalanceLine;
+
+// GET /customers/:id/outstanding-statement — CustomersService.outstandingStatement().
+// `lines` are oldest-first, same FIFO ordering as the credit aging report.
+export interface OutstandingStatement {
+  customer: Customer;
+  asOf: string;
+  lines: OutstandingStatementLine[];
+  totalOutstanding: number;
+}
+
+// ---------- Section 12 — Nozzle-wise / Vehicle-wise sales reports ----------
+
+export interface NozzleSalesRow {
+  nozzleId: string | null;
+  label: string;
+  totalLitres: number;
+  totalAmount: number;
+  billCount: number;
+}
+
+export interface NozzleWiseSalesReport {
+  from: string;
+  to: string;
+  rows: NozzleSalesRow[];
+  totalLitres: number;
+  totalAmount: number;
+}
+
+export interface VehicleSalesRow {
+  vehicleNumber: string | null;
+  customerName: string | null;
+  totalLitres: number;
+  totalAmount: number;
+  billCount: number;
+}
+
+export interface VehicleWiseSalesReport {
+  from: string;
+  to: string;
+  rows: VehicleSalesRow[];
+  totalLitres: number;
+  totalAmount: number;
 }
 
 // ---------- Section 8 — Cash Custody ----------

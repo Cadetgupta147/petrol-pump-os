@@ -8,6 +8,7 @@ import type {
   UpdateCustomerRequest,
   CustomerOpeningBalance,
   CreateOpeningBalanceRequest,
+  OutstandingStatement,
 } from './types';
 
 export function getAllCustomers(): Promise<Customer[]> {
@@ -50,6 +51,14 @@ export function updateCustomer(id: string, dto: UpdateCustomerRequest): Promise<
 // or an overdue-customer count on the dashboard.
 export function getCustomerLedger(id: string): Promise<CustomerLedger> {
   return apiFetch<CustomerLedger>(`/customers/${id}/ledger`);
+}
+
+// GET /customers/:id/outstanding-statement — Section 5B. Owner/Accountant/
+// Manager server-side (deliberately broader than most customer-management
+// routes — see CustomersController's comment on why Manager is included
+// here specifically).
+export function getCustomerOutstandingStatement(id: string): Promise<OutstandingStatement> {
+  return apiFetch<OutstandingStatement>(`/customers/${id}/outstanding-statement`);
 }
 
 // GET /customers/:id/qr — Section 6.1. The QR encodes ONLY the member id (a

@@ -41,21 +41,47 @@ export class BusinessProfileService {
   }
 
   async update(dto: UpdateBusinessProfileDto) {
+    const fields = {
+      ...(dto.businessName !== undefined && { businessName: dto.businessName }),
+      ...(dto.gstin !== undefined && { gstin: dto.gstin }),
+      ...(dto.pumpLicenseNo !== undefined && { pumpLicenseNo: dto.pumpLicenseNo }),
+      ...(dto.address !== undefined && { address: dto.address }),
+      ...(dto.phone !== undefined && { phone: dto.phone }),
+      ...(dto.omcBrand !== undefined && { omcBrand: dto.omcBrand }),
+      ...(dto.useUploadedLetterhead !== undefined && {
+        useUploadedLetterhead: dto.useUploadedLetterhead,
+      }),
+    };
     return this.prisma.businessProfile.upsert({
       where: EMPTY_UNIQUE_WHERE,
-      create: {
-        pumpId: requireTenantContext().pumpId,
-        ...(dto.businessName !== undefined && { businessName: dto.businessName }),
-        ...(dto.gstin !== undefined && { gstin: dto.gstin }),
-        ...(dto.pumpLicenseNo !== undefined && { pumpLicenseNo: dto.pumpLicenseNo }),
-        ...(dto.address !== undefined && { address: dto.address }),
-      },
-      update: {
-        ...(dto.businessName !== undefined && { businessName: dto.businessName }),
-        ...(dto.gstin !== undefined && { gstin: dto.gstin }),
-        ...(dto.pumpLicenseNo !== undefined && { pumpLicenseNo: dto.pumpLicenseNo }),
-        ...(dto.address !== undefined && { address: dto.address }),
-      },
+      create: { pumpId: requireTenantContext().pumpId, ...fields },
+      update: fields,
+    });
+  }
+
+  // Section 5B.2 — dealer-uploaded logo (own business logo, or their OMC's
+  // logo if they're an authorized dealer — see docs/master-plan.md §17.26
+  // for why this software never bundles OMC artwork itself). Stored as a
+  // base64 data URL directly on the row, same inline-storage convention as
+  // CustomersService.qrCard()'s PNG — no S3/R2 file storage backend exists
+  // yet (purchases.controller.ts flags this same gap for invoice images).
+  async updateLogo(buffer: Buffer, mimetype: string) {
+    const logoImageData = `data:${mimetype};base64,${buffer.toString('base64')}`;
+    return this.prisma.businessProfile.upsert({
+      where: EMPTY_UNIQUE_WHERE,
+      create: { pumpId: requireTenantContext().pumpId, logoImageData },
+      update: { logoImageData },
+    });
+  }
+
+  // Section 5B.2 — a full custom letterhead image, printed directly under
+  // the statement's bill detail instead of the software-generated header.
+  async updateLetterhead(buffer: Buffer, mimetype: string) {
+    const letterheadImageData = `data:${mimetype};base64,${buffer.toString('base64')}`;
+    return this.prisma.businessProfile.upsert({
+      where: EMPTY_UNIQUE_WHERE,
+      create: { pumpId: requireTenantContext().pumpId, letterheadImageData },
+      update: { letterheadImageData },
     });
   }
 }

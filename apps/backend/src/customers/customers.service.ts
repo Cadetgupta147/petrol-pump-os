@@ -15,6 +15,10 @@ import { RecordConsentDto } from './dto/record-consent.dto';
 import { CreateOpeningBalanceDto } from './dto/create-opening-balance.dto';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { allocateQrMemberId, isValidQrMemberId } from './member-id';
+import {
+  computeOutstandingSlices,
+  OutstandingLedgerEvent,
+} from './outstanding-statement.util';
 // Section 3.4/6.1 — a phone typed here (dealer-created customer, web portal)
 // must land in the DB in the EXACT same canonical form
 // CustomerAuthService.verifyOtp's `findUnique({ where: { phone } })` expects
@@ -356,6 +360,111 @@ export class CustomersService {
       outstandingBalance: runningBalance,
       creditLimit: customer.creditLimit,
     };
+  }
+
+  // Section 5B — Credit Customer Outstanding Statement (printable, on
+  // letterhead). Reuses the exact same three queries as ledger() above, but
+  // runs them through computeOutstandingSlices() (FIFO allocation that keeps
+  // bill/opening-balance identity, see outstanding-statement.util.ts) instead
+  // of a running balance — a settlement-time document needs to say WHICH
+  // bills are still open (vehicle/litres/rate per line), not just the net
+  // total owed.
+  async outstandingStatement(id: string, asOf: Date = new Date()) {
+    const customer = await this.findOne(id);
+
+    const [bills, payments, openingBalances] = await Promise.all([
+      this.prisma.bill.findMany({
+        where: { customerId: id, deletedAt: null },
+        include: { paymentLines: true },
+        orderBy: { timestamp: 'asc' },
+      }),
+      this.prisma.payment.findMany({
+        where: { customerId: id },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.customerOpeningBalance.findMany({
+        where: { customerId: id },
+        orderBy: { effectiveAt: 'asc' },
+      }),
+    ]);
+
+    const billById = new Map(bills.map((bill) => [bill.id, bill]));
+    const openingBalanceById = new Map(openingBalances.map((ob) => [ob.id, ob]));
+
+    const events: OutstandingLedgerEvent[] = [
+      ...bills.map((bill) => {
+        const creditIn = bill.paymentLines
+          .filter((line) => line.paymentType === 'CREDIT' && line.direction === 'IN')
+          .reduce((total, line) => total + line.amount, 0);
+        const creditOut = bill.paymentLines
+          .filter((line) => line.paymentType === 'CREDIT' && line.direction === 'OUT')
+          .reduce((total, line) => total + line.amount, 0);
+        const netCreditImpact = creditIn - creditOut;
+        return {
+          timestamp: bill.timestamp,
+          netCreditImpact,
+          source:
+            netCreditImpact > 0
+              ? ({ kind: 'BILL', id: bill.id } as const)
+              : undefined,
+        };
+      }),
+      ...openingBalances.map((ob) => ({
+        timestamp: ob.effectiveAt,
+        netCreditImpact: ob.amount,
+        source:
+          ob.amount > 0 ? ({ kind: 'OPENING_BALANCE', id: ob.id } as const) : undefined,
+      })),
+      ...payments.map((payment) => ({
+        timestamp: payment.createdAt,
+        netCreditImpact: -payment.amount,
+      })),
+    ];
+
+    const slices = computeOutstandingSlices(events);
+
+    // Oldest-first, same read order as the aging report — the top of the
+    // statement is "owing since" the longest.
+    const lines = slices.map((slice) => {
+      if (slice.source.kind === 'BILL') {
+        const bill = billById.get(slice.source.id);
+        if (!bill) {
+          throw new Error(
+            `outstandingStatement: slice referenced bill ${slice.source.id} that wasn't loaded`,
+          );
+        }
+        return {
+          type: 'BILL' as const,
+          billId: bill.id,
+          timestamp: bill.timestamp,
+          vehicleNumber: bill.vehicleNumber,
+          customerNameOnBill: bill.customerName,
+          productType: bill.productType,
+          litres: bill.litres,
+          rateApplied: bill.rateApplied,
+          billAmount: bill.amount,
+          outstandingAmount: slice.remainingAmount,
+        };
+      }
+      const ob = openingBalanceById.get(slice.source.id);
+      if (!ob) {
+        throw new Error(
+          `outstandingStatement: slice referenced opening balance ${slice.source.id} that wasn't loaded`,
+        );
+      }
+      return {
+        type: 'OPENING_BALANCE' as const,
+        openingBalanceId: ob.id,
+        timestamp: ob.effectiveAt,
+        note: ob.note,
+        amount: ob.amount,
+        outstandingAmount: slice.remainingAmount,
+      };
+    });
+
+    const totalOutstanding = lines.reduce((total, line) => total + line.outstandingAmount, 0);
+
+    return { customer, asOf, lines, totalOutstanding };
   }
 
   // Section 3.4 — onboarding an existing (pre-system) credit customer with a

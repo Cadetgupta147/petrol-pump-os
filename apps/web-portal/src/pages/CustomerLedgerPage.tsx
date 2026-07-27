@@ -206,6 +206,11 @@ export function CustomerLedgerPage() {
                   <> &middot; {ledger.customer.idDocumentType}: {ledger.customer.idDocumentNumber}</>
                 )}
               </span>
+              {id && (
+                <Link to={`/customers/${id}/statement`} className="export-btn" style={{ textDecoration: 'none' }}>
+                  Print outstanding statement
+                </Link>
+              )}
             </div>
 
             <div className="section">

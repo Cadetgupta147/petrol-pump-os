@@ -1,7 +1,12 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
-import { getBusinessProfile, updateBusinessProfile } from '../api/businessProfile';
+import {
+  getBusinessProfile,
+  updateBusinessProfile,
+  uploadBusinessLogo,
+  uploadBusinessLetterhead,
+} from '../api/businessProfile';
 import { downloadTallyExport } from '../api/tallyExport';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -11,7 +16,15 @@ import { LubricantStockSettings } from '../components/settings/LubricantStockSet
 import { TankSettings } from '../components/settings/TankSettings';
 import { NozzleSettings } from '../components/settings/NozzleSettings';
 import { ShiftScheduleSettings } from '../components/settings/ShiftScheduleSettings';
-import type { BusinessProfile } from '../api/types';
+import type { BusinessProfile, OmcBrand } from '../api/types';
+
+const OMC_OPTIONS: { value: OmcBrand; label: string }[] = [
+  { value: 'NONE', label: 'None / independent' },
+  { value: 'IOCL', label: 'Indian Oil (IOCL)' },
+  { value: 'BPCL', label: 'Bharat Petroleum (BPCL)' },
+  { value: 'HPCL', label: 'Hindustan Petroleum (HPCL)' },
+  { value: 'OTHER', label: 'Other' },
+];
 
 const ROLE_REFERENCE: { role: string; canDo: string; cannotDo: string }[] = [
   { role: 'Owner', canDo: 'Everything — settings, loyalty/gift config, staff, all reports, all edits', cannotDo: 'Nothing restricted' },
@@ -39,9 +52,20 @@ export function SettingsPage() {
   const [gstin, setGstin] = useState('');
   const [pumpLicenseNo, setPumpLicenseNo] = useState('');
   const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  const [omcBrand, setOmcBrand] = useState<OmcBrand>('NONE');
+  const [useUploadedLetterhead, setUseUploadedLetterhead] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSavedAt, setProfileSavedAt] = useState<string | null>(null);
+
+  // Section 5B.2 — logo/letterhead upload. Separate from the text-field
+  // save above since these hit their own POST endpoints (multipart, not
+  // PATCH JSON) and succeed/fail independently.
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [uploadingLetterhead, setUploadingLetterhead] = useState(false);
+  const [letterheadError, setLetterheadError] = useState<string | null>(null);
 
   const [exportFrom, setExportFrom] = useState(todayIsoDate());
   const [exportTo, setExportTo] = useState(todayIsoDate());
@@ -68,6 +92,9 @@ export function SettingsPage() {
         setGstin(result.gstin ?? '');
         setPumpLicenseNo(result.pumpLicenseNo ?? '');
         setAddress(result.address ?? '');
+        setPhone(result.phone ?? '');
+        setOmcBrand(result.omcBrand);
+        setUseUploadedLetterhead(result.useUploadedLetterhead);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -90,6 +117,9 @@ export function SettingsPage() {
         gstin: gstin.trim(),
         pumpLicenseNo: pumpLicenseNo.trim(),
         address: address.trim(),
+        phone: phone.trim(),
+        omcBrand,
+        useUploadedLetterhead,
       });
       setProfile(saved);
       setProfileSavedAt(new Date().toLocaleTimeString());
@@ -97,6 +127,38 @@ export function SettingsPage() {
       setProfileSaveError(err instanceof ApiError ? err.message : "Can't reach the backend.");
     } finally {
       setSavingProfile(false);
+    }
+  }
+
+  async function handleLogoUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // allow re-selecting the same file next time
+    if (!file) return;
+    setLogoError(null);
+    setUploadingLogo(true);
+    try {
+      const saved = await uploadBusinessLogo(file);
+      setProfile(saved);
+    } catch (err) {
+      setLogoError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setUploadingLogo(false);
+    }
+  }
+
+  async function handleLetterheadUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setLetterheadError(null);
+    setUploadingLetterhead(true);
+    try {
+      const saved = await uploadBusinessLetterhead(file);
+      setProfile(saved);
+    } catch (err) {
+      setLetterheadError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setUploadingLetterhead(false);
     }
   }
 
@@ -152,6 +214,20 @@ export function SettingsPage() {
                     <label htmlFor="bp-address">Address</label>
                     <input id="bp-address" value={address} onChange={(e) => setAddress(e.target.value)} />
                   </div>
+                  <div className="form-field">
+                    <label htmlFor="bp-phone">Phone</label>
+                    <input id="bp-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="bp-omc">OMC affiliation</label>
+                    <select id="bp-omc" value={omcBrand} onChange={(e) => setOmcBrand(e.target.value as OmcBrand)}>
+                      {OMC_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {profileSaveError && <div className="form-error">{profileSaveError}</div>}
@@ -186,6 +262,80 @@ export function SettingsPage() {
             )
           )}
         </div>
+
+        {!profileError && profile && (
+          <div className="section">
+            <div className="section-title">
+              <h3>Credit statement letterhead</h3>
+              <span className="section-note">
+                Section 5B — used when printing a credit customer&rsquo;s outstanding statement.
+              </span>
+            </div>
+            <div className="grid grid-2">
+              <div className="card">
+                <div className="card-label">LOGO</div>
+                {profile.logoImageData ? (
+                  <img
+                    src={profile.logoImageData}
+                    alt="Business logo"
+                    style={{ width: 64, height: 64, objectFit: 'contain', marginBottom: 8, display: 'block' }}
+                  />
+                ) : (
+                  <div className="card-sub" style={{ marginBottom: 8 }}>No logo uploaded yet.</div>
+                )}
+                {isOwner && (
+                  <>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => { void handleLogoUpload(e); }}
+                      disabled={uploadingLogo}
+                    />
+                    {uploadingLogo && <div className="section-note">Uploading…</div>}
+                    {logoError && <div className="form-error">{logoError}</div>}
+                    <div className="section-note" style={{ marginTop: 6 }}>
+                      Upload your business logo, or — if you&rsquo;re an authorized OMC dealer — your OMC&rsquo;s
+                      own logo. This software never bundles BPCL/IOCL/HPCL artwork itself (§17.26).
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="card">
+                <div className="card-label">CUSTOM LETTERHEAD</div>
+                {profile.letterheadImageData ? (
+                  <img
+                    src={profile.letterheadImageData}
+                    alt="Custom letterhead"
+                    style={{ width: '100%', maxHeight: 100, objectFit: 'contain', marginBottom: 8, display: 'block' }}
+                  />
+                ) : (
+                  <div className="card-sub" style={{ marginBottom: 8 }}>No custom letterhead uploaded yet.</div>
+                )}
+                {isOwner && (
+                  <>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => { void handleLetterheadUpload(e); }}
+                      disabled={uploadingLetterhead}
+                    />
+                    {uploadingLetterhead && <div className="section-note">Uploading…</div>}
+                    {letterheadError && <div className="form-error">{letterheadError}</div>}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={useUploadedLetterhead}
+                        onChange={(e) => setUseUploadedLetterhead(e.target.checked)}
+                      />
+                      Print statements on this letterhead instead of the generated header
+                      {useUploadedLetterhead !== profile.useUploadedLetterhead && ' (save business profile above to apply)'}
+                    </label>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <ItemSettings canManage={canManageItems} />
 

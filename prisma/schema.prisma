@@ -39,6 +39,19 @@ enum EntryChannel {
   DSM_APP
 }
 
+// Section 5B.2 — which OMC the dealer is affiliated with, for the credit
+// statement letterhead's badge/heading text ONLY. This is a label, not a
+// logo — the actual logo image is dealer-uploaded (BusinessProfile.logoImageData),
+// never bundled artwork. See CLAUDE.md/docs/master-plan.md Section 17.26 for
+// why this software never ships BPCL/IOCL/HPCL trademarked assets itself.
+enum OmcBrand {
+  IOCL
+  BPCL
+  HPCL
+  OTHER
+  NONE
+}
+
 enum EarningBasis {
   RUPEE
   LITRE
@@ -620,6 +633,19 @@ model BusinessProfile {
   gstin         String?
   pumpLicenseNo String?
   address       String?
+  // Section 5B — Credit Customer Outstanding Statement letterhead.
+  phone         String?
+  omcBrand      OmcBrand @default(NONE)
+  // Base64 data URLs, not file paths — same inline-storage convention
+  // CustomersService.qrCard() already uses for its PNG, since no S3/R2 file
+  // storage backend is wired up yet (see purchases.controller.ts's own
+  // comment on this same gap). Revisit once real object storage exists.
+  logoImageData        String?
+  letterheadImageData  String?
+  // When true, the statement prints straight onto the uploaded
+  // letterheadImageData instead of the software-generated header built from
+  // the fields above.
+  useUploadedLetterhead Boolean @default(false)
   updatedAt     DateTime @updatedAt
 }
 
