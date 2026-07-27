@@ -12,6 +12,7 @@ import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
+import { RecordConsentDto } from './dto/record-consent.dto';
 
 // Section 3.4 — Customer master CRUD + full per-customer ledger.
 //
@@ -85,5 +86,30 @@ export class CustomersController {
     @Body() dto: SetLoyaltyRateOverrideDto,
   ) {
     return this.customersService.setLoyaltyRateOverride(id, dto);
+  }
+
+  // Section 17.11 — DPDP Act compliance scaffolding (go-live blocker,
+  // Section 18.1). Owner/Accountant via the class-level @Roles — same
+  // access level as the rest of customer management, since consent capture
+  // is itself a normal part of onboarding a customer.
+  @Patch(':id/consent')
+  recordConsent(@Param('id') id: string, @Body() dto: RecordConsentDto) {
+    return this.customersService.recordConsent(id, dto);
+  }
+
+  // Right to access — exports every piece of personal data this pump holds
+  // about the customer. Owner/Accountant only via the class-level @Roles.
+  @Get(':id/data-export')
+  exportData(@Param('id') id: string) {
+    return this.customersService.exportData(id);
+  }
+
+  // Right to erasure — Owner-ONLY (irreversible; anonymizes, doesn't
+  // hard-delete — see CustomersService.requestDeletion()'s comment for the
+  // per-pump-membership scope limitation).
+  @Roles(Role.OWNER)
+  @Post(':id/data-deletion')
+  requestDeletion(@Param('id') id: string) {
+    return this.customersService.requestDeletion(id);
   }
 }

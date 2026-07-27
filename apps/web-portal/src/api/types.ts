@@ -380,6 +380,25 @@ export interface Customer {
   creditLimit: number;
   verificationStatus: 'INFORMAL' | 'VERIFIED';
   createdAt: string;
+  // Section 17.11 — DPDP Act compliance scaffolding. Both null means no
+  // consent has been recorded yet (a real gap, not "assumed consented") —
+  // see CustomerLedgerPage's "Data privacy" section.
+  dataConsentAt: string | null;
+  dataConsentVersion: string | null;
+  dataDeletedAt: string | null;
+}
+
+// GET /customers/:id/data-export response — Section 17.11 right to access.
+// Every field is `unknown[]`/`unknown` deliberately: this page only ever
+// renders the raw JSON as a downloadable file, it never reads into these
+// arrays' shape, so there's no value in mirroring Bill/LoyaltyTransaction/
+// RedemptionTransaction/Payment's full types here.
+export interface CustomerDataExport {
+  customer: Customer;
+  bills: unknown[];
+  loyaltyTransactions: unknown[];
+  redemptionTransactions: unknown[];
+  payments: unknown[];
 }
 
 // Mirrors apps/backend/src/customers/dto/create-customer.dto.ts. `phone` is

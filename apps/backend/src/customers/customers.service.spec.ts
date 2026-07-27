@@ -146,3 +146,103 @@ describe('CustomersService — phone normalization', () => {
     });
   });
 });
+
+// Section 17.11 — DPDP Act compliance scaffolding (go-live blocker, Section
+// 18.1). Separate describe block/mock shape from the transaction-heavy
+// create()/update() tests above — these three methods never touch
+// $transaction.
+describe('CustomersService — DPDP compliance scaffolding', () => {
+  let service: CustomersService;
+  let prisma: {
+    customer: { findUnique: jest.Mock; update: jest.Mock };
+    bill: { findMany: jest.Mock };
+    loyaltyTransaction: { findMany: jest.Mock };
+    redemptionTransaction: { findMany: jest.Mock };
+    payment: { findMany: jest.Mock };
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      customer: { findUnique: jest.fn(), update: jest.fn() },
+      bill: { findMany: jest.fn().mockResolvedValue([]) },
+      loyaltyTransaction: { findMany: jest.fn().mockResolvedValue([]) },
+      redemptionTransaction: { findMany: jest.fn().mockResolvedValue([]) },
+      payment: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [CustomersService, { provide: PrismaService, useValue: prisma }],
+    }).compile();
+
+    service = module.get(CustomersService);
+  });
+
+  describe('recordConsent', () => {
+    it('404s on an unknown customer', async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+
+      await expect(service.recordConsent('nope', { version: 'v1' })).rejects.toThrow();
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+    });
+
+    it('stamps dataConsentAt and dataConsentVersion', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1' });
+      prisma.customer.update.mockResolvedValue({ id: 'cust-1' });
+
+      await service.recordConsent('cust-1', { version: 'privacy-policy-v1' });
+
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: 'cust-1' },
+        data: { dataConsentAt: expect.any(Date) as Date, dataConsentVersion: 'privacy-policy-v1' },
+      });
+    });
+  });
+
+  describe('exportData', () => {
+    it('gathers the customer profile plus every linked personal-data table', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1', name: 'Ramesh' });
+
+      const result = await service.exportData('cust-1');
+
+      expect(prisma.bill.findMany).toHaveBeenCalledWith({ where: { customerId: 'cust-1' } });
+      expect(prisma.loyaltyTransaction.findMany).toHaveBeenCalledWith({
+        where: { customerId: 'cust-1' },
+      });
+      expect(prisma.redemptionTransaction.findMany).toHaveBeenCalledWith({
+        where: { customerId: 'cust-1' },
+      });
+      expect(prisma.payment.findMany).toHaveBeenCalledWith({ where: { customerId: 'cust-1' } });
+      expect(result.customer).toEqual({ id: 'cust-1', name: 'Ramesh' });
+    });
+  });
+
+  describe('requestDeletion', () => {
+    it('anonymizes name/phone/vehicleNumber/companyName and stamps dataDeletedAt', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1', dataDeletedAt: null });
+      prisma.customer.update.mockResolvedValue({ id: 'cust-1' });
+
+      await service.requestDeletion('cust-1');
+
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: 'cust-1' },
+        data: {
+          name: 'Deleted Customer',
+          phone: null,
+          vehicleNumber: null,
+          companyName: null,
+          dataDeletedAt: expect.any(Date) as Date,
+        },
+      });
+    });
+
+    it('refuses to re-anonymize an already-deleted customer', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 'cust-1',
+        dataDeletedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+
+      await expect(service.requestDeletion('cust-1')).rejects.toThrow();
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+    });
+  });
+});

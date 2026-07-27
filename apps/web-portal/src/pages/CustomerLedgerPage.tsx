@@ -3,7 +3,13 @@ import { Link, useParams } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { QrCardModal } from '../components/customers/QrCardModal';
-import { getCustomerLedger, setLoyaltyRateOverride } from '../api/customers';
+import {
+  getCustomerLedger,
+  setLoyaltyRateOverride,
+  recordCustomerConsent,
+  exportCustomerData,
+  requestCustomerDeletion,
+} from '../api/customers';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { formatRupees, formatDateTime } from '../utils/format';
@@ -21,6 +27,76 @@ export function CustomerLedgerPage() {
   const [overrideInput, setOverrideInput] = useState('');
   const [overrideSaving, setOverrideSaving] = useState(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
+
+  // Section 17.11 — DPDP Act compliance scaffolding. Owner/Accountant can
+  // record consent + export data; deletion is Owner-only (irreversible).
+  const isOwnerOrAccountant = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT';
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  // Two-step confirm instead of a native confirm() dialog — irreversible
+  // action, so the first click just arms it rather than firing immediately.
+  const [confirmingDeletion, setConfirmingDeletion] = useState(false);
+  const [deletionSaving, setDeletionSaving] = useState(false);
+  const [deletionError, setDeletionError] = useState<string | null>(null);
+
+  // No privacy-policy content management exists in this codebase yet (see
+  // BusinessProfile — no such field). This is a placeholder version string
+  // to record consent against until a real one exists — replace once a
+  // policy document is actually published.
+  const CONSENT_VERSION = 'v1-placeholder';
+
+  async function handleRecordConsent() {
+    if (!id || !ledger) return;
+    setConsentError(null);
+    setConsentSaving(true);
+    try {
+      const saved = await recordCustomerConsent(id, CONSENT_VERSION);
+      setLedger({ ...ledger, customer: saved });
+    } catch (err) {
+      setConsentError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setConsentSaving(false);
+    }
+  }
+
+  async function handleExportData() {
+    if (!id) return;
+    setExportError(null);
+    setExportLoading(true);
+    try {
+      const data = await exportCustomerData(id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `customer-${id}-data-export.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
+  async function handleRequestDeletion() {
+    if (!id || !ledger) return;
+    setDeletionError(null);
+    setDeletionSaving(true);
+    try {
+      const saved = await requestCustomerDeletion(id);
+      setLedger({ ...ledger, customer: saved });
+      setConfirmingDeletion(false);
+    } catch (err) {
+      setDeletionError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setDeletionSaving(false);
+    }
+  }
 
   async function handleOverrideSubmit(event: FormEvent) {
     event.preventDefault();
@@ -215,6 +291,105 @@ export function CustomerLedgerPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+            <div className="section">
+              <div className="section-title">
+                <h3>Data privacy</h3>
+                <span className="section-note">
+                  Section 17.11 — DPDP Act compliance scaffolding, not a legal certification
+                </span>
+              </div>
+              {ledger.customer.dataDeletedAt ? (
+                <div className="empty-box">
+                  This customer&rsquo;s personal data was anonymized on{' '}
+                  {formatDateTime(ledger.customer.dataDeletedAt)}.
+                </div>
+              ) : (
+                <div className="grid grid-2">
+                  <div className="card">
+                    <div className="card-label">CONSENT</div>
+                    <div className="card-value">
+                      {ledger.customer.dataConsentAt ? 'Recorded' : 'Not recorded'}
+                    </div>
+                    <div className="card-sub">
+                      {ledger.customer.dataConsentAt
+                        ? `${formatDateTime(ledger.customer.dataConsentAt)} · policy ${ledger.customer.dataConsentVersion}`
+                        : 'No consent on file for this customer — a real, visible gap, not assumed'}
+                    </div>
+                    {isOwnerOrAccountant && (
+                      <button
+                        type="button"
+                        className="export-btn"
+                        style={{ marginTop: 8 }}
+                        onClick={() => {
+                          void handleRecordConsent();
+                        }}
+                        disabled={consentSaving}
+                      >
+                        {consentSaving ? 'Saving…' : 'Record consent'}
+                      </button>
+                    )}
+                    {consentError && <div className="form-error">{consentError}</div>}
+                  </div>
+                  <div className="card">
+                    <div className="card-label">DATA SUBJECT RIGHTS</div>
+                    <div className="card-sub" style={{ marginBottom: 8 }}>
+                      Export every piece of personal data on file, or request erasure (anonymizes
+                      name/phone/vehicle — bills/payments are kept for financial audit retention).
+                    </div>
+                    {isOwnerOrAccountant && (
+                      <button
+                        type="button"
+                        className="export-btn"
+                        onClick={() => {
+                          void handleExportData();
+                        }}
+                        disabled={exportLoading}
+                      >
+                        {exportLoading ? 'Exporting…' : 'Export data'}
+                      </button>
+                    )}
+                    {exportError && <div className="form-error">{exportError}</div>}
+                    {isOwner && (
+                      <div style={{ marginTop: 8 }}>
+                        {!confirmingDeletion ? (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setConfirmingDeletion(true)}
+                          >
+                            Request deletion
+                          </button>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <span className="section-note">Irreversible — anonymize this customer?</span>
+                            <button
+                              type="button"
+                              className="export-btn"
+                              style={{ background: 'var(--red)' }}
+                              onClick={() => {
+                                void handleRequestDeletion();
+                              }}
+                              disabled={deletionSaving}
+                            >
+                              {deletionSaving ? 'Deleting…' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => setConfirmingDeletion(false)}
+                              disabled={deletionSaving}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+                        {deletionError && <div className="form-error">{deletionError}</div>}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

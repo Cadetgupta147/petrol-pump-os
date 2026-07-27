@@ -289,6 +289,22 @@ model Customer {
   // upgraded via PATCH). Visibility flag only — never itself blocks credit.
   verificationStatus  CustomerVerificationStatus @default(VERIFIED)
   createdAt           DateTime                   @default(now())
+  // Section 17.11 / DPDP Act compliance scaffolding (go-live blocker,
+  // Section 18.1) — TECHNICAL scaffolding only, not a legal certification.
+  // dataConsentAt/dataConsentVersion record when this customer's data
+  // processing consent was captured and against which privacy-policy
+  // version (see data-privacy.service.ts). Both null means no consent has
+  // been recorded — e.g. every customer created before this slice shipped —
+  // which is a real, visible gap the reporting UI surfaces rather than
+  // treating silently as "consented". dataDeletedAt marks a completed
+  // erasure request (data-privacy.service.ts's requestDeletion() —
+  // anonymizes name/phone/vehicleNumber/companyName on THIS per-pump
+  // membership row only; see that method's comment for why
+  // CustomerAccount-level erasure across pumps is explicitly out of scope
+  // here).
+  dataConsentAt       DateTime?
+  dataConsentVersion  String?
+  dataDeletedAt       DateTime?
 
   bills                  Bill[]
   loyaltyTransactions    LoyaltyTransaction[]

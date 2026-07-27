@@ -3,6 +3,7 @@ import type {
   Customer,
   CustomerLedger,
   CustomerQrCard,
+  CustomerDataExport,
   CreateCustomerRequest,
   UpdateCustomerRequest,
 } from './types';
@@ -68,4 +69,28 @@ export function setLoyaltyRateOverride(
     method: 'PATCH',
     body: JSON.stringify({ loyaltyRateOverride }),
   });
+}
+
+// PATCH /customers/:id/consent — Section 17.11 (DPDP Act compliance
+// scaffolding). Owner/Accountant server-side.
+export function recordCustomerConsent(id: string, version: string): Promise<Customer> {
+  return apiFetch<Customer>(`/customers/${id}/consent`, {
+    method: 'PATCH',
+    body: JSON.stringify({ version }),
+  });
+}
+
+// GET /customers/:id/data-export — right to access. Owner/Accountant
+// server-side. The page builds a downloadable JSON file from this directly
+// (no separate file-download endpoint needed, unlike Tally's XML export).
+export function exportCustomerData(id: string): Promise<CustomerDataExport> {
+  return apiFetch<CustomerDataExport>(`/customers/${id}/data-export`);
+}
+
+// POST /customers/:id/data-deletion — right to erasure. Owner-ONLY
+// server-side; irreversible (anonymizes, doesn't hard-delete — see
+// CustomersService.requestDeletion()'s comment for the per-pump-membership
+// scope limitation).
+export function requestCustomerDeletion(id: string): Promise<Customer> {
+  return apiFetch<Customer>(`/customers/${id}/data-deletion`, { method: 'POST' });
 }

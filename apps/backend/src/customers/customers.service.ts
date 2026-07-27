@@ -11,6 +11,7 @@ import { requireTenantContext } from '../common/tenant-context';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
+import { RecordConsentDto } from './dto/record-consent.dto';
 import { allocateQrMemberId, isValidQrMemberId } from './member-id';
 // Section 3.4/6.1 — a phone typed here (dealer-created customer, web portal)
 // must land in the DB in the EXACT same canonical form
@@ -305,6 +306,70 @@ export class CustomersService {
       outstandingBalance: runningBalance,
       creditLimit: customer.creditLimit,
     };
+  }
+
+  // Section 17.11 — DPDP Act compliance scaffolding (go-live blocker,
+  // Section 18.1). TECHNICAL scaffolding only: this records THAT consent
+  // was captured and against which policy version, not a legal opinion on
+  // whether that policy text is itself DPDP-compliant.
+  async recordConsent(id: string, dto: RecordConsentDto) {
+    await this.findOne(id);
+    return this.prisma.customer.update({
+      where: { id },
+      data: { dataConsentAt: new Date(), dataConsentVersion: dto.version },
+    });
+  }
+
+  // Section 17.11 — right to access. Gathers every piece of personal data
+  // this pump holds about the customer into one JSON payload: profile,
+  // bills, loyalty/redemption transactions, payments. Deliberately reuses
+  // the same three queries ledger() already runs rather than introducing a
+  // second, subtly different definition of "this customer's data".
+  async exportData(id: string) {
+    const customer = await this.findOne(id);
+    const [bills, loyaltyTransactions, redemptionTransactions, payments] =
+      await Promise.all([
+        this.prisma.bill.findMany({ where: { customerId: id } }),
+        this.prisma.loyaltyTransaction.findMany({ where: { customerId: id } }),
+        this.prisma.redemptionTransaction.findMany({ where: { customerId: id } }),
+        this.prisma.payment.findMany({ where: { customerId: id } }),
+      ]);
+
+    return { customer, bills, loyaltyTransactions, redemptionTransactions, payments };
+  }
+
+  // Section 17.11 — right to erasure, SCOPED TO THIS PUMP MEMBERSHIP ROW
+  // ONLY. Anonymizes (does not hard-delete) name/phone/vehicleNumber/
+  // companyName: Bill/LoyaltyTransaction/Payment rows referencing this
+  // customerId are kept intact for financial/audit retention (Tally export
+  // history, bill audit trail) — erasing the row entirely would either
+  // cascade-delete or orphan those, and this schema has no soft-delete
+  // convention for Customer to fall back on either.
+  //
+  // KNOWN LIMITATION, documented rather than silently ignored: phone is
+  // denormalized from CustomerAccount, which is NOT touched here. A
+  // customer who is also a member at a different pump keeps that other
+  // membership (and CustomerAccount-level login) fully intact — scrubbing
+  // CustomerAccount.phone would break that other pump's login outright, and
+  // whether/how erasure should propagate across a shared login identity is
+  // a genuine legal question (does DPDP erasure apply per-controller/
+  // per-pump-relationship, or per data principal globally?) this codebase
+  // has no answer for — flagged here rather than guessed.
+  async requestDeletion(id: string) {
+    const customer = await this.findOne(id);
+    if (customer.dataDeletedAt) {
+      throw new ConflictException(`Customer ${id} was already anonymized at ${customer.dataDeletedAt.toISOString()}`);
+    }
+    return this.prisma.customer.update({
+      where: { id },
+      data: {
+        name: 'Deleted Customer',
+        phone: null,
+        vehicleNumber: null,
+        companyName: null,
+        dataDeletedAt: new Date(),
+      },
+    });
   }
 
   private handlePrismaError(error: unknown): never {
