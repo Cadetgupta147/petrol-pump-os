@@ -939,6 +939,16 @@ export interface AttendanceLogRow {
   staff: { id: string; name: string };
 }
 
+// POST /attendance/clock-in / PATCH /attendance/:id/clock-out responses —
+// AttendanceService.clockIn()/clockOut() return the bare AttendanceLog row
+// (no joined staff name, unlike AttendanceLogRow above).
+export interface AttendanceLog {
+  id: string;
+  staffId: string;
+  clockIn: string;
+  clockOut: string | null;
+}
+
 // ---------- Section 3.9 — Settings ----------
 
 // GET /business-profile — BusinessProfileService.getOrCreate(). Every field

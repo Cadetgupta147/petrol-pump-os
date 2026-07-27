@@ -3,7 +3,7 @@ import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
 import { StaffFormModal } from '../components/staff/StaffFormModal';
 import { getManagedStaff } from '../api/staffManagement';
-import { getAttendanceLog } from '../api/attendance';
+import { getAttendanceLog, clockInStaff, clockOutStaff } from '../api/attendance';
 import { getStaffAdvances, createStaffAdvance, markStaffAdvanceRepaid } from '../api/staffAdvances';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -36,6 +36,19 @@ export function StaffPage() {
 
   const [addingStaff, setAddingStaff] = useState(false);
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
+
+  // Attendance — Owner/Accountant/Manager can mark it from here (the
+  // backend has always allowed this, resolveAssignableActorId's "a Manager
+  // marking a DSM present who isn't the one submitting" case — this web
+  // portal just had no UI for it until now, unlike the DSM app's
+  // self-service AttendanceScreen).
+  const canManageAttendance =
+    currentStaff?.role === 'OWNER' || currentStaff?.role === 'ACCOUNTANT' || currentStaff?.role === 'MANAGER';
+  const [clockInStaffId, setClockInStaffId] = useState('');
+  const [clockInSaving, setClockInSaving] = useState(false);
+  const [clockInError, setClockInError] = useState<string | null>(null);
+  const [clockingOutId, setClockingOutId] = useState<string | null>(null);
+  const [clockOutError, setClockOutError] = useState<string | null>(null);
 
   // Section 17.23 — staff advances. Owner/Accountant/Manager can record and
   // settle these (matches the backend's role gate) — not restricted to
@@ -95,6 +108,48 @@ export function StaffPage() {
       setAdvanceError(err instanceof ApiError ? err.message : "Can't reach the backend.");
     } finally {
       setRepayingId(null);
+    }
+  }
+
+  function loadAttendance() {
+    return getAttendanceLog()
+      .then((result) => {
+        setAttendance(result);
+        setAttendanceError(null);
+      })
+      .catch((err) => {
+        setAttendanceError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+      });
+  }
+
+  async function handleClockIn(event: FormEvent) {
+    event.preventDefault();
+    if (!clockInStaffId) return;
+    setClockInError(null);
+    setClockInSaving(true);
+    try {
+      await clockInStaff(clockInStaffId);
+      setClockInStaffId('');
+      await loadAttendance();
+    } catch (err) {
+      // Covers the 409 "already clocked in" case verbatim — the backend is
+      // the real guard, this just surfaces its message.
+      setClockInError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setClockInSaving(false);
+    }
+  }
+
+  async function handleClockOut(id: string) {
+    setClockOutError(null);
+    setClockingOutId(id);
+    try {
+      await clockOutStaff(id);
+      await loadAttendance();
+    } catch (err) {
+      setClockOutError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setClockingOutId(null);
     }
   }
 
@@ -234,6 +289,7 @@ export function StaffPage() {
                     <th>Clock in</th>
                     <th>Clock out</th>
                     <th>Status</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -253,11 +309,61 @@ export function StaffPage() {
                           </span>
                         )}
                       </td>
+                      <td className="chevron">
+                        {canManageAttendance && !session.clockOut && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={() => {
+                              void handleClockOut(session.id);
+                            }}
+                            disabled={clockingOutId === session.id}
+                          >
+                            {clockingOutId === session.id ? 'Saving…' : 'Clock out'}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          )}
+
+          {clockOutError && <div className="form-error">{clockOutError}</div>}
+
+          {canManageAttendance && staffList && (
+            <form
+              onSubmit={(e) => {
+                void handleClockIn(e);
+              }}
+              style={{ marginTop: 16 }}
+            >
+              <div className="grid grid-2" style={{ gap: 12 }}>
+                <div className="form-field" style={{ marginBottom: 0 }}>
+                  <label htmlFor="att-clockin-staff">Staff member</label>
+                  <select
+                    id="att-clockin-staff"
+                    value={clockInStaffId}
+                    onChange={(e) => setClockInStaffId(e.target.value)}
+                    required
+                  >
+                    <option value="">Select…</option>
+                    {staffList.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {clockInError && <div className="form-error">{clockInError}</div>}
+              <div className="modal-actions">
+                <button type="submit" className="export-btn" disabled={clockInSaving}>
+                  {clockInSaving ? 'Saving…' : 'Clock in'}
+                </button>
+              </div>
+            </form>
           )}
         </div>
 
