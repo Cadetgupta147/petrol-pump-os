@@ -177,6 +177,18 @@ model StaffAccount {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Login brute-force defense, layer 2 (see
+  // src/auth/login-throttle.constants.ts for the full two-layer design —
+  // this DB-backed lockout sits beneath the per-IP+phone request throttle
+  // enforced by StaffLoginThrottlerGuard, catching an attacker who rotates
+  // IPs). Incremented atomically on every wrong password/PIN in
+  // AuthService.login/pinLogin; once it reaches
+  // LOGIN_LOCKOUT_THRESHOLD, lockedUntil is set and further attempts are
+  // rejected (429) without even comparing the credential, until it expires.
+  // Both fields reset to 0/null on the next successful login.
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
   memberships Staff[]
 }
 

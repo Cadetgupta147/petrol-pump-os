@@ -1,17 +1,26 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { PinLoginDto } from './dto/pin-login.dto';
 import { Public } from './decorators/public.decorator';
+import { StaffLoginThrottlerGuard } from './guards/staff-login-throttler.guard';
+import { LOGIN_IP_THROTTLE_LIMIT, LOGIN_IP_THROTTLE_TTL_MS } from './login-throttle.constants';
 
 // Section 2 — /auth/login (web portal) and Section 4 — /auth/pin-login (DSM
 // app), the only unauthenticated endpoints besides /health (see
-// JwtAuthGuard, registered globally in app.module.ts).
+// JwtAuthGuard, registered globally in app.module.ts). Both routes are
+// additionally guarded by StaffLoginThrottlerGuard for per-IP+phone request
+// throttling, on top of the per-account DB-backed lockout enforced inside
+// AuthService itself — see login-throttle.constants.ts for the full
+// two-layer brute-force defense this is part of.
+@UseGuards(StaffLoginThrottlerGuard)
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @Throttle({ default: { limit: LOGIN_IP_THROTTLE_LIMIT, ttl: LOGIN_IP_THROTTLE_TTL_MS } })
   @HttpCode(HttpStatus.OK)
   @Post('login')
   login(@Body() dto: LoginDto) {
@@ -19,6 +28,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: LOGIN_IP_THROTTLE_LIMIT, ttl: LOGIN_IP_THROTTLE_TTL_MS } })
   @HttpCode(HttpStatus.OK)
   @Post('pin-login')
   pinLogin(@Body() dto: PinLoginDto) {
