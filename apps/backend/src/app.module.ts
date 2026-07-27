@@ -17,6 +17,7 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
 import { GiftCatalogModule } from './gift-catalog/gift-catalog.module';
 import { RedemptionsModule } from './redemptions/redemptions.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { SalesReportsModule } from './sales-reports/sales-reports.module';
 import { TallyExportModule } from './tally-export/tally-export.module';
 import { TanksModule } from './tanks/tanks.module';
 import { PurchasesModule } from './purchases/purchases.module';
@@ -88,6 +89,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     GiftCatalogModule,
     RedemptionsModule,
     DashboardModule,
+    SalesReportsModule,
     TallyExportModule,
     TanksModule,
     PurchasesModule,

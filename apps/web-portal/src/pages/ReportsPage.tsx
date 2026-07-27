@@ -8,6 +8,8 @@ import { GiftRedemptionReportTab } from '../components/reports/GiftRedemptionRep
 import { SalesPurchaseRegisterTab } from '../components/reports/SalesPurchaseRegisterTab';
 import { AttendanceSummaryTab } from '../components/reports/AttendanceSummaryTab';
 import { CreditLimitSuggestionsTab } from '../components/reports/CreditLimitSuggestionsTab';
+import { NozzleWiseSalesReportTab } from '../components/reports/NozzleWiseSalesReportTab';
+import { VehicleWiseSalesReportTab } from '../components/reports/VehicleWiseSalesReportTab';
 
 // Section 12 — Reports & Analytics hub. Stock variance and cash custody
 // already have their own dedicated pages built in earlier slices — this hub
@@ -25,7 +27,9 @@ type TabKey =
   | 'loyalty-cost'
   | 'gift-redemption'
   | 'gst-register'
-  | 'attendance';
+  | 'attendance'
+  | 'nozzle-wise-sales'
+  | 'vehicle-wise-sales';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'credit-aging', label: 'Credit aging' },
@@ -34,6 +38,8 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'gift-redemption', label: 'Gift redemption' },
   { key: 'gst-register', label: 'GST sales/purchase register' },
   { key: 'attendance', label: 'Staff attendance' },
+  { key: 'nozzle-wise-sales', label: 'Nozzle-wise sales' },
+  { key: 'vehicle-wise-sales', label: 'Vehicle-wise sales' },
 ];
 
 export function ReportsPage() {
@@ -87,6 +93,8 @@ export function ReportsPage() {
           {activeTab === 'gift-redemption' && <GiftRedemptionReportTab />}
           {activeTab === 'gst-register' && <SalesPurchaseRegisterTab />}
           {activeTab === 'attendance' && <AttendanceSummaryTab />}
+          {activeTab === 'nozzle-wise-sales' && <NozzleWiseSalesReportTab />}
+          {activeTab === 'vehicle-wise-sales' && <VehicleWiseSalesReportTab />}
         </div>
       </div>
     </>
