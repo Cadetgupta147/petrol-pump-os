@@ -33,6 +33,10 @@ export class CreditAgingService {
             },
           },
           { payments: { some: {} } },
+          // Section 3.4 — a customer onboarded with a pre-existing due (see
+          // CustomerOpeningBalance) may not have any bills/payments yet, but
+          // still owes money and belongs in this report.
+          { openingBalances: { some: {} } },
         ],
       },
       select: {
@@ -45,6 +49,7 @@ export class CreditAgingService {
           select: { timestamp: true, paymentLines: true },
         },
         payments: { select: { createdAt: true, amount: true } },
+        openingBalances: { select: { effectiveAt: true, amount: true } },
       },
     });
 
@@ -59,10 +64,19 @@ export class CreditAgingService {
           netCreditImpact: -payment.amount,
         }),
       );
+      const openingBalanceEvents: CreditLedgerEvent[] =
+        customer.openingBalances.map((ob) => ({
+          timestamp: ob.effectiveAt,
+          netCreditImpact: ob.amount,
+        }));
 
       // computeFifoAgedSlices sorts internally, so pre-merge order here
       // doesn't matter.
-      const slices = computeFifoAgedSlices([...billEvents, ...paymentEvents]);
+      const slices = computeFifoAgedSlices([
+        ...billEvents,
+        ...paymentEvents,
+        ...openingBalanceEvents,
+      ]);
       const buckets = bucketAgedSlices(slices, asOf);
       // Slices come back oldest-first (FIFO queue is only pushed at the
       // back / drained from the front) — slices[0] is the oldest still-open

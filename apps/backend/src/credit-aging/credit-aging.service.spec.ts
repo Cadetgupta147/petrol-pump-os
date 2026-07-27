@@ -45,6 +45,7 @@ describe('CreditAgingService', () => {
           },
         ],
         payments: [],
+        openingBalances: [],
       },
     ]);
 
@@ -72,6 +73,7 @@ describe('CreditAgingService', () => {
           },
         ],
         payments: [{ createdAt: daysAgo(10), amount: 1000 }],
+        openingBalances: [],
       },
     ]);
 
@@ -99,6 +101,7 @@ describe('CreditAgingService', () => {
           },
         ],
         payments: [{ createdAt: daysAgo(1), amount: 200 }],
+        openingBalances: [],
       },
       {
         id: 'small-owing',
@@ -114,6 +117,7 @@ describe('CreditAgingService', () => {
           },
         ],
         payments: [],
+        openingBalances: [],
       },
       {
         id: 'big-owing',
@@ -129,6 +133,7 @@ describe('CreditAgingService', () => {
           },
         ],
         payments: [],
+        openingBalances: [],
       },
     ]);
 
@@ -157,6 +162,7 @@ describe('CreditAgingService', () => {
           },
         ],
         payments: [],
+        openingBalances: [],
       },
       {
         id: 'cust-2',
@@ -172,6 +178,7 @@ describe('CreditAgingService', () => {
           },
         ],
         payments: [],
+        openingBalances: [],
       },
     ]);
 
@@ -183,6 +190,30 @@ describe('CreditAgingService', () => {
       bucket30Plus: 250,
       total: 350,
     });
+  });
+
+  // Section 3.4 — a customer onboarded with a CustomerOpeningBalance (see
+  // prisma/schema.prisma) but no bills/payments yet must still show up and
+  // age from its effectiveAt date, not be silently dropped.
+  it('ages a customer whose only ledger event is an opening balance', async () => {
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        id: 'cust-legacy',
+        name: 'Legacy Dues',
+        phone: null,
+        creditLimit: 10000,
+        bills: [],
+        payments: [],
+        openingBalances: [{ effectiveAt: daysAgo(40), amount: 5000 }],
+      },
+    ]);
+
+    const report = await service.getReport(asOf);
+    const row = report.customers[0];
+
+    expect(row.totalOutstanding).toBe(5000);
+    expect(row.bucket30Plus).toBe(5000);
+    expect(row.hasOutstandingBalance).toBe(true);
   });
 
   it('an untouched-by-credit customer set returns an empty report', async () => {

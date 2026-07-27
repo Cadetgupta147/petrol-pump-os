@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CustomersService } from './customers.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runInTenantContext } from '../common/tenant-context';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 
 // jest's asymmetric matchers are typed `any`; these wrappers give them an
 // `unknown` type so they can sit inside object-literal expectations without
@@ -316,6 +317,140 @@ describe('CustomersService — DPDP compliance scaffolding', () => {
 
       await expect(service.requestDeletion('cust-1')).rejects.toThrow();
       expect(prisma.customer.update).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// Section 3.4 — onboarding an existing (pre-system) credit customer with a
+// real outstanding balance. addOpeningBalance() writes a CustomerOpeningBalance
+// row; ledger() must fold it into the same chronological running-balance walk
+// as bills/payments.
+describe('CustomersService — opening balance & ledger', () => {
+  let service: CustomersService;
+  let prisma: {
+    customer: { findUnique: jest.Mock };
+    bill: { findMany: jest.Mock };
+    payment: { findMany: jest.Mock };
+    customerOpeningBalance: { findMany: jest.Mock; create: jest.Mock };
+  };
+  const user: AuthenticatedUser = {
+    staffId: 'staff-1',
+    pumpId: 'default_pump',
+    role: 'ACCOUNTANT',
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      customer: { findUnique: jest.fn() },
+      bill: { findMany: jest.fn().mockResolvedValue([]) },
+      payment: { findMany: jest.fn().mockResolvedValue([]) },
+      customerOpeningBalance: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [CustomersService, { provide: PrismaService, useValue: prisma }],
+    }).compile();
+
+    service = module.get(CustomersService);
+  });
+
+  describe('addOpeningBalance', () => {
+    it('404s on an unknown customer', async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.addOpeningBalance('nope', { amount: 500 }, user),
+      ).rejects.toThrow();
+      expect(prisma.customerOpeningBalance.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a zero amount', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1' });
+
+      await expect(
+        service.addOpeningBalance('cust-1', { amount: 0 }, user),
+      ).rejects.toThrow();
+      expect(prisma.customerOpeningBalance.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a row with the recording staff as recordedById, defaulting effectiveAt to now', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1' });
+      prisma.customerOpeningBalance.create.mockResolvedValue({ id: 'ob-1' });
+
+      await runInTenantContext({ pumpId: 'default_pump' }, () =>
+        service.addOpeningBalance(
+          'cust-1',
+          { amount: 5000, note: 'Carried over from paper ledger' },
+          user,
+        ),
+      );
+
+      expect(prisma.customerOpeningBalance.create).toHaveBeenCalledWith(
+        containing({
+          data: containing({
+            pumpId: 'default_pump',
+            customerId: 'cust-1',
+            amount: 5000,
+            note: 'Carried over from paper ledger',
+            recordedById: 'staff-1',
+            effectiveAt: expect.any(Date) as Date,
+          }),
+        }),
+      );
+    });
+
+    it('honors an explicit backdated effectiveAt', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1' });
+      prisma.customerOpeningBalance.create.mockResolvedValue({ id: 'ob-1' });
+
+      await runInTenantContext({ pumpId: 'default_pump' }, () =>
+        service.addOpeningBalance(
+          'cust-1',
+          { amount: 5000, effectiveAt: '2026-01-01T00:00:00.000Z' },
+          user,
+        ),
+      );
+
+      expect(prisma.customerOpeningBalance.create).toHaveBeenCalledWith(
+        containing({
+          data: containing({ effectiveAt: new Date('2026-01-01T00:00:00.000Z') }),
+        }),
+      );
+    });
+  });
+
+  describe('ledger()', () => {
+    it('folds an opening balance in as the oldest entry when it predates every bill/payment', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1', creditLimit: 10000 });
+      prisma.bill.findMany.mockResolvedValue([
+        {
+          id: 'bill-1',
+          timestamp: new Date('2026-02-01T00:00:00Z'),
+          paymentLines: [{ paymentType: 'CREDIT', direction: 'IN', amount: 1000 }],
+        },
+      ]);
+      prisma.payment.findMany.mockResolvedValue([
+        { id: 'pay-1', createdAt: new Date('2026-02-15T00:00:00Z'), amount: 2000 },
+      ]);
+      prisma.customerOpeningBalance.findMany.mockResolvedValue([
+        {
+          id: 'ob-1',
+          effectiveAt: new Date('2026-01-01T00:00:00Z'),
+          amount: 5000,
+        },
+      ]);
+
+      const result = await service.ledger('cust-1');
+
+      expect(result.entries.map((e) => e.type)).toEqual([
+        'OPENING_BALANCE',
+        'BILL',
+        'PAYMENT',
+      ]);
+      // 5000 (opening) + 1000 (credit bill) - 2000 (payment) = 4000
+      expect(result.outstandingBalance).toBe(4000);
+      expect(result.entries[0].runningBalance).toBe(5000);
+      expect(result.entries[2].runningBalance).toBe(4000);
     });
   });
 });

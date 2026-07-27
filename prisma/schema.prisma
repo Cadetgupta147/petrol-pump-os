@@ -112,44 +112,45 @@ model Pump {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  staff                  Staff[]
-  customers              Customer[]
-  bills                  Bill[]
-  billAuditLogs          BillAuditLog[]
-  billPaymentLines       BillPaymentLine[]
-  creditConfigs          CreditConfig[]
-  businessProfiles       BusinessProfile[]
-  creditLimitAlerts      CreditLimitAlert[]
-  items                  Item[]
-  nozzles                Nozzle[]
-  shiftDefinitions       ShiftDefinition[]
-  meterReadings          MeterReading[]
-  tanks                  Tank[]
-  dipReadings            DipReading[]
-  densityLogs            DensityLog[]
-  shiftSalesSummaries    ShiftSalesSummary[]
-  upiWebhookEvents       UpiWebhookEvent[]
-  upiCaptureConfigs      UpiCaptureConfig[]
-  purchaseEntries        PurchaseEntry[]
-  lubricantItems         LubricantItem[]
-  itemSales              ItemSale[]
-  expenseEntries         ExpenseEntry[]
-  generatorDieselLogs    GeneratorDieselLog[]
-  machineTestingLogs     MachineTestingLog[]
-  rateHistories          RateHistory[]
-  loyaltyConfigs         LoyaltyConfig[]
-  loyaltyTransactions    LoyaltyTransaction[]
-  giftCatalogItems       GiftCatalogItem[]
-  redemptionTransactions RedemptionTransaction[]
-  cashCustodyLogs        CashCustodyLog[]
-  payments               Payment[]
-  tallyExportLogs        TallyExportLog[]
-  customerOtps           CustomerOtp[]
-  memberIdCounters       MemberIdCounter[]
-  vehicleBlacklists      VehicleBlacklist[]
-  densityRangeConfigs    DensityRangeConfig[]
-  taxRateConfigs         TaxRateConfig[]
-  staffAdvances          StaffAdvance[]
+  staff                   Staff[]
+  customers               Customer[]
+  bills                   Bill[]
+  billAuditLogs           BillAuditLog[]
+  billPaymentLines        BillPaymentLine[]
+  creditConfigs           CreditConfig[]
+  businessProfiles        BusinessProfile[]
+  creditLimitAlerts       CreditLimitAlert[]
+  items                   Item[]
+  nozzles                 Nozzle[]
+  shiftDefinitions        ShiftDefinition[]
+  meterReadings           MeterReading[]
+  tanks                   Tank[]
+  dipReadings             DipReading[]
+  densityLogs             DensityLog[]
+  shiftSalesSummaries     ShiftSalesSummary[]
+  upiWebhookEvents        UpiWebhookEvent[]
+  upiCaptureConfigs       UpiCaptureConfig[]
+  purchaseEntries         PurchaseEntry[]
+  lubricantItems          LubricantItem[]
+  itemSales               ItemSale[]
+  expenseEntries          ExpenseEntry[]
+  generatorDieselLogs     GeneratorDieselLog[]
+  machineTestingLogs      MachineTestingLog[]
+  rateHistories           RateHistory[]
+  loyaltyConfigs          LoyaltyConfig[]
+  loyaltyTransactions     LoyaltyTransaction[]
+  giftCatalogItems        GiftCatalogItem[]
+  redemptionTransactions  RedemptionTransaction[]
+  cashCustodyLogs         CashCustodyLog[]
+  payments                Payment[]
+  tallyExportLogs         TallyExportLog[]
+  customerOtps            CustomerOtp[]
+  memberIdCounters        MemberIdCounter[]
+  vehicleBlacklists       VehicleBlacklist[]
+  densityRangeConfigs     DensityRangeConfig[]
+  taxRateConfigs          TaxRateConfig[]
+  staffAdvances           StaffAdvance[]
+  customerOpeningBalances CustomerOpeningBalance[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -203,7 +204,7 @@ model StaffAccount {
   // rather than restarting at the bottom rung. An Owner/Accountant can also
   // reset this early via StaffManagementService.clearLockout() (manual
   // unlock) — that path zeroes it the same way a successful login does.
-  lockoutEscalationLevel Int    @default(0)
+  lockoutEscalationLevel Int @default(0)
 
   // Staff-side JWT "kill switch", mirroring CustomerAccount.tokenVersion
   // above (same mechanism, staff-specific wording): a property of the LOGIN
@@ -217,7 +218,7 @@ model StaffAccount {
   // bumps it when an Owner deactivates a Staff membership, so an outstanding
   // JWT for that person stops working immediately rather than lingering
   // until its natural 12h expiry.
-  tokenVersion        Int       @default(0)
+  tokenVersion Int @default(0)
 
   memberships Staff[]
 }
@@ -227,17 +228,17 @@ model StaffAccount {
 // person with memberships at two different pumps has two rows here, each
 // with its own role/active flag, sharing one StaffAccount for login.
 model Staff {
-  id        String        @id @default(cuid())
-  account   StaffAccount? @relation(fields: [accountId], references: [id])
-  accountId String?
-  pump      Pump          @relation(fields: [pumpId], references: [id])
-  pumpId    String
+  id            String        @id @default(cuid())
+  account       StaffAccount? @relation(fields: [accountId], references: [id])
+  accountId     String?
+  pump          Pump          @relation(fields: [pumpId], references: [id])
+  pumpId        String
   // Denormalized copy of StaffAccount.name — see the comment there.
-  name      String
-  role      Role
-  active    Boolean       @default(true)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  name          String
+  role          Role
+  active        Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
   // Section 17.23 — staff wage/advances, FIXED MONTHLY SALARY (the only
   // wage structure this schema supports — see StaffAdvance below and
   // attendance.service.ts's getSummary() for the "no proration across an
@@ -246,24 +247,25 @@ model Staff {
   // reporting UI surfaces, not defaulted to 0.
   monthlySalary Float?
 
-  billsEntered              Bill[]               @relation("BillEnteredBy")
-  billsLastEdited           Bill[]               @relation("BillLastEditedBy")
-  billsDeleted              Bill[]               @relation("BillDeletedBy")
-  billAuditLogs             BillAuditLog[]
-  meterReadings             MeterReading[]       @relation("MeterReadingStaff")
-  meterReadingsCorrected    MeterReading[]       @relation("MeterReadingCorrectedBy")
-  attendanceLogs            AttendanceLog[]
-  cashCustodyLogs           CashCustodyLog[]
-  dipReadings               DipReading[]
-  densityLogs               DensityLog[]
-  expenseEntries            ExpenseEntry[]
-  generatorDieselLogs       GeneratorDieselLog[]
-  machineTestingLogs        MachineTestingLog[]
-  itemSales                 ItemSale[]
-  vehicleBlacklistsCreated  VehicleBlacklist[]   @relation("VehicleBlacklistedBy")
-  vehicleBlacklistsResolved VehicleBlacklist[]   @relation("VehicleBlacklistResolvedBy")
-  staffAdvancesReceived     StaffAdvance[]       @relation("StaffAdvanceStaff")
-  staffAdvancesRecorded     StaffAdvance[]       @relation("StaffAdvanceRecordedBy")
+  billsEntered                    Bill[]                   @relation("BillEnteredBy")
+  billsLastEdited                 Bill[]                   @relation("BillLastEditedBy")
+  billsDeleted                    Bill[]                   @relation("BillDeletedBy")
+  billAuditLogs                   BillAuditLog[]
+  meterReadings                   MeterReading[]           @relation("MeterReadingStaff")
+  meterReadingsCorrected          MeterReading[]           @relation("MeterReadingCorrectedBy")
+  attendanceLogs                  AttendanceLog[]
+  cashCustodyLogs                 CashCustodyLog[]
+  dipReadings                     DipReading[]
+  densityLogs                     DensityLog[]
+  expenseEntries                  ExpenseEntry[]
+  generatorDieselLogs             GeneratorDieselLog[]
+  machineTestingLogs              MachineTestingLog[]
+  itemSales                       ItemSale[]
+  vehicleBlacklistsCreated        VehicleBlacklist[]       @relation("VehicleBlacklistedBy")
+  vehicleBlacklistsResolved       VehicleBlacklist[]       @relation("VehicleBlacklistResolvedBy")
+  staffAdvancesReceived           StaffAdvance[]           @relation("StaffAdvanceStaff")
+  staffAdvancesRecorded           StaffAdvance[]           @relation("StaffAdvanceRecordedBy")
+  customerOpeningBalancesRecorded CustomerOpeningBalance[]
 
   @@unique([accountId, pumpId])
 }
@@ -280,16 +282,16 @@ model Staff {
 // entered this transaction (unconditionally the caller, like
 // CashCustodyLog.handledById's sibling fields — see resolve-assignable-actor.ts).
 model StaffAdvance {
-  id          String    @id @default(cuid())
-  pump        Pump      @relation(fields: [pumpId], references: [id])
-  pumpId      String
-  staff       Staff     @relation("StaffAdvanceStaff", fields: [staffId], references: [id])
-  staffId     String
-  amount      Float
-  givenAt     DateTime  @default(now())
-  note        String?
-  repaidAt    DateTime?
-  recordedBy   Staff    @relation("StaffAdvanceRecordedBy", fields: [recordedById], references: [id])
+  id           String    @id @default(cuid())
+  pump         Pump      @relation(fields: [pumpId], references: [id])
+  pumpId       String
+  staff        Staff     @relation("StaffAdvanceStaff", fields: [staffId], references: [id])
+  staffId      String
+  amount       Float
+  givenAt      DateTime  @default(now())
+  note         String?
+  repaidAt     DateTime?
+  recordedBy   Staff     @relation("StaffAdvanceRecordedBy", fields: [recordedById], references: [id])
   recordedById String
 }
 
@@ -402,8 +404,41 @@ model Customer {
   creditAlerts           CreditLimitAlert[]
   otpRequests            CustomerOtp[]
   vehicleBlacklists      VehicleBlacklist[]
+  openingBalances        CustomerOpeningBalance[]
 
   @@unique([accountId, pumpId])
+}
+
+// Section 3.4 — onboarding an existing (pre-system) credit customer who
+// already has a real outstanding balance from before this pump started
+// using the software. A separate, non-fuel ledger entry rather than a
+// stored field on Customer or a fake Bill: CustomersService.ledger(),
+// BillsService's credit-limit check, and CreditAgingService all derive
+// "outstanding" purely from Bill/Payment rows today (see ledger()'s
+// comment) — and a Bill requires real litres/productType, so faking one to
+// carry an opening due would corrupt litres-sold and meter-variance
+// reporting (Section 3.3). This model plugs into those same three call
+// sites as a third ledger event type instead.
+//
+// amount is signed and NOT restricted to positive: positive = customer
+// owed this much as of effectiveAt; a mistake is fixed with a further
+// correcting entry (e.g. a negative amount), not by editing/deleting the
+// original — same audit-trail philosophy as StaffAdvance/CashCustodyLog.
+// effectiveAt (backdatable — "as of the day we started using this
+// system") is independent of createdAt (when the entry was actually
+// recorded) and is what dates the FIFO aging slice in CreditAgingService.
+model CustomerOpeningBalance {
+  id           String   @id @default(cuid())
+  pump         Pump     @relation(fields: [pumpId], references: [id])
+  pumpId       String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  customerId   String
+  amount       Float
+  note         String?
+  effectiveAt  DateTime
+  recordedBy   Staff    @relation(fields: [recordedById], references: [id])
+  recordedById String
+  createdAt    DateTime @default(now())
 }
 
 // Section 5 — Credit Customer App login (phone + OTP). One row per OTP
@@ -933,13 +968,13 @@ model DensityLog {
 // default (see resolveDensityRangeMap()). Matches CreditConfig's singleton-
 // PER-PRODUCT-per-pump pattern, not a true global singleton.
 model DensityRangeConfig {
-  id           String   @id @default(cuid())
-  pump         Pump     @relation(fields: [pumpId], references: [id])
-  pumpId       String
-  productType  String
-  minDensity   Float
-  maxDensity   Float
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default(cuid())
+  pump        Pump     @relation(fields: [pumpId], references: [id])
+  pumpId      String
+  productType String
+  minDensity  Float
+  maxDensity  Float
+  updatedAt   DateTime @updatedAt
 
   @@unique([pumpId, productType])
 }

@@ -9,6 +9,7 @@ import {
   recordCustomerConsent,
   exportCustomerData,
   requestCustomerDeletion,
+  addCustomerOpeningBalance,
 } from '../api/customers';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -40,6 +41,16 @@ export function CustomerLedgerPage() {
   const [confirmingDeletion, setConfirmingDeletion] = useState(false);
   const [deletionSaving, setDeletionSaving] = useState(false);
   const [deletionError, setDeletionError] = useState<string | null>(null);
+
+  // Section 3.4 — onboarding an existing (pre-system) credit customer with a
+  // real outstanding balance. Collapsed behind a toggle since most customers
+  // are created fresh and never need this.
+  const [showOpeningBalanceForm, setShowOpeningBalanceForm] = useState(false);
+  const [obAmount, setObAmount] = useState('');
+  const [obNote, setObNote] = useState('');
+  const [obEffectiveAt, setObEffectiveAt] = useState('');
+  const [obSaving, setObSaving] = useState(false);
+  const [obError, setObError] = useState<string | null>(null);
 
   // No privacy-policy content management exists in this codebase yet (see
   // BusinessProfile — no such field). This is a placeholder version string
@@ -114,6 +125,37 @@ export function CustomerLedgerPage() {
       setOverrideError(err instanceof ApiError ? err.message : "Can't reach the backend.");
     } finally {
       setOverrideSaving(false);
+    }
+  }
+
+  async function handleAddOpeningBalance(event: FormEvent) {
+    event.preventDefault();
+    if (!id) return;
+    setObError(null);
+    const amount = Number(obAmount);
+    if (!obAmount.trim() || Number.isNaN(amount) || amount === 0) {
+      setObError('Enter a non-zero amount.');
+      return;
+    }
+    setObSaving(true);
+    try {
+      await addCustomerOpeningBalance(id, {
+        amount,
+        note: obNote.trim() === '' ? undefined : obNote.trim(),
+        effectiveAt: obEffectiveAt === '' ? undefined : new Date(obEffectiveAt).toISOString(),
+      });
+      // outstandingBalance/entries all shift — simplest to reload the whole
+      // ledger rather than hand-merge the new row into running balances.
+      const refreshed = await getCustomerLedger(id);
+      setLedger(refreshed);
+      setObAmount('');
+      setObNote('');
+      setObEffectiveAt('');
+      setShowOpeningBalanceForm(false);
+    } catch (err) {
+      setObError(err instanceof ApiError ? err.message : "Can't reach the backend.");
+    } finally {
+      setObSaving(false);
     }
   }
 
@@ -252,6 +294,80 @@ export function CustomerLedgerPage() {
               </div>
             </div>
 
+            {isOwnerOrAccountant && (
+              <div className="section">
+                <div className="section-title">
+                  <h3>Opening balance</h3>
+                  <span className="section-note">
+                    Section 3.4 — onboarding a customer who already owed money before this system
+                    was used
+                  </span>
+                </div>
+                {!showOpeningBalanceForm ? (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setShowOpeningBalanceForm(true)}
+                  >
+                    Record a pre-existing due
+                  </button>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      void handleAddOpeningBalance(e);
+                    }}
+                    className="grid grid-2"
+                    style={{ alignItems: 'end', gap: 8 }}
+                  >
+                    <label>
+                      Amount owed (₹)
+                      <input
+                        type="number"
+                        step="any"
+                        value={obAmount}
+                        onChange={(e) => setObAmount(e.target.value)}
+                        placeholder="e.g. 5000"
+                        aria-label="Opening balance amount"
+                      />
+                    </label>
+                    <label>
+                      As of (optional, defaults to today)
+                      <input
+                        type="date"
+                        value={obEffectiveAt}
+                        onChange={(e) => setObEffectiveAt(e.target.value)}
+                        aria-label="Opening balance effective date"
+                      />
+                    </label>
+                    <label style={{ gridColumn: '1 / -1' }}>
+                      Note (optional)
+                      <input
+                        type="text"
+                        value={obNote}
+                        onChange={(e) => setObNote(e.target.value)}
+                        placeholder="e.g. carried over from paper ledger"
+                        aria-label="Opening balance note"
+                      />
+                    </label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="submit" className="export-btn" disabled={obSaving}>
+                        {obSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setShowOpeningBalanceForm(false)}
+                        disabled={obSaving}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    {obError && <div className="form-error">{obError}</div>}
+                  </form>
+                )}
+              </div>
+            )}
+
             <div className="section">
               <div className="section-title">
                 <h3>Ledger</h3>
@@ -278,11 +394,25 @@ export function CustomerLedgerPage() {
                             <span
                               className="badge"
                               style={{
-                                background: entry.type === 'BILL' ? 'var(--amber-bg)' : 'var(--green-bg)',
-                                color: entry.type === 'BILL' ? 'var(--amber)' : 'var(--green)',
+                                background:
+                                  entry.type === 'BILL'
+                                    ? 'var(--amber-bg)'
+                                    : entry.type === 'PAYMENT'
+                                      ? 'var(--green-bg)'
+                                      : 'var(--red-bg)',
+                                color:
+                                  entry.type === 'BILL'
+                                    ? 'var(--amber)'
+                                    : entry.type === 'PAYMENT'
+                                      ? 'var(--green)'
+                                      : 'var(--red)',
                               }}
                             >
-                              {entry.type === 'BILL' ? 'Bill' : 'Payment'}
+                              {entry.type === 'BILL'
+                                ? 'Bill'
+                                : entry.type === 'PAYMENT'
+                                  ? 'Payment'
+                                  : 'Opening balance'}
                             </span>
                           </td>
                           <td className="num">

@@ -756,11 +756,19 @@ export class BillsService {
         _sum: { amount: true },
         where: { customerId },
       });
+      // Section 3.4 — a customer onboarded with a pre-existing due (see
+      // CustomerOpeningBalance) has that due counted here too, so credit-limit
+      // enforcement isn't blind to balances that predate this system.
+      const openingBalanceAgg = await this.prisma.customerOpeningBalance.aggregate({
+        _sum: { amount: true },
+        where: { customerId },
+      });
 
       outstandingBefore =
         (creditInAgg._sum.amount ?? 0) -
         (creditOutAgg._sum.amount ?? 0) -
-        (paymentsAgg._sum.amount ?? 0);
+        (paymentsAgg._sum.amount ?? 0) +
+        (openingBalanceAgg._sum.amount ?? 0);
       limit = customer!.creditLimit;
     }
 

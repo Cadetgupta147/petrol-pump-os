@@ -8,11 +8,14 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
 import { RecordConsentDto } from './dto/record-consent.dto';
+import { CreateOpeningBalanceDto } from './dto/create-opening-balance.dto';
 
 // Section 3.4 — Customer master CRUD + full per-customer ledger.
 //
@@ -65,6 +68,25 @@ export class CustomersController {
   @Get(':id/ledger')
   ledger(@Param('id') id: string) {
     return this.customersService.ledger(id);
+  }
+
+  // Section 3.4 — onboarding an existing (pre-system) credit customer with a
+  // real outstanding balance from before this pump used the software.
+  // Owner/Accountant via the class-level @Roles, same as the rest of
+  // customer/credit management. Human-review flag (CLAUDE.md): this touches
+  // money/credit balances directly.
+  @Post(':id/opening-balance')
+  addOpeningBalance(
+    @Param('id') id: string,
+    @Body() dto: CreateOpeningBalanceDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.customersService.addOpeningBalance(id, dto, user);
+  }
+
+  @Get(':id/opening-balance')
+  listOpeningBalances(@Param('id') id: string) {
+    return this.customersService.listOpeningBalances(id);
   }
 
   // Section 6.1 — the customer's QR card. The QR encodes ONLY qrMemberId

@@ -12,6 +12,8 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
 import { RecordConsentDto } from './dto/record-consent.dto';
+import { CreateOpeningBalanceDto } from './dto/create-opening-balance.dto';
+import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { allocateQrMemberId, isValidQrMemberId } from './member-id';
 // Section 3.4/6.1 — a phone typed here (dealer-created customer, web portal)
 // must land in the DB in the EXACT same canonical form
@@ -278,7 +280,7 @@ export class CustomersService {
   async ledger(id: string) {
     const customer = await this.findOne(id);
 
-    const [bills, payments] = await Promise.all([
+    const [bills, payments, openingBalances] = await Promise.all([
       this.prisma.bill.findMany({
         where: { customerId: id, deletedAt: null },
         include: { paymentLines: true },
@@ -288,10 +290,14 @@ export class CustomersService {
         where: { customerId: id },
         orderBy: { createdAt: 'asc' },
       }),
+      this.prisma.customerOpeningBalance.findMany({
+        where: { customerId: id },
+        orderBy: { effectiveAt: 'asc' },
+      }),
     ]);
 
     type LedgerEntry = {
-      type: 'BILL' | 'PAYMENT';
+      type: 'BILL' | 'PAYMENT' | 'OPENING_BALANCE';
       id: string;
       timestamp: Date;
       netCreditImpact: number;
@@ -325,7 +331,16 @@ export class CustomersService {
       data: payment,
     }));
 
-    const merged = [...billEntries, ...paymentEntries].sort(
+    const openingBalanceEntries: LedgerEntry[] = openingBalances.map((ob) => ({
+      type: 'OPENING_BALANCE',
+      id: ob.id,
+      timestamp: ob.effectiveAt,
+      netCreditImpact: ob.amount,
+      runningBalance: 0,
+      data: ob,
+    }));
+
+    const merged = [...billEntries, ...paymentEntries, ...openingBalanceEntries].sort(
       (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
     );
 
@@ -341,6 +356,43 @@ export class CustomersService {
       outstandingBalance: runningBalance,
       creditLimit: customer.creditLimit,
     };
+  }
+
+  // Section 3.4 — onboarding an existing (pre-system) credit customer with a
+  // real balance from before this pump used the software. Rejects amount ===
+  // 0 (class-validator can't express "non-zero" on its own — see the DTO
+  // comment); anything else, positive or negative, is accepted as a new
+  // audit-trail row rather than editing/deleting a prior entry.
+  async addOpeningBalance(
+    id: string,
+    dto: CreateOpeningBalanceDto,
+    user: AuthenticatedUser,
+  ) {
+    await this.findOne(id);
+    if (dto.amount === 0) {
+      throw new BadRequestException(
+        'Opening balance amount must be non-zero — omit it entirely if there is no prior due',
+      );
+    }
+
+    return this.prisma.customerOpeningBalance.create({
+      data: {
+        pumpId: requireTenantContext().pumpId,
+        customerId: id,
+        amount: dto.amount,
+        note: dto.note,
+        effectiveAt: dto.effectiveAt ? new Date(dto.effectiveAt) : new Date(),
+        recordedById: user.staffId,
+      },
+    });
+  }
+
+  async listOpeningBalances(id: string) {
+    await this.findOne(id);
+    return this.prisma.customerOpeningBalance.findMany({
+      where: { customerId: id },
+      orderBy: { effectiveAt: 'asc' },
+    });
   }
 
   // Section 17.11 — DPDP Act compliance scaffolding (go-live blocker,

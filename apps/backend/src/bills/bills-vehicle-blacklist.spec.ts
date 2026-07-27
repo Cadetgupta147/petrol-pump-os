@@ -25,6 +25,7 @@ describe('BillsService vehicle blacklist enforcement (Section 3.4B)', () => {
     billAuditLog: { create: jest.Mock };
     billPaymentLine: { aggregate: jest.Mock };
     payment: { aggregate: jest.Mock };
+    customerOpeningBalance: { aggregate: jest.Mock };
     creditLimitAlert: { create: jest.Mock };
     memberIdCounter: { update: jest.Mock };
     pump: { findUniqueOrThrow: jest.Mock };
@@ -78,6 +79,9 @@ describe('BillsService vehicle blacklist enforcement (Section 3.4B)', () => {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },
       payment: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      },
+      customerOpeningBalance: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },
       creditLimitAlert: { create: jest.fn().mockResolvedValue({}) },
@@ -177,5 +181,129 @@ describe('BillsService vehicle blacklist enforcement (Section 3.4B)', () => {
       companyName: undefined,
       customerId: undefined,
     });
+  });
+});
+
+// Section 3.4 — a customer onboarded with a CustomerOpeningBalance (see
+// prisma/schema.prisma) must have that due counted in credit-limit
+// enforcement, not just in CustomersService.ledger().
+describe('BillsService credit-limit evaluation includes CustomerOpeningBalance', () => {
+  let service: BillsService;
+
+  type TxCallback = (tx: unknown) => Promise<unknown>;
+
+  let prisma: {
+    customer: { findUnique: jest.Mock };
+    bill: { create: jest.Mock };
+    billAuditLog: { create: jest.Mock };
+    billPaymentLine: { aggregate: jest.Mock };
+    payment: { aggregate: jest.Mock };
+    customerOpeningBalance: { aggregate: jest.Mock };
+    creditLimitAlert: { create: jest.Mock };
+    memberIdCounter: { update: jest.Mock };
+    pump: { findUniqueOrThrow: jest.Mock };
+    $transaction: jest.Mock;
+  };
+
+  const creditDto: CreateBillDto = {
+    customerId: 'cust-1',
+    customerName: 'Legacy Customer',
+    amount: 1000,
+    litres: 10,
+    productType: 'petrol',
+    entryChannel: EntryChannel.WEB,
+    paymentLines: [
+      { paymentType: PaymentType.CREDIT, amount: 1000, direction: PaymentDirection.IN },
+    ],
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      customer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'cust-1',
+          vehicleNumber: null,
+          companyName: null,
+          creditLimit: 5000,
+          loyaltyRateOverride: null,
+        }),
+      },
+      bill: {
+        create: jest.fn().mockResolvedValue({ id: 'bill-1', paymentLines: [], customer: null }),
+      },
+      billAuditLog: { create: jest.fn().mockResolvedValue({}) },
+      billPaymentLine: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      },
+      payment: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      },
+      // The customer already owed ₹4500 before ever using this system.
+      customerOpeningBalance: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 4500 } }),
+      },
+      creditLimitAlert: { create: jest.fn().mockResolvedValue({}) },
+      memberIdCounter: {
+        update: jest.fn().mockResolvedValue({ id: 'singleton', pumpId: 'default_pump', lastSeq: 1 }),
+      },
+      pump: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'default_pump', pumpCode: 'PUMP001' }),
+      },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction.mockImplementation((cb: TxCallback) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BillsService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: CreditConfigService,
+          useValue: {
+            getOrCreate: jest.fn().mockResolvedValue({
+              enforcementMode: 'NOTIFY',
+              defaultInformalCreditLimit: 5000,
+            }),
+          },
+        },
+        {
+          provide: RateMasterService,
+          useValue: {
+            getCurrentRate: jest.fn().mockResolvedValue({
+              id: 'rh-1',
+              productType: 'petrol',
+              rate: 100,
+              effectiveFrom: new Date('2026-01-01T00:00:00Z'),
+            }),
+          },
+        },
+        { provide: LoyaltyService, useValue: { getConfig: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: VehicleBlacklistService,
+          useValue: { assertNotBlacklisted: jest.fn().mockResolvedValue(undefined) },
+        },
+      ],
+    }).compile();
+
+    service = module.get(BillsService);
+  });
+
+  it('folds the opening balance into outstandingBefore, flagging a bill that pushes past the limit', async () => {
+    await runInTenantContext({ pumpId: 'default_pump' }, () =>
+      service.create(creditDto, 'staff-1'),
+    );
+
+    // outstandingBefore = 4500 (opening) + 0 (no prior bills/payments) = 4500
+    // overage = 4500 + 1000 (this bill) - 5000 (limit) = 500
+    expect(prisma.creditLimitAlert.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          outstandingBefore: 4500,
+          billNetCredit: 1000,
+          creditLimit: 5000,
+          overageAmount: 500,
+        }) as unknown,
+      }),
+    );
   });
 });

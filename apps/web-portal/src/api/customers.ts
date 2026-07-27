@@ -6,6 +6,8 @@ import type {
   CustomerDataExport,
   CreateCustomerRequest,
   UpdateCustomerRequest,
+  CustomerOpeningBalance,
+  CreateOpeningBalanceRequest,
 } from './types';
 
 export function getAllCustomers(): Promise<Customer[]> {
@@ -93,4 +95,19 @@ export function exportCustomerData(id: string): Promise<CustomerDataExport> {
 // scope limitation).
 export function requestCustomerDeletion(id: string): Promise<Customer> {
   return apiFetch<Customer>(`/customers/${id}/data-deletion`, { method: 'POST' });
+}
+
+// POST /customers/:id/opening-balance — Section 3.4, onboarding an existing
+// (pre-system) credit customer with a real balance from before this pump
+// used the software. Owner/Accountant server-side (class-level @Roles on
+// CustomersController). Human-review flag (CLAUDE.md): this writes directly
+// to a customer's credit balance.
+export function addCustomerOpeningBalance(
+  id: string,
+  dto: CreateOpeningBalanceRequest,
+): Promise<CustomerOpeningBalance> {
+  return apiFetch<CustomerOpeningBalance>(`/customers/${id}/opening-balance`, {
+    method: 'POST',
+    body: JSON.stringify(dto),
+  });
 }

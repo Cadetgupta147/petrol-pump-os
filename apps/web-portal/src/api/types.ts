@@ -866,7 +866,7 @@ export interface CreateRateHistoryRequest {
 }
 
 export interface LedgerEntry {
-  type: 'BILL' | 'PAYMENT';
+  type: 'BILL' | 'PAYMENT' | 'OPENING_BALANCE';
   id: string;
   timestamp: string;
   netCreditImpact: number;
@@ -879,6 +879,27 @@ export interface CustomerLedger {
   entries: LedgerEntry[];
   outstandingBalance: number;
   creditLimit: number;
+}
+
+// Section 3.4 — onboarding an existing (pre-system) credit customer with a
+// real outstanding balance. See prisma/schema.prisma's CustomerOpeningBalance
+// comment for why this is its own ledger event type rather than a stored
+// Customer field or a fake Bill.
+export interface CustomerOpeningBalance {
+  id: string;
+  pumpId: string;
+  customerId: string;
+  amount: number;
+  note: string | null;
+  effectiveAt: string;
+  recordedById: string;
+  createdAt: string;
+}
+
+export interface CreateOpeningBalanceRequest {
+  amount: number;
+  note?: string;
+  effectiveAt?: string;
 }
 
 // GET /staff — StaffService.findAll(). Deliberately id+name only (no phone/

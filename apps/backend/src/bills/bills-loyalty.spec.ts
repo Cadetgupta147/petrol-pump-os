@@ -50,6 +50,7 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
     billAuditLog: { create: jest.Mock };
     billPaymentLine: { aggregate: jest.Mock };
     payment: { aggregate: jest.Mock };
+    customerOpeningBalance: { aggregate: jest.Mock };
     creditLimitAlert: { create: jest.Mock };
     loyaltyTransaction: { create: jest.Mock };
     loyaltyConfig: { findUnique: jest.Mock };
@@ -114,6 +115,9 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },
       payment: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      },
+      customerOpeningBalance: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },
       creditLimitAlert: { create: jest.fn().mockResolvedValue({}) },
