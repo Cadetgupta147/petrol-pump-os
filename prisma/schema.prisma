@@ -305,6 +305,18 @@ model Customer {
   dataConsentAt       DateTime?
   dataConsentVersion  String?
   dataDeletedAt       DateTime?
+  // Section 17.24 — ID-document capture, OPTIONAL/dealer's-discretion (not
+  // gated on any credit-limit threshold — see docs decision). Deliberately
+  // a TYPE + NUMBER pair (e.g. "Aadhaar" / "1234 5678 9012"), not a scanned
+  // image upload: this codebase has no real file-storage backend wired up
+  // yet (see PurchaseEntryPage.tsx's invoiceImageUrl comment / .env.example
+  // STORAGE_* placeholders — the same open gap), so accepting an image here
+  // would either silently fail to persist it or require solving that
+  // unrelated, still-open storage-provider decision as a side effect of
+  // this slice. idDocumentType is free text (dealer's discretion which ID
+  // types they accept), not an enum.
+  idDocumentType      String?
+  idDocumentNumber    String?
 
   bills                  Bill[]
   loyaltyTransactions    LoyaltyTransaction[]

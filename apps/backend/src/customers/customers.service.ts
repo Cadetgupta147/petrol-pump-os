@@ -23,6 +23,26 @@ import { allocateQrMemberId, isValidQrMemberId } from './member-id';
 // never drift apart.
 import { normalizeIndianMobile } from '../customer-auth/phone.util';
 
+// Section 17.24 — ID-document capture, optional/dealer's-discretion.
+// idDocumentType/idDocumentNumber must both be present or both absent —
+// "Aadhaar" with no number, or a bare number with no type, is meaningless
+// data. Takes the RESULTING value each field would have after the write
+// (not the raw DTO), so it works identically for create() (existing values
+// are always undefined) and update() (existing values fill in whichever
+// side the caller didn't touch) — see both call sites.
+export function assertIdDocumentPairConsistent(
+  type: string | null | undefined,
+  number: string | null | undefined,
+): void {
+  const hasType = type !== null && type !== undefined && type !== '';
+  const hasNumber = number !== null && number !== undefined && number !== '';
+  if (hasType !== hasNumber) {
+    throw new BadRequestException(
+      'idDocumentType and idDocumentNumber must both be set, or both left empty',
+    );
+  }
+}
+
 // Customer master CRUD + ledger — Section 3.4. Outstanding balance is
 // deliberately NOT stored on Customer: it's derived on read from the
 // bill/payment ledger (see ledger() below). Auth/role guards do exist and
@@ -33,7 +53,7 @@ import { normalizeIndianMobile } from '../customer-auth/phone.util';
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreateCustomerDto) {
+  async create(dto: CreateCustomerDto) {
     // Member id allocation + customer create share one transaction so a
     // failed create (e.g. duplicate phone at this pump) rolls the counter
     // increment back — no burned sequence numbers (Section 6.1/6.7, see
@@ -54,6 +74,8 @@ export class CustomersService {
     // that). allocateQrMemberId() needs pumpId passed explicitly too,
     // since Pump/MemberIdCounter lookups aren't tenant-scoped the same way
     // (Pump IS the tenant root).
+    assertIdDocumentPairConsistent(dto.idDocumentType, dto.idDocumentNumber);
+
     const { pumpId } = requireTenantContext();
     return this.prisma
       .$transaction(async (tx) => {
@@ -74,6 +96,8 @@ export class CustomersService {
             companyName: dto.companyName,
             creditLimit: dto.creditLimit ?? 0,
             qrMemberId,
+            idDocumentType: dto.idDocumentType,
+            idDocumentNumber: dto.idDocumentNumber,
           },
         });
       })
@@ -98,6 +122,11 @@ export class CustomersService {
     // Confirm existence first so a bad id always yields a clean 404, not a
     // Prisma P2025 translated into a generic error.
     const existing = await this.findOne(id);
+
+    assertIdDocumentPairConsistent(
+      dto.idDocumentType !== undefined ? dto.idDocumentType : existing.idDocumentType,
+      dto.idDocumentNumber !== undefined ? dto.idDocumentNumber : existing.idDocumentNumber,
+    );
 
     // Phase 0.2 — if this update sets/changes phone (e.g. the informal ->
     // verified upgrade path, Section 3.4A, adding a phone for the first
@@ -131,6 +160,12 @@ export class CustomersService {
             }),
             ...(dto.creditLimit !== undefined && {
               creditLimit: dto.creditLimit,
+            }),
+            ...(dto.idDocumentType !== undefined && {
+              idDocumentType: dto.idDocumentType,
+            }),
+            ...(dto.idDocumentNumber !== undefined && {
+              idDocumentNumber: dto.idDocumentNumber,
             }),
             // Section 3.4A — the "upgrade informal -> verified" path.
             ...(dto.verificationStatus !== undefined && {

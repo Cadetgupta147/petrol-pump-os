@@ -145,6 +145,79 @@ describe('CustomersService — phone normalization', () => {
       );
     });
   });
+
+  // Section 17.24 — ID-document capture, optional/dealer's-discretion. Both
+  // fields must be set together or neither.
+  describe('idDocument pair validation', () => {
+    it('rejects a create with only idDocumentType set', async () => {
+      await expect(
+        service.create({
+          name: 'Ramesh',
+          phone: '9990000001',
+          idDocumentType: 'Aadhaar',
+        }),
+      ).rejects.toThrow();
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a create with only idDocumentNumber set', async () => {
+      await expect(
+        service.create({
+          name: 'Ramesh',
+          phone: '9990000001',
+          idDocumentNumber: '1234',
+        }),
+      ).rejects.toThrow();
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a create with both idDocument fields set', async () => {
+      prisma.customer.create.mockResolvedValue({ id: 'cust-1' });
+
+      await runInTenantContext({ pumpId: 'default_pump' }, () =>
+        service.create({
+          name: 'Ramesh',
+          phone: '9990000001',
+          idDocumentType: 'Aadhaar',
+          idDocumentNumber: '1234 5678 9012',
+        }),
+      );
+
+      expect(prisma.customer.create).toHaveBeenCalledWith(
+        containing({
+          data: containing({ idDocumentType: 'Aadhaar', idDocumentNumber: '1234 5678 9012' }),
+        }),
+      );
+    });
+
+    it('allows an update that only touches idDocumentNumber when a type already exists', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 'cust-1',
+        accountId: 'account-1',
+        idDocumentType: 'Aadhaar',
+        idDocumentNumber: null,
+      });
+      prisma.customer.update.mockResolvedValue({ id: 'cust-1' });
+
+      await service.update('cust-1', { idDocumentNumber: '1234 5678 9012' });
+
+      expect(prisma.customer.update).toHaveBeenCalledWith(
+        containing({ data: containing({ idDocumentNumber: '1234 5678 9012' }) }),
+      );
+    });
+
+    it('rejects an update that would clear the number but leave the type set', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 'cust-1',
+        accountId: 'account-1',
+        idDocumentType: 'Aadhaar',
+        idDocumentNumber: '1234',
+      });
+
+      await expect(service.update('cust-1', { idDocumentNumber: '' })).rejects.toThrow();
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // Section 17.11 — DPDP Act compliance scaffolding (go-live blocker, Section

@@ -386,6 +386,12 @@ export interface Customer {
   dataConsentAt: string | null;
   dataConsentVersion: string | null;
   dataDeletedAt: string | null;
+  // Section 17.24 — ID-document capture, optional/dealer's-discretion. Both
+  // null or both set — never one without the other (enforced server-side).
+  // Type + number only, no scanned image (see prisma/schema.prisma's
+  // comment on why: no file-storage backend exists in this codebase yet).
+  idDocumentType: string | null;
+  idDocumentNumber: string | null;
 }
 
 // GET /customers/:id/data-export response — Section 17.11 right to access.
@@ -410,6 +416,10 @@ export interface CreateCustomerRequest {
   vehicleNumber?: string;
   companyName?: string;
   creditLimit?: number;
+  // Section 17.24 — both or neither; the backend rejects one without the
+  // other (CustomersService.assertIdDocumentPairConsistent()).
+  idDocumentType?: string;
+  idDocumentNumber?: string;
 }
 
 // Mirrors apps/backend/src/customers/dto/update-customer.dto.ts — every
@@ -422,6 +432,8 @@ export interface UpdateCustomerRequest {
   vehicleNumber?: string;
   companyName?: string;
   creditLimit?: number;
+  idDocumentType?: string;
+  idDocumentNumber?: string;
   verificationStatus?: 'INFORMAL' | 'VERIFIED';
 }
 

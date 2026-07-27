@@ -24,6 +24,10 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
   // it blank is the normal case for a customer with no fleet affiliation.
   const [companyName, setCompanyName] = useState(customer?.companyName ?? '');
   const [creditLimit, setCreditLimit] = useState(customer ? String(customer.creditLimit) : '');
+  // Section 17.24 — ID-document capture, optional/dealer's-discretion. Both
+  // or neither — the backend rejects one without the other.
+  const [idDocumentType, setIdDocumentType] = useState(customer?.idDocumentType ?? '');
+  const [idDocumentNumber, setIdDocumentNumber] = useState(customer?.idDocumentNumber ?? '');
   // Section 3.4A — the informal -> verified upgrade. Only surfaced in edit
   // mode: a brand-new customer added here always starts VERIFIED per the
   // backend (CreateCustomerDto has no verificationStatus field at all), so
@@ -42,6 +46,8 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
       const parsedCreditLimit = trimmedCreditLimit === '' ? undefined : Number(trimmedCreditLimit);
 
       const trimmedCompanyName = companyName.trim();
+      const trimmedIdDocumentType = idDocumentType.trim();
+      const trimmedIdDocumentNumber = idDocumentNumber.trim();
 
       const saved = isEdit
         ? await updateCustomer(customer.id, {
@@ -50,6 +56,8 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
             vehicleNumber: trimmedVehicle === '' ? undefined : trimmedVehicle,
             companyName: trimmedCompanyName === '' ? undefined : trimmedCompanyName,
             creditLimit: parsedCreditLimit,
+            idDocumentType: trimmedIdDocumentType === '' ? undefined : trimmedIdDocumentType,
+            idDocumentNumber: trimmedIdDocumentNumber === '' ? undefined : trimmedIdDocumentNumber,
             verificationStatus: verified ? 'VERIFIED' : 'INFORMAL',
           })
         : await createCustomer({
@@ -58,6 +66,8 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
             vehicleNumber: trimmedVehicle === '' ? undefined : trimmedVehicle,
             companyName: trimmedCompanyName === '' ? undefined : trimmedCompanyName,
             creditLimit: parsedCreditLimit,
+            idDocumentType: trimmedIdDocumentType === '' ? undefined : trimmedIdDocumentType,
+            idDocumentNumber: trimmedIdDocumentNumber === '' ? undefined : trimmedIdDocumentNumber,
           });
 
       onSaved(saved);
@@ -126,6 +136,24 @@ export function CustomerFormModal({ customer, onClose, onSaved }: CustomerFormMo
             value={creditLimit}
             onChange={(e) => setCreditLimit(e.target.value)}
             placeholder="0"
+          />
+        </div>
+        <div className="form-field">
+          <label htmlFor="cf-id-type">ID document type (Section 17.24, optional)</label>
+          <input
+            id="cf-id-type"
+            value={idDocumentType}
+            onChange={(e) => setIdDocumentType(e.target.value)}
+            placeholder="e.g. Aadhaar, Driving License — dealer's discretion"
+          />
+        </div>
+        <div className="form-field">
+          <label htmlFor="cf-id-number">ID document number</label>
+          <input
+            id="cf-id-number"
+            value={idDocumentNumber}
+            onChange={(e) => setIdDocumentNumber(e.target.value)}
+            placeholder="Must be set together with the type above, or both left blank"
           />
         </div>
 

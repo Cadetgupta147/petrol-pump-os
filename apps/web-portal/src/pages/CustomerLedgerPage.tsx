@@ -160,6 +160,9 @@ export function CustomerLedgerPage() {
               <span className="section-note">
                 {ledger.customer.verificationStatus === 'VERIFIED' ? 'Verified' : 'Informal'} &middot;{' '}
                 {ledger.customer.vehicleNumber ?? 'no vehicle on file'} &middot; {ledger.customer.phone ?? 'no phone on file'}
+                {ledger.customer.idDocumentType && (
+                  <> &middot; {ledger.customer.idDocumentType}: {ledger.customer.idDocumentNumber}</>
+                )}
               </span>
             </div>
 

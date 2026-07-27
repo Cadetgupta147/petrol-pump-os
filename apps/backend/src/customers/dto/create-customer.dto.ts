@@ -34,4 +34,16 @@ export class CreateCustomerDto {
   @IsNumber()
   @Min(0)
   creditLimit?: number;
+
+  // Section 17.24 — ID-document capture, optional/dealer's-discretion. Both
+  // fields must be set together or not at all (enforced in the service, not
+  // here — a type with no number, or vice versa, is meaningless) — see
+  // CustomersService's cross-field check.
+  @IsOptional()
+  @IsString()
+  idDocumentType?: string;
+
+  @IsOptional()
+  @IsString()
+  idDocumentNumber?: string;
 }
