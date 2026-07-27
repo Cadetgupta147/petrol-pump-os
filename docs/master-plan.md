@@ -358,6 +358,37 @@ Each Bill can have **multiple `BillPaymentLine` rows** instead of a single payme
 
 ---
 
+## 5B. Credit Customer Outstanding Statement (Printable Bill)
+
+**What it does:** lets Owner, Accountant, or Manager print (or save as PDF) a formal statement of a credit customer's still-outstanding fuel purchases, for the moment that customer comes in to settle their tab. One line per still-unpaid bill: date/time, vehicle number, product, litres, rate applied, and bill amount, plus a grand total due — printed on the pump's letterhead.
+
+**Why it exists:** the web portal already shows a running credit ledger and an aging report (§3.4, §12), but neither is a document you'd actually hand to (or read aloud to) a customer settling up — this is the settlement-time artifact, not an internal report.
+
+### 5B.1 Which bills appear on the statement
+
+Reuses the same FIFO allocation methodology as the Credit Aging Report (§12, `credit-aging.util.ts`) — a payment (or opening-balance adjustment) is applied against the oldest still-open bill(s) first — but keeps each slice's original bill identity instead of just its date, so the statement can show real per-bill detail (vehicle/litres/rate) rather than an anonymized aged bucket. A customer's pre-existing due recorded via Opening Balance (§3.4) appears too, as its own line, since it's real money owed even though it isn't tied to a specific fuel purchase.
+
+Only bills/opening-balance entries with a remaining (unpaid) amount appear — a bill that's been fully settled by a later payment drops off the statement entirely, exactly like it drops out of the aging report.
+
+### 5B.2 Letterhead
+
+Two options, both configured in Settings → Business Profile:
+
+1. **Software-generated letterhead** (default): assembled from the Business Profile fields — pump/business name, address, phone number, GSTIN/license number — plus an optional logo image and an OMC-brand tag (IOCL / BPCL / HPCL / Other / None).
+2. **Owner-uploaded letterhead**: the Owner uploads their own pre-designed letterhead image, and the statement prints the bill detail directly onto it instead of the generated header.
+
+**On the OMC logo specifically:** this software does not ship BPCL/IOCL/HPCL's actual trademarked logo artwork bundled into the codebase — those are the OMCs' registered marks, and bundling them without a license is a real legal exposure, not just a nice-to-have to skip. Instead, the dealer selects their OMC affiliation (a label) and — since an authorized dealer is entitled to use their OMC's mark on their own dealership stationery under their dealership agreement — uploads the actual logo image file themselves via the same logo-upload control. See §17.26.
+
+### 5B.3 Who can access it
+
+Owner, Accountant, **and Manager** — a deliberate broadening vs. the Credit Aging Report (Owner/Accountant only, §12): this is a day-to-day settlement task a Manager on shift needs to be able to do without an Owner/Accountant present, not a back-office analysis report.
+
+### 5B.4 Printing mechanism
+
+Rendered as a print-styled HTML page in the web portal (consistent with how the DSM app already generates the walk-in receipt via `expo-print`, §4) — the browser's native print/"Save as PDF" handles actual output, rather than adding a new server-side PDF-generation dependency for one screen.
+
+---
+
 ## 6. Loyalty Program — Full Design
 
 This is the module you specifically asked to be flexible: litre-wise **or** rupee-wise earning, freedom to offer gifts or discounts, and a dealer-fed gift list customers can browse. Here is the complete design.
@@ -660,6 +691,12 @@ Build the **Tally XML export** in Phase 2 (right after the core web app MVP), no
 | GST-ready sales/purchase report | Formatted for tax filing, exportable to Tally | Accountant |
 | Staff attendance & salary summary | Hours worked, advances, salary due | Owner, Accountant |
 | Tally export log | History of what's been exported/synced to Tally, and when | Accountant |
+| **VAT report** *(new)* | Fuel (petrol/diesel) is taxed under state VAT in India, not GST — the existing "GST-ready" report above only ever covered lubricants/other GST-rated items. See §17.22, which already flagged this; this row makes it a tracked report deliverable instead of just a footnote. | Owner, Accountant |
+| **Supplier/creditor outstanding report** *(new)* | Amount owed to IOCL/BPCL/HPCL/distributors per §3.6's "Supplier ledger" bullet — that bullet has existed since v1 but was never turned into a schema field or a report. Mirrors the Credit Aging Report above, but for payables instead of receivables. | Owner, Accountant |
+| **Item-wise / vehicle-wise / nozzle-wise sales summary** *(new)* | Sales rolled up by item, by vehicle, and by nozzle — the "Nozzle-wise sales" and "Vehicle-wise sales" rows above were already planned; this row just tracks that they still aren't built (see `dashboard.service.ts`'s own comment marking them out of scope for its slice). | Owner, Manager |
+| **Sale bill / purchase / card sale report** *(new)* | Plain filtered/formatted listings over `Bill` and `PurchaseEntry` — raw detail views, not summaries. Low effort since both already have list endpoints; this just tracks that a proper *report* view (date-range, export) doesn't exist yet. | Owner, Accountant |
+| **Payment/receipt register** *(new)* | A formatted view over `BillPaymentLine` (+ `Payment` for credit repayments) as a single chronological register, instead of only being visible per-bill or per-customer. | Accountant |
+| **Item rate difference report** *(new)* | Rate changes over time per item, using `RateHistory`/Rate Master (§7.4) — already has the data, no report view yet. | Owner, Accountant |
 
 ---
 
@@ -686,6 +723,8 @@ High-level entity list — expand each into full tables with your ORM's migratio
 **LoyaltyConfig** row should store: `earning_basis (rupee/litre), default_rate, redemption_type_allowed (cash/gift/both), customer_can_choose_redemption (true/false), default_redemption_mode, cash_redemption_ratio, min_redeemable_points`.
 
 **GiftCatalogItem** row should store: `gift_name, image_url, points_required, stock_quantity (nullable), active_flag`.
+
+**BusinessProfile** row should store (adds to the Section 3.9 fields already built — business_name, gstin, pump_license_no, address): `phone (nullable), omc_brand (IOCL/BPCL/HPCL/OTHER/NONE, default NONE), logo_image_data (nullable — base64 data URL, same inline-storage convention as the QR card PNG in `CustomersService.qrCard()`, since no S3/R2 file-storage backend is wired up yet), letterhead_image_data (nullable, same convention), use_uploaded_letterhead (bool, default false)` — Section 5B. `logo_image_data` is dealer-uploaded, never a bundled OMC logo asset (see Section 5B.2 / 17.26 for why).
 
 
 ---
@@ -939,6 +978,7 @@ This is a **rough planning estimate, not a promise** — it assumes two people w
 - [ ] **17.23** — **Staff wage/advance tracking has no schema support.** No wage-rate field on `Staff`, no advances table. Attendance hours-worked (§12) is fully built; "salary due" is not. Needs its own spec before building — §3.7 already flags salary/advance tracking as optional/Phase 5+.
 - [ ] **17.24** — **Mandatory ID-document capture before extending credit — deliberately deferred out of §3.4B.** A phone number alone gives a dealer nothing to pursue if a credit customer disappears; requiring an ID document (driving licence, voter ID, PAN, or last-4 Aadhaar — never a full Aadhaar number, per the Aadhaar Act's restrictions on private-entity collection) before any `creditLimit > 0` is a reasonable hardening. Not built now because it's a cross-cutting change: it would need to touch the DSM app's quick-add flow *and* the web portal's full customer form (`CustomerFormModal`, §3.4) *in the same slice*, or the two flows drift out of sync and one of them starts silently rejecting a credit-limit save the UI gives no way to satisfy. Build both sides together if this gets picked up.
 - [ ] **17.25** — **Automated credit scoring — deliberately deferred out of §3.4B.** A CIBIL-style score derived from this pump's own bill/payment/aging history (reusing the credit-aging FIFO logic, §12) is a plausible follow-on to the blacklist feature, but no validated scoring formula exists yet — inventing one and wiring it straight into a credit-block decision would tie real money to an untuned heuristic. Needs its own spec, an agreed formula, and a period of report-only/observation use before it's allowed to block a bill (see CLAUDE.md's rule that anything touching money is human-reviewed before merge).
+- [ ] **17.26** — **OMC brand logo on the credit-statement letterhead (§5B.2) must be dealer-uploaded, not bundled.** BPCL/IOCL/HPCL logos are registered trademarks; this codebase deliberately does not ship any of their artwork. `BusinessProfile.omcBrand` is just a label (which OMC the dealer is affiliated with, for the badge/heading text); the actual logo image is uploaded by the dealer via the same logo-upload control used for a non-OMC-branded business, on the basis that an authorized dealer already has rights to use their OMC's mark on their own dealership stationery. If this is ever wrong for a given dealer's agreement terms, that's a legal question for that dealer to confirm, not something this software should assume away by hardcoding a logo.
 
 ---
 
