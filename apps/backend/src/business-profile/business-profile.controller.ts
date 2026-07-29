@@ -80,15 +80,25 @@ export class BusinessProfileController {
   }
 }
 
+// Security-audit finding: `startsWith('image/')` also accepts
+// `image/svg+xml` — an SVG can carry an embedded <script>, and while every
+// current call site renders these via a plain <img src> (which browsers
+// never execute embedded SVG script through), that's a property of today's
+// frontend code, not something this endpoint should rely on staying true.
+// An explicit raster-only allowlist means a future render path (or an
+// entirely different consumer of this same stored value) can't silently
+// reintroduce that risk.
+const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
 function assertValidImage(file?: Express.Multer.File): asserts file {
   if (!file) {
     throw new BadRequestException(
       'No file uploaded — attach an image under the "file" field',
     );
   }
-  if (!file.mimetype?.startsWith('image/')) {
+  if (!file.mimetype || !ALLOWED_IMAGE_MIME_TYPES.has(file.mimetype)) {
     throw new BadRequestException(
-      `Unsupported file type "${file.mimetype}" — upload an image (JPEG/PNG/etc.)`,
+      `Unsupported file type "${file.mimetype}" — upload a PNG, JPEG, or WebP image`,
     );
   }
 }
