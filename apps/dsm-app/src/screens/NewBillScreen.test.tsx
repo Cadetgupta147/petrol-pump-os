@@ -66,7 +66,7 @@ const mockCheckVehicleBlacklist = checkVehicleBlacklist as jest.MockedFunction<
   typeof checkVehicleBlacklist
 >;
 
-const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', phone: '9999999999', role: 'DSM' };
+const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', role: 'DSM' };
 
 const CUSTOMER_A: CustomerSummary = {
   id: 'cust-a',

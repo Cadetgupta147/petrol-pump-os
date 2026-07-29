@@ -4,6 +4,8 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { PinLoginDto } from './dto/pin-login.dto';
 import { Public } from './decorators/public.decorator';
+import { CurrentUser } from './decorators/current-user.decorator';
+import { AuthenticatedUser } from './types/jwt-payload.interface';
 import { StaffLoginThrottlerGuard } from './guards/staff-login-throttler.guard';
 import { LOGIN_IP_THROTTLE_LIMIT, LOGIN_IP_THROTTLE_TTL_MS } from './login-throttle.constants';
 
@@ -33,5 +35,19 @@ export class AuthController {
   @Post('pin-login')
   pinLogin(@Body() dto: PinLoginDto) {
     return this.authService.pinLogin(dto);
+  }
+
+  // Deliberately NOT @Public() — requires the global JwtAuthGuard's normal
+  // valid-JWT check, same as any other protected route. Bumps
+  // StaffAccount.tokenVersion, which invalidates every outstanding token for
+  // this login identity (see AuthService.logout()'s comment) — a stateless
+  // JWT can't be un-issued, so "log out" here means "every existing token
+  // for this account stops passing JwtStrategy's tokenVersion check from now
+  // on", not "delete this one token".
+  @HttpCode(HttpStatus.OK)
+  @Post('logout')
+  async logout(@CurrentUser() user: AuthenticatedUser): Promise<{ success: true }> {
+    await this.authService.logout(user.staffId);
+    return { success: true };
   }
 }

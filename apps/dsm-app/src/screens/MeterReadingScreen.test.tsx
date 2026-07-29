@@ -41,8 +41,8 @@ const mockListMeterReadings = listMeterReadings as jest.MockedFunction<typeof li
 const mockBatchClose = batchClose as jest.MockedFunction<typeof batchClose>;
 const mockListStaff = listStaff as jest.MockedFunction<typeof listStaff>;
 
-const dsmStaff: StaffSummary = { id: 'staff-1', name: 'Test DSM', phone: '9999999999', role: 'DSM' };
-const managerStaff: StaffSummary = { id: 'staff-mgr', name: 'Test Manager', phone: '8888888888', role: 'MANAGER' };
+const dsmStaff: StaffSummary = { id: 'staff-1', name: 'Test DSM', role: 'DSM' };
+const managerStaff: StaffSummary = { id: 'staff-mgr', name: 'Test Manager', role: 'MANAGER' };
 
 const nozzle1: Nozzle = {
   id: 'n1',

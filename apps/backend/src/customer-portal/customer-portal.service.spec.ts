@@ -15,7 +15,12 @@ import { RedemptionsService } from '../redemptions/redemptions.service';
 // underlying business rules (which have their own unit coverage elsewhere).
 describe('CustomerPortalService', () => {
   let service: CustomerPortalService;
-  let prisma: { bill: { findMany: jest.Mock } };
+  let prisma: {
+    bill: { findMany: jest.Mock };
+    customer: { findUnique: jest.Mock };
+    customerAccount: { update: jest.Mock };
+    $transaction: jest.Mock;
+  };
   let customersService: { ledger: jest.Mock };
   let loyaltyService: { getBalance: jest.Mock; getConfig: jest.Mock };
   let giftCatalogService: { findAll: jest.Mock };
@@ -43,7 +48,12 @@ describe('CustomerPortalService', () => {
   };
 
   beforeEach(async () => {
-    prisma = { bill: { findMany: jest.fn() } };
+    prisma = {
+      bill: { findMany: jest.fn() },
+      customer: { findUnique: jest.fn() },
+      customerAccount: { update: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
+    };
     customersService = { ledger: jest.fn() };
     loyaltyService = { getBalance: jest.fn(), getConfig: jest.fn() };
     giftCatalogService = { findAll: jest.fn() };
@@ -300,6 +310,34 @@ describe('CustomerPortalService', () => {
       expect(redemptionsService.create).toHaveBeenCalledWith(
         expect.objectContaining({ customerId: 'cust-1' }),
       );
+    });
+  });
+
+  // Security-audit finding: no self-service way to invalidate a customer
+  // JWT existed before this — see CustomerPortalService.logout()'s comment.
+  describe('logout', () => {
+    it("bumps CustomerAccount.tokenVersion for the calling customer's account", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ accountId: 'cust-account-1' });
+
+      await service.logout('cust-1');
+
+      expect(prisma.customer.findUnique).toHaveBeenCalledWith({
+        where: { id: 'cust-1' },
+        select: { accountId: true },
+      });
+      expect(prisma.customerAccount.update).toHaveBeenCalledWith({
+        where: { id: 'cust-account-1' },
+        data: { tokenVersion: { increment: 1 } },
+      });
+    });
+
+    it('throws NotFoundException if the customer membership has no linked account', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ accountId: null });
+
+      await expect(service.logout('cust-informal')).rejects.toThrow(
+        'Customer membership not found',
+      );
+      expect(prisma.customerAccount.update).not.toHaveBeenCalled();
     });
   });
 });

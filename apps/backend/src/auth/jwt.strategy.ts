@@ -30,10 +30,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         'JWT_SECRET is not set. Add it to your .env before starting the backend (see .env.example).',
       );
     }
+    // Security-audit finding: presence alone doesn't stop someone setting
+    // JWT_SECRET="test" or similar. 32 chars is a practical floor for an
+    // HS256 HMAC key (matches the generation instructions and the
+    // `randomBytes(32).toString('base64')`-style advice already used
+    // elsewhere in this codebase, e.g. CREDENTIAL_ENCRYPTION_KEY) — not a
+    // perfect entropy measure, but it rules out short/guessable literals
+    // without rejecting any secret actually generated per .env.example.
+    if (secret.length < 32) {
+      throw new Error(
+        'JWT_SECRET is too short (must be at least 32 characters) — generate a long random string, e.g. `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"`.',
+      );
+    }
 
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
+      // Security-audit finding: pin the accepted algorithm explicitly
+      // rather than relying on jsonwebtoken's library default. This is a
+      // symmetric HS256 secret (no RSA/EC public key exists anywhere in
+      // this app to be confused with), and modern jsonwebtoken already
+      // rejects `alg: none` by default — so this isn't currently
+      // exploitable — but an explicit allowlist means it stays that way
+      // regardless of what a future jsonwebtoken/passport-jwt upgrade
+      // changes about its own defaults.
+      algorithms: ['HS256'],
       secretOrKey: secret,
     });
   }

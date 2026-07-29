@@ -6,10 +6,12 @@ import { API_BASE_URL } from '../config';
 // NOTE: `role` is NOT guaranteed to be "DSM" — nothing server-side restricts
 // this login endpoint to DSM staff. Do not assume/hard-code the role here or
 // in any screen that consumes this response.
+// Deliberately no `phone` field — the backend response doesn't include the
+// logged-in staff member's own phone (unused by any client, and would
+// otherwise sit as unnecessary PII in AsyncStorage — see sessionStorage.ts).
 export interface StaffSummary {
   id: string;
   name: string;
-  phone: string;
   role: string;
 }
 

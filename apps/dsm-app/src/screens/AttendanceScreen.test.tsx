@@ -16,7 +16,7 @@ const mockGetMyAttendanceStatus = getMyAttendanceStatus as jest.MockedFunction<t
 const mockClockIn = clockIn as jest.MockedFunction<typeof clockIn>;
 const mockClockOut = clockOut as jest.MockedFunction<typeof clockOut>;
 
-const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', phone: '9999999999', role: 'DSM' };
+const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', role: 'DSM' };
 
 function fakeLog(overrides: Partial<AttendanceLog> = {}): AttendanceLog {
   return {

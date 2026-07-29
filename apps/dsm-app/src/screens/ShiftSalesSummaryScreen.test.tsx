@@ -54,7 +54,7 @@ const mockGetUpiCaptureConfig = getUpiCaptureConfig as jest.MockedFunction<
   typeof getUpiCaptureConfig
 >;
 
-const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', phone: '9999999999', role: 'DSM' };
+const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', role: 'DSM' };
 
 function fakeReading(overrides: Partial<MeterReading> = {}): MeterReading {
   return {

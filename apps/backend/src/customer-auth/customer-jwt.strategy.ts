@@ -26,10 +26,18 @@ export class CustomerJwtStrategy extends PassportStrategy(Strategy, 'customer-jw
         'CUSTOMER_JWT_SECRET is not set. Add it to your .env before starting the backend (see .env.example).',
       );
     }
+    // See JwtStrategy's identical check for the full reasoning.
+    if (secret.length < 32) {
+      throw new Error(
+        'CUSTOMER_JWT_SECRET is too short (must be at least 32 characters) — generate a long random string, e.g. `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"`.',
+      );
+    }
 
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
+      // See JwtStrategy's identical option for the full reasoning.
+      algorithms: ['HS256'],
       secretOrKey: secret,
     });
   }

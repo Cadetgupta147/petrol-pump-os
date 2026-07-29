@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomersService } from '../customers/customers.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { GiftCatalogService } from '../gift-catalog/gift-catalog.service';
 import { RedemptionsService } from '../redemptions/redemptions.service';
+import { bumpCustomerAccountTokenVersion } from '../customer-auth/bump-customer-account-token-version';
 import { CreateCustomerRedemptionDto } from './dto/create-customer-redemption.dto';
 
 const DEFAULT_BILLS_LIMIT = 20;
@@ -139,5 +140,26 @@ export class CustomerPortalService {
       giftItemId: dto.giftItemId,
       pointsToRedeem: dto.pointsToRedeem,
     });
+  }
+
+  // Security-audit finding: same gap as the staff side (see
+  // AuthService.logout()'s comment) — a customer's 30-day-lived JWT had no
+  // revocation path at all, self-service or otherwise, despite
+  // CustomerAccount.tokenVersion's own schema comment describing exactly
+  // this "lost/stolen phone" use case. Bumping it here invalidates every
+  // outstanding token for this login identity, across every pump this
+  // customer is a member at (tokenVersion lives on the shared
+  // CustomerAccount, not any one per-pump Customer row).
+  async logout(customerId: string): Promise<void> {
+    const membership = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { accountId: true },
+    });
+    if (!membership?.accountId) {
+      throw new NotFoundException('Customer membership not found');
+    }
+    await this.prisma.$transaction((tx) =>
+      bumpCustomerAccountTokenVersion(tx, membership.accountId!),
+    );
   }
 }

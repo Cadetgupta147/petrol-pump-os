@@ -56,4 +56,10 @@ export class CustomerPortalController {
   ) {
     return this.customerPortalService.createRedemption(req.user.customerId, dto);
   }
+
+  @Post('logout')
+  async logout(@Req() req: AuthenticatedRequest): Promise<{ success: true }> {
+    await this.customerPortalService.logout(req.user.customerId);
+    return { success: true };
+  }
 }

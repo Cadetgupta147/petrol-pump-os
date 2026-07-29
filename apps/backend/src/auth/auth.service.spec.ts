@@ -74,7 +74,6 @@ describe('AuthService', () => {
     expect(result.staff).toEqual({
       id: 'staff-1',
       name: 'Test Owner',
-      phone: '9990000001',
       role: Role.OWNER,
     });
     expect(jwtService.signAsync).toHaveBeenCalledWith(
@@ -454,7 +453,6 @@ describe('AuthService.pinLogin', () => {
     expect(result.staff).toEqual({
       id: 'staff-4',
       name: 'Test DSM',
-      phone: '9990000004',
       role: Role.DSM,
     });
     expect(jwtService.signAsync).toHaveBeenCalledWith(
@@ -628,5 +626,58 @@ describe('AuthService.pinLogin', () => {
       where: { id: 'account-17' },
       data: { failedLoginAttempts: 0, lockedUntil: null, lockoutEscalationLevel: 0 },
     });
+  });
+});
+
+// Security-audit finding: no self-service way to invalidate a staff JWT
+// existed before this — see AuthService.logout()'s comment.
+describe('AuthService.logout', () => {
+  let service: AuthService;
+  let prisma: {
+    staff: { findUnique: jest.Mock };
+    staffAccount: { update: jest.Mock };
+    $transaction: jest.Mock;
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      staff: { findUnique: jest.fn() },
+      staffAccount: { update: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: JwtService, useValue: { signAsync: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get(AuthService);
+  });
+
+  it('bumps StaffAccount.tokenVersion for the calling staff member\'s account', async () => {
+    prisma.staff.findUnique.mockResolvedValue({ accountId: 'account-99' });
+
+    await service.logout('staff-99');
+
+    expect(prisma.staff.findUnique).toHaveBeenCalledWith({
+      where: { id: 'staff-99' },
+      select: { accountId: true },
+    });
+    expect(prisma.staffAccount.update).toHaveBeenCalledWith({
+      where: { id: 'account-99' },
+      data: { tokenVersion: { increment: 1 } },
+    });
+  });
+
+  it('throws NotFoundException if the staff membership has no linked account', async () => {
+    prisma.staff.findUnique.mockResolvedValue({ accountId: null });
+
+    await expect(service.logout('staff-orphan')).rejects.toThrow(
+      'Staff membership not found',
+    );
+    expect(prisma.staffAccount.update).not.toHaveBeenCalled();
   });
 });

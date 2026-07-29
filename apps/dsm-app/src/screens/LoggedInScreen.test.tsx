@@ -16,7 +16,7 @@ import { enqueueBill } from '../offline/offlineBillQueue';
 
 const mockCreateBill = createBill as jest.MockedFunction<typeof createBill>;
 
-const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', phone: '9999999999', role: 'DSM' };
+const staff: StaffSummary = { id: 'staff-1', name: 'Test DSM', role: 'DSM' };
 
 const sampleInput: CreateBillInput = {
   vehicleNumber: 'KA01AB1234',

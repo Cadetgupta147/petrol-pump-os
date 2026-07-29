@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,6 +6,7 @@ import { LoginDto } from './dto/login.dto';
 import { PinLoginDto } from './dto/pin-login.dto';
 import { JwtPayload } from './types/jwt-payload.interface';
 import { LOCKOUT_ESCALATION_DURATIONS_MS, LOGIN_LOCKOUT_THRESHOLD } from './login-throttle.constants';
+import { bumpStaffAccountTokenVersion } from '../staff-management/bump-staff-account-token-version';
 
 // Section 2 — web portal login (Owner/Accountant today; Manager/Read-only
 // once those roles get real endpoints) via `login()`, plus Section 4's DSM
@@ -78,10 +79,14 @@ export class AuthService {
 
     return {
       accessToken: await this.jwtService.signAsync(payload),
+      // Deliberately excludes account.phone — no client reads it off this
+      // response (the JWT itself carries staffId, not phone), and it would
+      // otherwise sit as unnecessary PII in the frontend's localStorage/
+      // AsyncStorage session cache (see web-portal AuthContext.tsx / dsm-app
+      // sessionStorage.ts).
       staff: {
         id: membership.id,
         name: membership.name,
-        phone: account.phone,
         role: membership.role,
       },
     };
@@ -140,13 +145,39 @@ export class AuthService {
 
     return {
       accessToken: await this.jwtService.signAsync(payload),
+      // See login()'s identical comment above — phone is deliberately omitted.
       staff: {
         id: membership.id,
         name: membership.name,
-        phone: account.phone,
         role: membership.role,
       },
     };
+  }
+
+  // Security-audit finding: there was no way to invalidate a staff JWT on
+  // demand short of an Owner/Accountant deactivating the account or changing
+  // its role — a lost/stolen device had no self-service "log out everywhere"
+  // path, and a 12h-lived token would otherwise stay valid regardless of
+  // what the client did with it locally. Reuses the same tokenVersion
+  // "kill switch" JwtStrategy.validate() already re-checks on every request
+  // (see StaffAccount.tokenVersion's schema comment) — bumping it here
+  // invalidates EVERY outstanding token for this login identity at once,
+  // not just the one making this call, which is the right blast radius for
+  // "I think my session/device may be compromised."
+  // staffId is a Staff (per-pump membership) id, not the StaffAccount
+  // (login identity) id — same resolution JwtStrategy.validate() already
+  // does — so the account has to be looked up via the membership first.
+  async logout(staffId: string): Promise<void> {
+    const membership = await this.prisma.staff.findUnique({
+      where: { id: staffId },
+      select: { accountId: true },
+    });
+    if (!membership?.accountId) {
+      throw new NotFoundException('Staff membership not found');
+    }
+    await this.prisma.$transaction((tx) =>
+      bumpStaffAccountTokenVersion(tx, membership.accountId!),
+    );
   }
 
   // Login brute-force defense, layer 2 (see login-throttle.constants.ts for

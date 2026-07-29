@@ -10,10 +10,12 @@ export type PaymentType = 'CASH' | 'CARD' | 'UPI' | 'CREDIT';
 export type PaymentDirection = 'IN' | 'OUT';
 export type EntryChannel = 'WEB' | 'DSM_APP';
 
+// Deliberately no `phone` field — the backend response doesn't include the
+// logged-in staff member's own phone (unused by this app, and would
+// otherwise sit as unnecessary PII in localStorage — see AuthContext.tsx).
 export interface StaffSummary {
   id: string;
   name: string;
-  phone: string;
   role: Role;
 }
 
