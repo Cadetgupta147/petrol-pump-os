@@ -46,6 +46,18 @@ async function upsertStaffMember(params: {
 }
 
 async function main() {
+  // Go-live checklist: this script upserts a well-known password
+  // (Owner@12345 / Accountant@12345) straight from source control — if it
+  // ever ran against a real deployment's DATABASE_URL (accidentally wired
+  // into a deploy script, or run by hand against the wrong env), that's a
+  // live admin backdoor. Refuse outright rather than trust the caller to
+  // remember not to run this in prod.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'prisma/seed.ts seeds well-known test credentials and must never run with NODE_ENV=production.',
+    );
+  }
+
   // Matches the "default_pump" row bootstrapped by the Phase 0.1 migration
   // backfill — upsert-by-pumpCode so re-running seed.ts never creates a
   // second Pump row for local/dev.

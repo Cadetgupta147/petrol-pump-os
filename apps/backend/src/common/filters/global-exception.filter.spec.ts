@@ -33,6 +33,7 @@ describe('GlobalExceptionFilter', () => {
     expect(json).toHaveBeenCalledWith({
       statusCode: 404,
       message: 'Customer not found',
+      correlationId: expect.any(String) as string,
     });
   });
 
@@ -56,6 +57,7 @@ describe('GlobalExceptionFilter', () => {
     expect(json).toHaveBeenCalledWith({
       statusCode: 404,
       message: 'phone must be a valid phone number',
+      correlationId: expect.any(String) as string,
     });
   });
 
@@ -74,6 +76,7 @@ describe('GlobalExceptionFilter', () => {
     expect(body.message).not.toContain('10.0.0.5');
     expect(body.message).not.toContain('.js:42');
     expect(body).not.toHaveProperty('stack');
+    expect(typeof body.correlationId).toBe('string');
   });
 
   it('collapses a raw Prisma error (e.g. a unique constraint violation that escaped application code) to a generic 500', () => {
@@ -95,6 +98,7 @@ describe('GlobalExceptionFilter', () => {
     expect(body).toEqual({
       statusCode: 500,
       message: expect.any(String),
+      correlationId: expect.any(String) as string,
     });
     expect(body.message).not.toContain('Unique constraint');
     expect(body.message).not.toContain('phone');
@@ -111,6 +115,7 @@ describe('GlobalExceptionFilter', () => {
     expect(json).toHaveBeenCalledWith({
       statusCode: 500,
       message: expect.any(String),
+      correlationId: expect.any(String) as string,
     });
   });
 
@@ -126,6 +131,20 @@ describe('GlobalExceptionFilter', () => {
     expect(loggerErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining('DELETE /staff/42'),
       realError,
+    );
+  });
+
+  it('stamps the client-facing correlationId into the same log line, so a client-reported id can be grepped straight back to the full error', () => {
+    const filter = new GlobalExceptionFilter();
+    const loggerErrorSpy = jest.spyOn((filter as unknown as { logger: { error: jest.Mock } }).logger, 'error');
+    const { host, json } = makeHost({ method: 'GET', originalUrl: '/bills' });
+
+    filter.catch(new Error('boom'), host);
+
+    const { correlationId } = json.mock.calls[0][0] as { correlationId: string };
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(correlationId),
+      expect.any(Error),
     );
   });
 });

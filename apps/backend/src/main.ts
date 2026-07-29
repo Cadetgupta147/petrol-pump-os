@@ -22,7 +22,30 @@ function resolveAllowedOrigins(): string[] {
   return [];
 }
 
+// Go-live checklist: the app must refuse to start if a critical env var is
+// missing, not silently limp along. JWT_SECRET/CUSTOMER_JWT_SECRET already
+// enforce this themselves (JwtStrategy/CustomerJwtStrategy throw in their
+// constructors, which run during NestFactory.create() below). DATABASE_URL
+// has no equivalent: PrismaClient's constructor does NOT validate it — the
+// "Environment variable not found: DATABASE_URL" error only surfaces on the
+// first real query, and PrismaService.onModuleInit() deliberately swallows
+// that (logs, doesn't rethrow) so a TEMPORARY Supabase outage doesn't crash
+// the process. Without this check, a missing DATABASE_URL would fall into
+// that same "log and keep running" path instead of refusing to start —
+// checked here, before anything else, so a config mistake fails loudly at
+// boot instead of as a wall of per-request 500s later.
+function assertRequiredEnvVars(): void {
+  if (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '') {
+    console.error(
+      'DATABASE_URL is not set. Add it to your .env before starting the backend (see .env.example).',
+    );
+    process.exit(1);
+  }
+}
+
 async function bootstrap() {
+  assertRequiredEnvVars();
+
   // Section 8A.3 — the PhonePe/Paytm UPI webhook needs the exact raw request
   // bytes to verify the provider's signature (re-serialized JSON won't
   // byte-match what the provider signed). `rawBody: true` makes Nest expose
@@ -53,6 +76,10 @@ async function bootstrap() {
         },
       },
       hsts: {
+        // Go-live checklist: HSTS max-age must be at least 1 year
+        // (31536000s). Helmet's own default is only 180 days — explicit
+        // here so it doesn't silently regress on a helmet upgrade.
+        maxAge: 31536000,
         // includeSubDomains: any subdomain of this API's domain should also
         // only ever be reached over HTTPS.
         includeSubDomains: true,

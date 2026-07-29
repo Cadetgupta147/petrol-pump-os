@@ -38,6 +38,12 @@ npx prisma migrate dev        # applies the schema to your local DB
 
 Then start whichever app you're working on — see each `apps/*/README.md` once that app has been scaffolded.
 
+## Secrets
+
+All credentials (DB URLs, `JWT_SECRET`/`CUSTOMER_JWT_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, OCR/storage/push/SMS/WhatsApp keys) are env vars only — see `.env.example` for the full list. `.env` is gitignored and has never been committed in this repo's history (verified 2026-07-29 across all 95 commits and the full working tree — no API key, password, token, or connection string was found hardcoded anywhere in source).
+
+**If a real secret is ever accidentally committed** (to this repo or a fork), treat it as compromised the moment it's pushed, even if the commit is later reverted or force-pushed away — it remains recoverable from git history/reflogs/forks. Rotate it immediately at the provider (Supabase, Google Cloud, WhatsApp provider, etc.) rather than just removing it from the file.
+
 ## Status
 
 This repo is currently a **scaffold**, not a working app. `apps/*` are empty placeholders — Phase 0/1 work (see `docs/master-plan.md` Section 16.4) is to scaffold the NestJS backend and the Prisma schema first, then the web portal.

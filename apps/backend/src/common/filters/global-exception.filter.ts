@@ -6,15 +6,21 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { Request, Response } from 'express';
 
 // The shape returned to every client for every unhandled/unexpected error.
 // Deliberately minimal — no `error` field carrying the original exception's
 // message, no `stack`, nothing DB- or filesystem-shaped. Deliberately-thrown
 // HttpExceptions (see below) bypass this and keep their own message.
+// correlationId is the one bridge back to the full server-side log line
+// (go-live checklist: a client-facing error must never carry internals, but
+// still needs SOME way for a user to hand support/ops something that maps
+// back to the exact log entry).
 interface SafeErrorResponse {
   statusCode: number;
   message: string;
+  correlationId: string;
 }
 
 const GENERIC_MESSAGE = 'Something went wrong. Please try again or contact support.';
@@ -46,15 +52,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
+    // One id per error, stamped into both the log line and the client
+    // response — the only thing that ties the two together once the
+    // response body has been stripped of everything else.
+    const correlationId = randomUUID();
+
     // Always log the full, real error server-side — this is the only place
     // that information survives once this filter runs, since the response
     // to the client is about to be sanitized.
     this.logger.error(
-      `Unhandled exception on ${request.method} ${request.originalUrl ?? request.url}`,
+      `[${correlationId}] Unhandled exception on ${request.method} ${request.originalUrl ?? request.url}`,
       exception as Error,
     );
 
-    const safeResponse = this.toSafeResponse(exception);
+    const safeResponse = this.toSafeResponse(exception, correlationId);
     response.status(safeResponse.statusCode).json(safeResponse);
   }
 
@@ -65,7 +76,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   // plain Errors, non-Error throws) is an UNEXPECTED failure and always
   // collapses to a generic 500, regardless of what the underlying error
   // actually says, so nothing it contains can leak.
-  private toSafeResponse(exception: unknown): SafeErrorResponse {
+  private toSafeResponse(exception: unknown, correlationId: string): SafeErrorResponse {
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const body = exception.getResponse();
@@ -81,12 +92,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       return {
         statusCode: status,
         message: Array.isArray(message) ? message.join(', ') : message,
+        correlationId,
       };
     }
 
     return {
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       message: GENERIC_MESSAGE,
+      correlationId,
     };
   }
 }
