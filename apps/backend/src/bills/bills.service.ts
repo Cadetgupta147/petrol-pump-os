@@ -709,15 +709,29 @@ export class BillsService {
   // Every Bill is a fuel sale (non-fuel goes through ItemSale instead — see
   // that model's comment), so amount is deterministic: litres × the
   // (server-resolved, or effective-on-edit) rate, with no discount/override
-  // concept anywhere in this schema. Same float-safe epsilon comparison as
-  // assertBalanced.
+  // concept anywhere in this schema.
+  //
+  // NOT the flat BALANCE_EPSILON assertBalanced() uses — litres itself is
+  // only ever entered/displayed to 0.01 L (the dispenser's own resolution,
+  // same granularity as meter readings), so the UI's "type amount, derive
+  // litres" convenience (AddBillModal.handleAmountChange() / NewBillScreen's
+  // equivalent) necessarily rounds litres to the nearest 0.01 L before
+  // submitting it — losing up to 0.005 L versus the amount actually typed.
+  // At a real fuel rate that's a rupee-scale gap (e.g. ~₹0.47 at ₹93.59/L),
+  // far more than one paisa, even though nothing was tampered with. A flat
+  // ₹0.01 tolerance would reject that legitimate round-trip. Scaling the
+  // tolerance to the rate (0.01 L worth of it — already 2x the max rounding
+  // error, for margin) absorbs that while still catching the actual fraud
+  // case this check exists for (commit 297a38b): an amount decoupled from
+  // litres by whole rupees, not fractions of one.
   private assertAmountMatchesRate(
     amount: number,
     litres: number,
     rate: number,
   ) {
     const expected = litres * rate;
-    if (Math.abs(expected - amount) > BALANCE_EPSILON) {
+    const tolerance = Math.max(BALANCE_EPSILON, 0.01 * rate);
+    if (Math.abs(expected - amount) > tolerance) {
       throw new BadRequestException(
         `amount does not match litres × rate: expected ${expected.toFixed(2)} ` +
           `(${litres} × ${rate}), but got ${amount.toFixed(2)}`,
