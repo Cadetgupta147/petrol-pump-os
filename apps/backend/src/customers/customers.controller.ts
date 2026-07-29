@@ -37,8 +37,8 @@ export class CustomersController {
 
   @Roles(Role.OWNER, Role.ACCOUNTANT, Role.DSM)
   @Get()
-  findAll() {
-    return this.customersService.findAll();
+  findAll(@CurrentUser() user: AuthenticatedUser) {
+    return this.customersService.findAll(user.role);
   }
 
   // Section 6.3 step 2/3 — resolve a scanned/hand-typed member ID for the

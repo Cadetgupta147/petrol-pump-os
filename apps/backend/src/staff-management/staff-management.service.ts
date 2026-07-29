@@ -91,7 +91,7 @@ export class StaffManagementService {
         return toStaffDto(membership);
       });
     } catch (error) {
-      this.handlePrismaError(error, dto.phone);
+      this.handlePrismaError(error);
     }
   }
 
@@ -286,7 +286,7 @@ export class StaffManagementService {
         return toStaffDto(membership);
       });
     } catch (error) {
-      this.handlePrismaError(error, dto.phone ?? existing.account.phone);
+      this.handlePrismaError(error);
     }
   }
 
@@ -366,10 +366,13 @@ export class StaffManagementService {
     return { pinHash: null, passwordHash: await bcrypt.hash(creds.password, SALT_ROUNDS) };
   }
 
-  private handlePrismaError(error: unknown, phone: string): never {
+  // Deliberately doesn't echo the phone number back — this message reaches
+  // both the API response and the server log (via GlobalExceptionFilter),
+  // and the caller already knows what they typed.
+  private handlePrismaError(error: unknown): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === 'P2002') {
-        throw new ConflictException(`Phone ${phone} is already in use by another staff member`);
+        throw new ConflictException('This phone number is already in use by another staff member');
       }
     }
     throw error;

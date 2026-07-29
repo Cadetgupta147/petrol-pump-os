@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
@@ -110,7 +110,28 @@ export class CustomersService {
       .catch((error) => this.handlePrismaError(error));
   }
 
-  findAll() {
+  // Role-filtered: DSM only powers the credit split-payment customer picker
+  // (Section 5A.3) and never needs — or should receive — a government
+  // ID-document number, DPDP consent metadata, or the full row. Owner/
+  // Accountant get the full record because CustomersPage's inline edit
+  // (CustomerFormModal) pre-fills idDocumentType/idDocumentNumber straight
+  // from this list response, not a separate per-customer fetch.
+  findAll(role: Role) {
+    if (role === Role.DSM) {
+      return this.prisma.customer.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          vehicleNumber: true,
+          qrMemberId: true,
+          creditLimit: true,
+          verificationStatus: true,
+          createdAt: true,
+        },
+      });
+    }
     return this.prisma.customer.findMany({
       orderBy: { createdAt: 'desc' },
     });
@@ -536,7 +557,10 @@ export class CustomersService {
 
   // Section 17.11 — right to erasure, SCOPED TO THIS PUMP MEMBERSHIP ROW
   // ONLY. Anonymizes (does not hard-delete) name/phone/vehicleNumber/
-  // companyName: Bill/LoyaltyTransaction/Payment rows referencing this
+  // companyName/idDocumentType/idDocumentNumber — the government ID number
+  // is, if anything, MORE sensitive than the other fields cleared here, so
+  // erasure that left it behind would defeat the point. Bill/
+  // LoyaltyTransaction/Payment rows referencing this
   // customerId are kept intact for financial/audit retention (Tally export
   // history, bill audit trail) — erasing the row entirely would either
   // cascade-delete or orphan those, and this schema has no soft-delete
@@ -563,6 +587,8 @@ export class CustomersService {
         phone: null,
         vehicleNumber: null,
         companyName: null,
+        idDocumentType: null,
+        idDocumentNumber: null,
         dataDeletedAt: new Date(),
       },
     });

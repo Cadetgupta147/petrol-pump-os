@@ -291,7 +291,7 @@ describe('CustomersService — DPDP compliance scaffolding', () => {
   });
 
   describe('requestDeletion', () => {
-    it('anonymizes name/phone/vehicleNumber/companyName and stamps dataDeletedAt', async () => {
+    it('anonymizes name/phone/vehicleNumber/companyName/idDocument* and stamps dataDeletedAt', async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1', dataDeletedAt: null });
       prisma.customer.update.mockResolvedValue({ id: 'cust-1' });
 
@@ -304,6 +304,8 @@ describe('CustomersService — DPDP compliance scaffolding', () => {
           phone: null,
           vehicleNumber: null,
           companyName: null,
+          idDocumentType: null,
+          idDocumentNumber: null,
           dataDeletedAt: expect.any(Date) as Date,
         },
       });
