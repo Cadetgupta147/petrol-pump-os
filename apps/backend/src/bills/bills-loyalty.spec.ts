@@ -78,7 +78,8 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
 
   // amount 1000 / litres 20, fully CASH-paid, vehicle number present.
   // rateApplied is NOT part of CreateBillDto anymore — see rateMasterService
-  // mock above, which resolves it to 100 for every test here.
+  // mock above, which resolves it to 50 for every test here (20 × 50 = 1000,
+  // matching amount — the service cross-checks the two).
   const baseDto: Omit<CreateBillDto, 'customerId' | 'quickAddCustomer'> = {
     vehicleNumber: 'KA01AB1234',
     amount: 1000,
@@ -146,7 +147,9 @@ describe('BillsService loyalty crediting (Section 6.3 step 5)', () => {
       getCurrentRate: jest.fn().mockResolvedValue({
         id: 'rh-1',
         productType: 'petrol',
-        rate: 100,
+        // 50 * 20 litres = 1000, matching baseDto.amount below — the
+        // service now cross-checks amount against litres × rate.
+        rate: 50,
         effectiveFrom: new Date('2026-01-01T00:00:00Z'),
       }),
     };

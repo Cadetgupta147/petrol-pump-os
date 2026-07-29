@@ -210,6 +210,16 @@ export class BillsService {
       dto.productType,
     );
 
+    // Never trust a client-submitted amount that's decoupled from
+    // litres × rate (CLAUDE.md: "never trust the frontend" for money
+    // fields) — resolvedRate.rate is the one thing above that's already
+    // server-authoritative, so this is the only place left that closes the
+    // gap: without it, a client could dispense/record 50 litres of diesel
+    // (correctly deducting real tank stock) while submitting `amount: 1`,
+    // and the only other amount check (assertBalanced) is trivially
+    // satisfied by a single payment line of 1.
+    this.assertAmountMatchesRate(dto.amount, dto.litres, resolvedRate.rate);
+
     // Bill + its BillPaymentLine rows (and, for quick-add, the new Customer
     // row and/or the CreditLimitAlert row, and the LoyaltyTransaction) are
     // created together in one transaction, alongside a BillAuditLog(CREATED)
@@ -500,6 +510,16 @@ export class BillsService {
     // Section 5A.1 re-validation against effective values.
     this.assertBalanced(effectivePaymentLines, effective.amount);
 
+    // Same amount-vs-rate cross-check as create() — using the EFFECTIVE
+    // rate (which, unlike create(), may be a manually-corrected
+    // dto.rateApplied override — see UpdateBillDto's comment for why that
+    // asymmetry is intentional), not necessarily today's Rate Master price.
+    this.assertAmountMatchesRate(
+      effective.amount,
+      effective.litres,
+      effective.rateApplied,
+    );
+
     // Confirm the referenced Customer actually exists (if changed / present).
     let customer: Customer | null = null;
     if (effective.customerId) {
@@ -682,6 +702,25 @@ export class BillsService {
       throw new BadRequestException(
         `Payment lines do not balance: sum(IN) - sum(OUT) = ${net.toFixed(2)}, ` +
           `but bill.amount = ${amount.toFixed(2)}`,
+      );
+    }
+  }
+
+  // Every Bill is a fuel sale (non-fuel goes through ItemSale instead — see
+  // that model's comment), so amount is deterministic: litres × the
+  // (server-resolved, or effective-on-edit) rate, with no discount/override
+  // concept anywhere in this schema. Same float-safe epsilon comparison as
+  // assertBalanced.
+  private assertAmountMatchesRate(
+    amount: number,
+    litres: number,
+    rate: number,
+  ) {
+    const expected = litres * rate;
+    if (Math.abs(expected - amount) > BALANCE_EPSILON) {
+      throw new BadRequestException(
+        `amount does not match litres × rate: expected ${expected.toFixed(2)} ` +
+          `(${litres} × ${rate}), but got ${amount.toFixed(2)}`,
       );
     }
   }

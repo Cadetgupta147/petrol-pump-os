@@ -61,7 +61,9 @@ describe('BillsService idempotency (Section 17.6)', () => {
         },
         {
           provide: RateMasterService,
-          useValue: { getCurrentRate: jest.fn().mockResolvedValue({ rate: 100 }) },
+          // 50 * 20 litres = 1000, matching baseDto.amount — the service
+          // cross-checks amount against litres × rate.
+          useValue: { getCurrentRate: jest.fn().mockResolvedValue({ rate: 50 }) },
         },
         {
           provide: VehicleBlacklistService,
