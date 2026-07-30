@@ -944,5 +944,110 @@ describe('MeterReadingsService', () => {
         expect(result.rateReminder).toBeUndefined();
       });
     });
+
+    describe('backdating (shiftEnd)', () => {
+      it('rejects a DSM caller sending a batch-level shiftEnd at all', async () => {
+        const dto: BatchCloseDto = {
+          readings: [{ nozzleId: 'n1', closingReading: 150 }],
+          shiftEnd: '2026-07-20T18:00:00.000Z',
+        };
+        await expect(batchClose(dto, dsmCaller)).rejects.toBeInstanceOf(ForbiddenException);
+        expect(prisma.meterReading.update).not.toHaveBeenCalled();
+      });
+
+      it('allows a non-DSM caller to backdate the whole batch, applying the same shiftEnd to every row', async () => {
+        const nozzle2 = { ...activeNozzle, id: 'n2', label: 'N2' };
+        const earlyOpenReading = { ...openReading, shiftStart: new Date('2026-07-20T06:00:00.000Z') };
+        prisma.nozzle.findUnique
+          .mockResolvedValueOnce(activeNozzle)
+          .mockResolvedValueOnce(nozzle2);
+        prisma.meterReading.findFirst.mockResolvedValueOnce(earlyOpenReading).mockResolvedValueOnce({
+          ...earlyOpenReading,
+          id: 'mr-open-2',
+          nozzleId: 'n2',
+        });
+        prisma.meterReading.create.mockResolvedValue({ id: 'mr-reopened' });
+        prisma.meterReading.update.mockImplementation((args: { where: { id: string } }) =>
+          Promise.resolve({ ...openReading, ...args.where, closingReading: 150, nozzle: activeNozzle }),
+        );
+        prisma.tank.findFirst.mockResolvedValue(null);
+
+        const dto: BatchCloseDto = {
+          readings: [
+            { nozzleId: 'n1', closingReading: 150 },
+            { nozzleId: 'n2', closingReading: 150 },
+          ],
+          shiftEnd: '2026-07-20T18:00:00.000Z',
+        };
+        await batchClose(dto, accountantCaller);
+
+        expect(prisma.meterReading.update).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({
+            data: expect.objectContaining({ shiftEnd: new Date('2026-07-20T18:00:00.000Z') }),
+          }),
+        );
+        expect(prisma.meterReading.update).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({
+            data: expect.objectContaining({ shiftEnd: new Date('2026-07-20T18:00:00.000Z') }),
+          }),
+        );
+      });
+
+      it('rejects a batch shiftEnd before an already-open shift\'s shiftStart', async () => {
+        prisma.meterReading.findFirst.mockResolvedValueOnce(openReading); // shiftStart = 1 hour ago
+
+        const dto: BatchCloseDto = {
+          readings: [{ nozzleId: 'n1', closingReading: 150 }],
+          shiftEnd: '2020-01-01T00:00:00.000Z',
+        };
+        await expect(batchClose(dto, accountantCaller)).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.meterReading.update).not.toHaveBeenCalled();
+      });
+
+      it('rejects a future batch shiftEnd', async () => {
+        const dto: BatchCloseDto = {
+          readings: [{ nozzleId: 'n1', closingReading: 150 }],
+          shiftEnd: '2099-01-01T00:00:00.000Z',
+        };
+        await expect(batchClose(dto, accountantCaller)).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.meterReading.create).not.toHaveBeenCalled();
+      });
+
+      it('backdates the auto-created shiftStart too, so an auto-opened nozzle with no prior open shift can still close against an earlier shiftEnd', async () => {
+        prisma.meterReading.findFirst
+          .mockResolvedValueOnce(null) // no open shift
+          .mockResolvedValueOnce(null); // no prior closed shift — falls back to startingReading
+        prisma.meterReading.create
+          .mockResolvedValueOnce({ ...openReading, id: 'mr-auto-opened', shiftStart: new Date('2026-07-20T18:00:00.000Z') })
+          .mockResolvedValueOnce({ id: 'mr-reopened' });
+        prisma.meterReading.update.mockResolvedValue({
+          ...openReading,
+          id: 'mr-auto-opened',
+          closingReading: 150,
+        });
+        prisma.tank.findFirst.mockResolvedValue(null);
+
+        const dto: BatchCloseDto = {
+          readings: [{ nozzleId: 'n1', closingReading: 150 }],
+          shiftEnd: '2026-07-20T18:00:00.000Z',
+        };
+        await batchClose(dto, accountantCaller);
+
+        expect(prisma.meterReading.create).toHaveBeenNthCalledWith(1, {
+          data: {
+            pumpId: 'pump-1',
+            nozzleId: 'n1',
+            openLockNozzleId: 'n1',
+            staffId: 'accountant-1',
+            openingReading: 100,
+            productType: 'petrol',
+            shiftStart: new Date('2026-07-20T18:00:00.000Z'),
+          },
+          include: { nozzle: { include: { item: true } } },
+        });
+      });
+    });
   });
 });

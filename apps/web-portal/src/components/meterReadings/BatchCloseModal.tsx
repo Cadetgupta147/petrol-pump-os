@@ -51,6 +51,8 @@ export function BatchCloseModal({ nozzles, readings, staff, onClose, onSaved }: 
   const [rows, setRows] = useState<Record<string, RowState>>(() => buildInitialRows(nozzles, readings));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [backdateShiftEnd, setBackdateShiftEnd] = useState(false);
+  const [shiftEnd, setShiftEnd] = useState('');
 
   function updateRow(nozzleId: string, patch: Partial<RowState>) {
     setRows((prev) => ({ ...prev, [nozzleId]: { ...prev[nozzleId], ...patch } }));
@@ -58,6 +60,7 @@ export function BatchCloseModal({ nozzles, readings, staff, onClose, onSaved }: 
 
   const canSubmit =
     nozzles.length > 0 &&
+    (!backdateShiftEnd || shiftEnd !== '') &&
     nozzles.every((nozzle) => {
       const row = rows[nozzle.id];
       if (!row) return false;
@@ -80,6 +83,7 @@ export function BatchCloseModal({ nozzles, readings, staff, onClose, onSaved }: 
             staffId: row.staffId,
           };
         }),
+        backdateShiftEnd && shiftEnd ? new Date(shiftEnd).toISOString() : undefined,
       );
       onSaved(updated);
     } catch (err) {
@@ -110,6 +114,30 @@ export function BatchCloseModal({ nozzles, readings, staff, onClose, onSaved }: 
             automatically.
           </span>
         </div>
+
+        {nozzles.length > 0 && (
+          <div className="form-field" style={{ marginBottom: 12 }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={backdateShiftEnd}
+                onChange={(e) => setBackdateShiftEnd(e.target.checked)}
+                style={{ marginRight: 6 }}
+              />
+              Backdate this batch (missed a day &mdash; entering it after the fact)
+            </label>
+            {backdateShiftEnd && (
+              <input
+                type="datetime-local"
+                value={shiftEnd}
+                onChange={(e) => setShiftEnd(e.target.value)}
+                max={new Date().toISOString().slice(0, 16)}
+                required
+                style={{ marginTop: 8, display: 'block' }}
+              />
+            )}
+          </div>
+        )}
 
         {nozzles.length === 0 ? (
           <div className="banner">

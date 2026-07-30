@@ -1,6 +1,7 @@
 import { apiFetch } from './client';
 import type {
   BatchCloseReadingRequest,
+  BatchCloseRequest,
   CloseShiftRequest,
   CorrectMeterReadingRequest,
   MeterReading,
@@ -35,11 +36,16 @@ export function correctMeterReading(
 // submit closing readings for every active nozzle at once, in one request.
 // Replaces opening a shift as a separate step — see BatchCloseReadingRequest's
 // comment. Returns one updated MeterReading per submitted nozzle, each
-// possibly carrying its own tankWarning.
-export function batchCloseMeterReadings(readings: BatchCloseReadingRequest[]): Promise<MeterReading[]> {
+// possibly carrying its own tankWarning. shiftEnd backdates the whole batch
+// (see BatchCloseRequest's comment) — omit it for the normal real-time close.
+export function batchCloseMeterReadings(
+  readings: BatchCloseReadingRequest[],
+  shiftEnd?: string,
+): Promise<MeterReading[]> {
+  const body: BatchCloseRequest = shiftEnd ? { readings, shiftEnd } : { readings };
   return apiFetch<MeterReading[]>('/meter-readings/batch-close', {
     method: 'POST',
-    body: JSON.stringify({ readings }),
+    body: JSON.stringify(body),
   });
 }
 

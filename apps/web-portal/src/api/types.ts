@@ -421,6 +421,16 @@ export interface BatchCloseReadingRequest {
   staffId?: string;
 }
 
+// POST /meter-readings/batch-close's full request body. shiftEnd is a
+// WHOLE-BATCH backdating override (mirrors CloseShiftRequest.shiftEnd) —
+// non-DSM-only (assertNonDsmOverride() on the backend) — for "missed a
+// day, entering it today" instead of the DSM app's real-time flow. See
+// BatchCloseDto.shiftEnd's comment on the backend.
+export interface BatchCloseRequest {
+  readings: BatchCloseReadingRequest[];
+  shiftEnd?: string;
+}
+
 // Mirrors apps/backend/src/meter-readings/dto/close-shift.dto.ts. shiftEnd
 // is a non-DSM-only backdating override (assertNonDsmOverride() on the
 // backend) — the manual single-nozzle close fallback (CloseShiftModal) is

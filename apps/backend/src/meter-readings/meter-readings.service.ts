@@ -197,14 +197,16 @@ export class MeterReadingsService {
   // see batchClose()'s comment for why calling closeShift() itself from
   // inside a shared transaction isn't possible.
   //
-  // shiftEnd defaults to now() when omitted (batchClose() never passes one —
-  // there is no backdating override on the batch DTO, matching the product
-  // decision that exact clock-time precision doesn't matter for this
-  // feature). The shiftEnd-in-the-future / shiftEnd-before-shiftStart checks
-  // live here (pure value validation, no user-role dependency) rather than
-  // in closeShift(), unlike the assertNonDsmOverride() check above, which
-  // stays there since only closeShift()'s single-reading DTO ever offers a
-  // backdated shiftEnd at all.
+  // shiftEnd defaults to now() when omitted. batchClose() resolves its own
+  // whole-batch shiftEnd override ONCE, before its loop (see BatchCloseDto.
+  // shiftEnd's comment) and passes the same Date to every entry's close —
+  // there's no per-nozzle backdating, only per-batch, matching the product
+  // decision that exact clock-time precision doesn't matter otherwise. The
+  // shiftEnd-in-the-future / shiftEnd-before-shiftStart checks live here
+  // (pure value validation, no user-role dependency) rather than in
+  // closeShift()/batchClose(), unlike the assertNonDsmOverride() check,
+  // which stays in each caller since only THEY know whether their DTO even
+  // offers a backdated shiftEnd at all.
   private async closeOneReading(
     existing: MeterReadingWithNozzle,
     input: { closingReading: number; meterRolledOver?: boolean; shiftEnd?: Date },
@@ -324,12 +326,17 @@ export class MeterReadingsService {
   //      nothing auto-reopened since the last MANUAL close via
   //      CloseShiftModal — see below), auto-create one first, using the
   //      exact same carry-forward + productType derivation openShift() uses.
-  //   3. Close it via closeOneReading() (shared with closeShift()).
+  //   3. Close it via closeOneReading() (shared with closeShift()), against
+  //      dto.shiftEnd if the caller backdated the whole batch (see
+  //      BatchCloseDto.shiftEnd's comment — "missed yesterday, entering it
+  //      today"), else real now().
   //   4. Immediately auto-open the NEXT shift for this nozzle — openingReading
-  //      = the closingReading just submitted, shiftStart = now() — so the
-  //      nozzle is always left in "has exactly one open shift" state,
-  //      preserving openLockNozzleId's DB-level guarantee with no schema
-  //      change to MeterReading itself.
+  //      = the closingReading just submitted, shiftStart = now() (always
+  //      real submission time, even on a backdated batch — only the just-
+  //      closed shift's shiftEnd is backdated, not where the new one picks
+  //      up) — so the nozzle is always left in "has exactly one open shift"
+  //      state, preserving openLockNozzleId's DB-level guarantee with no
+  //      schema change to MeterReading itself.
   //
   // IMPORTANT: this cannot just call this.openShift()/this.closeShift() —
   // both are hard-wired to `this.prisma`, and closeShift() opens its OWN
@@ -354,6 +361,20 @@ export class MeterReadingsService {
   // transactions.
   async batchClose(dto: BatchCloseDto, user: AuthenticatedUser) {
     const pumpId = requireTenantContext().pumpId;
+
+    // Whole-batch backdating override — see BatchCloseDto.shiftEnd's
+    // comment. Resolved once, before the loop, exactly like closeShift()
+    // resolves its own single shiftEnd: reject a DSM caller outright rather
+    // than silently falling back to now() (assertNonDsmOverride() has no
+    // sensible default here, same reasoning as its own header comment).
+    let shiftEnd: Date | undefined;
+    if (dto.shiftEnd !== undefined) {
+      assertNonDsmOverride(user, 'shiftEnd');
+      shiftEnd = new Date(dto.shiftEnd);
+      if (shiftEnd.getTime() > Date.now()) {
+        throw new BadRequestException('shiftEnd cannot be in the future.');
+      }
+    }
 
     // Computed BEFORE the transaction below touches anything, so "was
     // ANYTHING closed today yet" reflects state prior to this batch — see
@@ -394,6 +415,13 @@ export class MeterReadingsService {
                   staffId,
                   openingReading,
                   productType: nozzle.item.name,
+                  // Without this, a freshly auto-created shift defaults its
+                  // shiftStart to now() — which would be AFTER a backdated
+                  // shiftEnd below and fail closeOneReading()'s "shiftEnd
+                  // can't be before shiftStart" check. Only reachable when
+                  // this nozzle had no open shift at all going into a
+                  // backdated batch (e.g. its very first-ever shift).
+                  ...(shiftEnd !== undefined && { shiftStart: shiftEnd }),
                 },
                 include: { nozzle: { include: { item: true } } },
               });
@@ -401,7 +429,7 @@ export class MeterReadingsService {
 
             const { updated, tankWarning } = await this.closeOneReading(
               existing,
-              { closingReading: entry.closingReading, meterRolledOver: entry.meterRolledOver },
+              { closingReading: entry.closingReading, meterRolledOver: entry.meterRolledOver, shiftEnd },
               tx,
             );
 
