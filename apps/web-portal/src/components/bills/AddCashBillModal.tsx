@@ -3,6 +3,7 @@ import { createBill } from '../../api/bills';
 import { getItems } from '../../api/items';
 import { getRateHistory } from '../../api/rateMaster';
 import { computeCurrentRates } from '../../utils/rateMaster';
+import { localIsoDate } from '../../utils/format';
 import { ApiError } from '../../api/client';
 import type { Bill, Customer, Item, PaymentDirection, PaymentType, RateHistory } from '../../api/types';
 import { LineItemsEditor, computeLineItemTotals, toCreateBillLineItemRequests, type LocalLineItem } from './LineItemsEditor';
@@ -57,6 +58,13 @@ function makeLocalId(): string {
 // same POST /bills endpoint and go through the identical
 // BillsService.create() validation; this split is a front-end convenience
 // only, not a different backend code path.
+//
+// Layout takes inspiration from a dense legacy pump-billing screen: a wide,
+// single-screen form (`.modal-card.wide`) with compact identity fields up
+// top, one dominant spreadsheet-style item grid (LineItemsEditor — fuel as
+// its first row, extra items below), a payment-lines breakdown, and a
+// prominent total bar next to Cancel/Save at the bottom, restyled with this
+// app's own tokens/components rather than copied wholesale.
 export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillModalProps) {
   const [customerId, setCustomerId] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
@@ -64,6 +72,10 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
   const [amount, setAmount] = useState('');
   const [litres, setLitres] = useState('');
   const [productType, setProductType] = useState('');
+  // Defaults to today (Section: backdating) — editable so a bill can be
+  // entered for a past day instead of always silently landing on today's
+  // date (Bill.timestamp otherwise only ever defaults to now()).
+  const [billDate, setBillDate] = useState(() => localIsoDate());
   const [items, setItems] = useState<Item[]>([]);
   const [rateHistory, setRateHistory] = useState<RateHistory[]>([]);
   const [lineItems, setLineItems] = useState<LocalLineItem[]>([]);
@@ -189,6 +201,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
     parsedFuelAmount > 0 &&
     Number(litres) > 0 &&
     productType.trim() !== '' &&
+    billDate.trim() !== '' &&
     lines.length > 0 &&
     balanced &&
     (!needsQuickAdd || (quickAddName.trim() !== '' && quickAddVehicle.trim() !== ''));
@@ -212,6 +225,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
         litres: Number(litres),
         productType: productType.trim(),
         entryChannel: 'WEB',
+        billDate,
         paymentLines: lines.map(({ paymentType, amount: lineAmount, direction }) => ({
           paymentType,
           amount: lineAmount,
@@ -232,7 +246,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={(e) => { void handleSubmit(e); }}>
+      <form className="modal-card wide" onClick={(event) => event.stopPropagation()} onSubmit={(e) => { void handleSubmit(e); }}>
         <div className="section-title">
           <h3>Add cash / split-payment bill</h3>
           <span className="section-note">
@@ -241,98 +255,71 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
           </span>
         </div>
 
-        <div className="form-field">
-          <label htmlFor="ab-customer">Link to existing customer (optional)</label>
-          <select id="ab-customer" value={customerId} onChange={(e) => handleSelectCustomer(e.target.value)}>
-            <option value="">No linked customer / walk-in</option>
-            {customers.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.name}
-                {customer.vehicleNumber ? ` · ${customer.vehicleNumber}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="form-field">
-          <label htmlFor="ab-customer-name">Customer name</label>
-          <input
-            id="ab-customer-name"
-            value={customerName}
-            onChange={(e) => setCustomerName(e.target.value)}
-            placeholder="Optional if vehicle number is set"
-          />
-        </div>
-        <div className="form-field">
-          <label htmlFor="ab-vehicle">Vehicle number</label>
-          <input
-            id="ab-vehicle"
-            value={vehicleNumber}
-            onChange={(e) => setVehicleNumber(e.target.value)}
-            placeholder="Optional if customer name is set"
-          />
+        <div className="bill-header-grid" style={{ marginBottom: 14 }}>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label htmlFor="ab-customer">Link to existing customer (optional)</label>
+            <select id="ab-customer" value={customerId} onChange={(e) => handleSelectCustomer(e.target.value)}>
+              <option value="">No linked customer / walk-in</option>
+              {customers.map((customer) => (
+                <option key={customer.id} value={customer.id}>
+                  {customer.name}
+                  {customer.vehicleNumber ? ` · ${customer.vehicleNumber}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label htmlFor="ab-customer-name">Customer name</label>
+            <input
+              id="ab-customer-name"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              placeholder="Optional if vehicle number is set"
+            />
+          </div>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label htmlFor="ab-vehicle">Vehicle number</label>
+            <input
+              id="ab-vehicle"
+              value={vehicleNumber}
+              onChange={(e) => setVehicleNumber(e.target.value)}
+              placeholder="Optional if customer name is set"
+            />
+          </div>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label htmlFor="ab-date">Bill date</label>
+            <input
+              id="ab-date"
+              type="date"
+              value={billDate}
+              max={localIsoDate()}
+              onChange={(e) => setBillDate(e.target.value)}
+              required
+            />
+          </div>
         </div>
         {!hasVehicleOrName && <div className="form-error">Vehicle number or customer name is required.</div>}
 
-        <div className="form-field">
-          <label htmlFor="ab-amount">Fuel amount (Rs.)</label>
-          <input
-            id="ab-amount"
-            type="number"
-            min="0"
-            step="0.01"
-            value={amount}
-            onChange={(e) => handleAmountChange(e.target.value)}
-            required
-          />
-        </div>
-        <div className="form-field">
-          <label htmlFor="ab-litres">Litres</label>
-          <input
-            id="ab-litres"
-            type="number"
-            min="0"
-            step="0.01"
-            value={litres}
-            onChange={(e) => handleLitresChange(e.target.value)}
-            required
-          />
-        </div>
-        <div className="form-field">
-          <label htmlFor="ab-product">Product type</label>
-          <input
-            id="ab-product"
-            list="ab-item-master"
-            value={productType}
-            onChange={(e) => handleProductTypeChange(e.target.value)}
-            placeholder="e.g. Petrol, Diesel"
-            required
-          />
-          <datalist id="ab-item-master">
-            {items.map((item) => (
-              <option key={item.id} value={item.name} />
-            ))}
-          </datalist>
-          {productType.trim() !== '' && (
-            <div className="section-note" style={{ marginTop: 4 }}>
-              {resolvedRate
-                ? `Current rate: Rs.${resolvedRate.toFixed(2)}/L — amount/litres auto-fill off this.`
-                : 'No current rate on file for this product — enter amount and litres manually.'}
-            </div>
-          )}
-        </div>
+        <LineItemsEditor
+          items={items}
+          lines={lineItems}
+          onChange={setLineItems}
+          idPrefix="ab"
+          fuel={{
+            productType,
+            onProductTypeChange: handleProductTypeChange,
+            litres,
+            onLitresChange: handleLitresChange,
+            amount,
+            onAmountChange: handleAmountChange,
+            resolvedRate,
+          }}
+        />
 
-        <LineItemsEditor items={items} lines={lineItems} onChange={setLineItems} idPrefix="ab" />
-
-        <div className="form-field">
+        <div className="form-field" style={{ marginTop: 14 }}>
           <label>Payments</label>
           <div className="section-note" style={{ marginBottom: 8 }}>
-            Fuel Rs.{parsedFuelAmount.toFixed(2)}
-            {lineItems.length > 0 && (
-              <> + items Rs.{itemsSubtotal.toFixed(2)} + tax Rs.{itemsTaxTotal.toFixed(2)}</>
-            )}
-            {' '}= grand total Rs.{grandTotal.toFixed(2)} · Remaining to collect: Rs.{remaining.toFixed(2)}{' '}
-            {balanced ? '(balanced)' : ''}
+            Remaining to collect: Rs.{remaining.toFixed(2)} {balanced ? '(balanced)' : ''}
           </div>
 
           {lines.map((line) => (
@@ -391,21 +378,32 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
             <div className="section-note" style={{ marginBottom: 8 }}>
               This CREDIT payment has no linked customer — quick-add one now, or pick an existing customer above.
             </div>
-            <input
-              value={quickAddName}
-              onChange={(e) => setQuickAddName(e.target.value)}
-              placeholder="Name"
-              style={{ marginBottom: 8 }}
-            />
-            <input
-              value={quickAddVehicle}
-              onChange={(e) => setQuickAddVehicle(e.target.value)}
-              placeholder="Vehicle number"
-            />
+            <div className="bill-header-grid">
+              <input
+                value={quickAddName}
+                onChange={(e) => setQuickAddName(e.target.value)}
+                placeholder="Name"
+              />
+              <input
+                value={quickAddVehicle}
+                onChange={(e) => setQuickAddVehicle(e.target.value)}
+                placeholder="Vehicle number"
+              />
+            </div>
           </div>
         )}
 
         {error && <div className="form-error">{error}</div>}
+
+        <div className="bill-total-bar">
+          <div className="bill-total-bar-breakdown">
+            Fuel Rs.{parsedFuelAmount.toFixed(2)}
+            {lineItems.length > 0 && (
+              <> + items Rs.{itemsSubtotal.toFixed(2)} + tax Rs.{itemsTaxTotal.toFixed(2)}</>
+            )}
+          </div>
+          <div className="bill-total-bar-value">Rs.{grandTotal.toFixed(2)}</div>
+        </div>
 
         <div className="modal-actions">
           <button type="button" className="btn-secondary" onClick={onClose} disabled={submitting}>

@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  IsDateString,
   IsEnum,
   IsNumber,
   IsOptional,
@@ -90,6 +91,19 @@ export class CreateBillDto {
 
   @IsEnum(EntryChannel)
   entryChannel!: EntryChannel;
+
+  // Lets the sale's recorded date be backdated — e.g. entering yesterday's
+  // (or a few days ago's) fill-up after the fact. Optional: omitting it
+  // keeps the pre-existing behavior (Bill.timestamp defaults to the moment
+  // of creation, DB-side @default(now())).
+  //
+  // When provided, the SELECTED DATE is combined with the CURRENT
+  // time-of-day, NOT midnight — see BillsService.resolveBillTimestamp().
+  // Rejected (400) if it's a future date; a sale can't happen ahead of when
+  // it's being entered.
+  @IsOptional()
+  @IsDateString()
+  billDate?: string;
 
   @ValidateNested({ each: true })
   @Type(() => CreateBillPaymentLineDto)

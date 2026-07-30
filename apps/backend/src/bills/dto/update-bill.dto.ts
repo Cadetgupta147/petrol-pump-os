@@ -3,7 +3,10 @@ import { IsNumber, IsOptional, IsPositive } from 'class-validator';
 import { CreateBillDto } from './create-bill.dto';
 
 // PATCH /bills/:id — any subset of vehicleNumber, customerName, amount,
-// litres, productType, rateApplied, customerId, paymentLines.
+// litres, productType, rateApplied, customerId, paymentLines, billDate
+// (inherited from CreateBillDto via EditableCreateBillDto — lets a
+// wrong-dated bill's timestamp be corrected after the fact, same
+// resolveBillTimestamp() logic as create()).
 //
 // entryChannel records original attribution and must stay immutable after
 // creation — omitted from what's editable here. editedById is NOT a DTO

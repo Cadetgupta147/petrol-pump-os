@@ -3,6 +3,7 @@ import { createBill } from '../../api/bills';
 import { getItems } from '../../api/items';
 import { getRateHistory } from '../../api/rateMaster';
 import { computeCurrentRates } from '../../utils/rateMaster';
+import { localIsoDate } from '../../utils/format';
 import { ApiError } from '../../api/client';
 import type { Bill, Customer, Item, RateHistory } from '../../api/types';
 import { LineItemsEditor, computeLineItemTotals, toCreateBillLineItemRequests, type LocalLineItem } from './LineItemsEditor';
@@ -28,6 +29,13 @@ interface AddCreditBillModalProps {
 // required — CREDIT with no linked customer isn't a valid bill at all (see
 // BillsService.create()'s "CREDIT payment lines require either an existing
 // customerId or quickAddCustomer").
+//
+// Layout takes inspiration from a dense legacy pump-billing screen: a wide,
+// single-screen form (`.modal-card.wide`) with compact identity fields up
+// top, one dominant spreadsheet-style item grid (LineItemsEditor — fuel as
+// its first row, extra items below), and a prominent total bar next to
+// Cancel/Save at the bottom, restyled with this app's own tokens/components
+// rather than copied wholesale.
 export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditBillModalProps) {
   const [customerId, setCustomerId] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
@@ -35,6 +43,10 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
   const [amount, setAmount] = useState('');
   const [litres, setLitres] = useState('');
   const [productType, setProductType] = useState('');
+  // Defaults to today (Section: backdating) — editable so a bill can be
+  // entered for a past day (e.g. catching up on yesterday's fill-ups)
+  // instead of always silently landing on today's date.
+  const [billDate, setBillDate] = useState(() => localIsoDate());
   const [items, setItems] = useState<Item[]>([]);
   const [rateHistory, setRateHistory] = useState<RateHistory[]>([]);
   const [lineItems, setLineItems] = useState<LocalLineItem[]>([]);
@@ -117,6 +129,7 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
     parsedFuelAmount > 0 &&
     Number(litres) > 0 &&
     productType.trim() !== '' &&
+    billDate.trim() !== '' &&
     (!needsQuickAdd || (quickAddName.trim() !== '' && quickAddVehicle.trim() !== ''));
 
   async function handleSubmit(event: FormEvent) {
@@ -138,6 +151,7 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
         litres: Number(litres),
         productType: productType.trim(),
         entryChannel: 'WEB',
+        billDate,
         // The whole point of this modal: exactly one payment line, always
         // CREDIT, always the full bill amount (fuel + any extra items +
         // their tax) — never hand-entered.
@@ -154,7 +168,7 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={(e) => { void handleSubmit(e); }}>
+      <form className="modal-card wide" onClick={(event) => event.stopPropagation()} onSubmit={(e) => { void handleSubmit(e); }}>
         <div className="section-title">
           <h3>Add credit bill</h3>
           <span className="section-note">
@@ -162,18 +176,41 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
           </span>
         </div>
 
-        <div className="form-field">
-          <label htmlFor="acb-customer">Customer (required for credit)</label>
-          <select id="acb-customer" value={customerId} onChange={(e) => handleSelectCustomer(e.target.value)} required>
-            <option value="">Select a customer, or quick-add below</option>
-            {customers.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.name}
-                {customer.vehicleNumber ? ` · ${customer.vehicleNumber}` : ''}
-              </option>
-            ))}
-          </select>
+        <div className="bill-header-grid" style={{ marginBottom: 14 }}>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label htmlFor="acb-customer">Customer (required for credit)</label>
+            <select id="acb-customer" value={customerId} onChange={(e) => handleSelectCustomer(e.target.value)} required>
+              <option value="">Select a customer, or quick-add below</option>
+              {customers.map((customer) => (
+                <option key={customer.id} value={customer.id}>
+                  {customer.name}
+                  {customer.vehicleNumber ? ` · ${customer.vehicleNumber}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label htmlFor="acb-vehicle">Vehicle number</label>
+            <input
+              id="acb-vehicle"
+              value={vehicleNumber}
+              onChange={(e) => setVehicleNumber(e.target.value)}
+              placeholder="Optional if customer name is set"
+            />
+          </div>
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label htmlFor="acb-date">Bill date</label>
+            <input
+              id="acb-date"
+              type="date"
+              value={billDate}
+              max={localIsoDate()}
+              onChange={(e) => setBillDate(e.target.value)}
+              required
+            />
+          </div>
         </div>
+        {!hasVehicleOrName && <div className="form-error">Vehicle number or customer name is required.</div>}
 
         {!customerId && (
           <div className="form-field">
@@ -181,92 +218,49 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
             <div className="section-note" style={{ marginBottom: 8 }}>
               No existing customer picked above — quick-add one now with just a name and vehicle number.
             </div>
-            <input
-              value={quickAddName}
-              onChange={(e) => setQuickAddName(e.target.value)}
-              placeholder="Name"
-              style={{ marginBottom: 8 }}
-            />
-            <input
-              value={quickAddVehicle}
-              onChange={(e) => setQuickAddVehicle(e.target.value)}
-              placeholder="Vehicle number"
-            />
+            <div className="bill-header-grid">
+              <input
+                value={quickAddName}
+                onChange={(e) => setQuickAddName(e.target.value)}
+                placeholder="Name"
+              />
+              <input
+                value={quickAddVehicle}
+                onChange={(e) => setQuickAddVehicle(e.target.value)}
+                placeholder="Vehicle number"
+              />
+            </div>
           </div>
         )}
 
-        <div className="form-field">
-          <label htmlFor="acb-vehicle">Vehicle number</label>
-          <input
-            id="acb-vehicle"
-            value={vehicleNumber}
-            onChange={(e) => setVehicleNumber(e.target.value)}
-            placeholder="Optional if customer name is set"
-          />
-        </div>
-        {!hasVehicleOrName && <div className="form-error">Vehicle number or customer name is required.</div>}
+        <LineItemsEditor
+          items={items}
+          lines={lineItems}
+          onChange={setLineItems}
+          idPrefix="acb"
+          fuel={{
+            productType,
+            onProductTypeChange: handleProductTypeChange,
+            litres,
+            onLitresChange: handleLitresChange,
+            amount,
+            onAmountChange: handleAmountChange,
+            resolvedRate,
+          }}
+        />
 
-        <div className="form-field">
-          <label htmlFor="acb-amount">Fuel amount (Rs.)</label>
-          <input
-            id="acb-amount"
-            type="number"
-            min="0"
-            step="0.01"
-            value={amount}
-            onChange={(e) => handleAmountChange(e.target.value)}
-            required
-          />
-        </div>
-        <div className="form-field">
-          <label htmlFor="acb-litres">Litres</label>
-          <input
-            id="acb-litres"
-            type="number"
-            min="0"
-            step="0.01"
-            value={litres}
-            onChange={(e) => handleLitresChange(e.target.value)}
-            required
-          />
-        </div>
-        <div className="form-field">
-          <label htmlFor="acb-product">Product type</label>
-          <input
-            id="acb-product"
-            list="acb-item-master"
-            value={productType}
-            onChange={(e) => handleProductTypeChange(e.target.value)}
-            placeholder="e.g. Petrol, Diesel"
-            required
-          />
-          <datalist id="acb-item-master">
-            {items.map((item) => (
-              <option key={item.id} value={item.name} />
-            ))}
-          </datalist>
-          {productType.trim() !== '' && (
-            <div className="section-note" style={{ marginTop: 4 }}>
-              {resolvedRate
-                ? `Current rate: Rs.${resolvedRate.toFixed(2)}/L — amount/litres auto-fill off this.`
-                : 'No current rate on file for this product — enter amount and litres manually.'}
-            </div>
-          )}
-        </div>
+        {error && <div className="form-error">{error}</div>}
 
-        <LineItemsEditor items={items} lines={lineItems} onChange={setLineItems} idPrefix="acb" />
-
-        <div className="form-field">
-          <div className="section-note">
+        <div className="bill-total-bar">
+          <div className="bill-total-bar-breakdown">
             Fuel Rs.{parsedFuelAmount.toFixed(2)}
             {lineItems.length > 0 && (
               <> + items Rs.{itemsSubtotal.toFixed(2)} + tax Rs.{itemsTaxTotal.toFixed(2)}</>
             )}
-            {' '}= grand total <strong>Rs.{grandTotal.toFixed(2)}</strong>, recorded as CREDIT for this customer.
+            {' '}&middot; recorded as CREDIT for this customer
           </div>
+          <div className="bill-total-bar-value">Rs.{grandTotal.toFixed(2)}</div>
         </div>
-
-        {error && <div className="form-error">{error}</div>}
 
         <div className="modal-actions">
           <button type="button" className="btn-secondary" onClick={onClose} disabled={submitting}>

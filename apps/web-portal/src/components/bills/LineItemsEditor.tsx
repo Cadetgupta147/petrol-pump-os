@@ -1,14 +1,16 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { getTaxRateConfigs } from '../../api/taxRateConfig';
 import type { CreateBillLineItemRequest, Item } from '../../api/types';
 
-// Extra (non-fuel) items on a bill — e.g. a can of engine oil handed over
-// with the same fill-up (Multi-item bill grid, mirrors the Code/Item
-// Name/Qty/Rate/Amount/tax layout of the legacy paper-form screenshot this
-// feature was requested from). Shared between AddCreditBillModal and
-// AddCashBillModal since the grid/tax rules are identical in both — only
-// how the resulting grand total feeds into payment lines differs, which
-// stays in each modal.
+// The bill's full item grid — fuel (via the `fuel` prop, driven by the
+// parent modal's own amount/litres/productType state) as the first row,
+// then any extra non-fuel items below, all rendered as ONE continuous,
+// Excel-style bordered table. Inspired by a dense legacy pump-billing
+// layout (single screen, one dominant item grid rather than a form with a
+// list bolted underneath) restyled with this app's own tokens/components.
+// Shared between AddCreditBillModal and AddCashBillModal — the grid/tax
+// rules are identical in both; only how the resulting grand total feeds
+// into payment lines differs, which stays in each modal.
 //
 // Every amount computed here (amount, tax split, lineTotal) is a
 // CLIENT-SIDE PREVIEW ONLY, purely so the dealer can see the total before
@@ -77,26 +79,47 @@ function makeLocalId(): string {
   return `line-item-${localIdCounter}`;
 }
 
+function emptyDraftLine(): LocalLineItem {
+  return {
+    localId: makeLocalId(),
+    itemCode: '',
+    itemName: '',
+    quantity: 0,
+    rate: 0,
+    isInterstate: false,
+    taxRate: 0,
+  };
+}
+
+// The fuel sale itself — driven by the parent modal's existing amount/
+// litres/productType state and its rate-master auto-fill handlers; rendered
+// as the grid's first row purely for visual continuity with the extra
+// items below, not a separate data model.
+export interface FuelRowProps {
+  productType: string;
+  onProductTypeChange: (value: string) => void;
+  litres: string;
+  onLitresChange: (value: string) => void;
+  amount: string;
+  onAmountChange: (value: string) => void;
+  resolvedRate: number | undefined;
+}
+
 interface LineItemsEditorProps {
   items: Item[];
   lines: LocalLineItem[];
   onChange: (lines: LocalLineItem[]) => void;
   idPrefix: string;
+  fuel: FuelRowProps;
 }
 
-// Only non-fuel items make sense as an "extra" line alongside the fuel sale
-// — the fuel sale itself is what the rest of the bill form already covers.
+// Only non-fuel items make sense as an "extra" line alongside the fuel sale.
 function nonFuelItems(items: Item[]): Item[] {
   return items.filter((item) => item.category !== 'FUEL');
 }
 
-export function LineItemsEditor({ items, lines, onChange, idPrefix }: LineItemsEditorProps) {
-  const [draftItemName, setDraftItemName] = useState('');
-  const [draftItemCode, setDraftItemCode] = useState('');
-  const [draftQuantity, setDraftQuantity] = useState('');
-  const [draftRate, setDraftRate] = useState('');
-  const [draftInterstate, setDraftInterstate] = useState(false);
-  const [draftTaxRate, setDraftTaxRate] = useState('');
+export function LineItemsEditor({ items, lines, onChange, idPrefix, fuel }: LineItemsEditorProps) {
+  const [draft, setDraft] = useState<LocalLineItem>(emptyDraftLine);
 
   // Section 17.22 — the same dealer-configured per-productType GST rate the
   // sales/purchase register reads, reused here (keyed by item name) as the
@@ -114,177 +137,259 @@ export function LineItemsEditor({ items, lines, onChange, idPrefix }: LineItemsE
   }, []);
 
   const pickableItems = nonFuelItems(items);
+  const fuelAmountNumber = Number(fuel.amount) || 0;
 
-  function handleDraftItemNameChange(value: string) {
-    setDraftItemName(value);
-    const matched = pickableItems.find((item) => item.name.toLowerCase() === value.trim().toLowerCase());
-    if (matched) {
-      setDraftItemCode(matched.code ?? '');
-      const configuredRate = taxRateByProduct[matched.name];
-      if (configuredRate !== undefined) setDraftTaxRate(String(configuredRate));
-    }
+  function matchItem(name: string): Item | undefined {
+    return pickableItems.find((item) => item.name.toLowerCase() === name.trim().toLowerCase());
   }
 
-  function handleAddLine(event: FormEvent) {
-    event.preventDefault();
-    const quantity = Number(draftQuantity);
-    const rate = Number(draftRate);
-    if (!(quantity > 0) || !(rate > 0) || draftItemName.trim() === '') return;
+  function updateLine(localId: string, patch: Partial<LocalLineItem>) {
+    onChange(lines.map((line) => (line.localId === localId ? { ...line, ...patch } : line)));
+  }
 
-    const matched = pickableItems.find(
-      (item) => item.name.toLowerCase() === draftItemName.trim().toLowerCase(),
-    );
-
-    onChange([
-      ...lines,
-      {
-        localId: makeLocalId(),
-        itemId: matched?.id,
-        itemCode: draftItemCode.trim(),
-        itemName: draftItemName.trim(),
-        quantity,
-        rate,
-        isInterstate: draftInterstate,
-        taxRate: draftTaxRate.trim() === '' ? 0 : Number(draftTaxRate),
-      },
-    ]);
-    setDraftItemName('');
-    setDraftItemCode('');
-    setDraftQuantity('');
-    setDraftRate('');
-    setDraftInterstate(false);
-    setDraftTaxRate('');
+  function updateLineName(localId: string, name: string) {
+    const matched = matchItem(name);
+    const patch: Partial<LocalLineItem> = { itemName: name, itemId: matched?.id };
+    if (matched) {
+      patch.itemCode = matched.code ?? '';
+      const configuredRate = taxRateByProduct[matched.name];
+      if (configuredRate !== undefined) patch.taxRate = configuredRate;
+    }
+    updateLine(localId, patch);
   }
 
   function handleRemoveLine(localId: string) {
     onChange(lines.filter((line) => line.localId !== localId));
   }
 
+  function updateDraft(patch: Partial<LocalLineItem>) {
+    setDraft((prev) => ({ ...prev, ...patch }));
+  }
+
+  function updateDraftName(name: string) {
+    const matched = matchItem(name);
+    const patch: Partial<LocalLineItem> = { itemName: name, itemId: matched?.id };
+    if (matched) {
+      patch.itemCode = matched.code ?? '';
+      const configuredRate = taxRateByProduct[matched.name];
+      if (configuredRate !== undefined) patch.taxRate = configuredRate;
+    }
+    updateDraft(patch);
+  }
+
+  const canAddDraft = draft.quantity > 0 && draft.rate > 0 && draft.itemName.trim() !== '';
+
+  function handleAddDraft() {
+    if (!canAddDraft) return;
+    onChange([...lines, { ...draft, itemCode: draft.itemCode.trim(), itemName: draft.itemName.trim() }]);
+    setDraft(emptyDraftLine());
+  }
+
   return (
     <div className="form-field">
-      <label>Extra items (lubricants, oil, etc. — optional)</label>
+      <label>Items</label>
       <div className="section-note" style={{ marginBottom: 8 }}>
-        GST is added on top of quantity × rate; fuel itself is never taxed here — its rate already
-        includes VAT.
+        Fuel is already tax-inclusive (no tax columns for it). Extra items — lubricants, oil, etc. —
+        carry GST added on top of quantity × rate; the code/tax % default from Item Master and the GST
+        settings but stay editable per row.
       </div>
 
-      {lines.length > 0 && (
-        <div className="table-card" style={{ marginBottom: 8 }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Item</th>
-                <th className="num">Qty</th>
-                <th className="num">Rate</th>
-                <th className="num">Amount</th>
-                <th className="num">Tax %</th>
-                <th className="num">CGST</th>
-                <th className="num">SGST</th>
-                <th className="num">IGST</th>
-                <th className="num">Line total</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => {
-                const totals = lineItemAmounts(line);
-                return (
-                  <tr key={line.localId}>
-                    <td>{line.itemCode || '—'}</td>
-                    <td>{line.itemName}</td>
-                    <td className="num">{line.quantity}</td>
-                    <td className="num">{line.rate.toFixed(2)}</td>
-                    <td className="num">{totals.amount.toFixed(2)}</td>
-                    <td className="num">{line.taxRate}%{line.isInterstate ? ' (IGST)' : ''}</td>
-                    <td className="num">{totals.cgstAmount.toFixed(2)}</td>
-                    <td className="num">{totals.sgstAmount.toFixed(2)}</td>
-                    <td className="num">{totals.igstAmount.toFixed(2)}</td>
-                    <td className="num">{totals.lineTotal.toFixed(2)}</td>
-                    <td>
-                      <button type="button" className="btn-secondary" onClick={() => handleRemoveLine(line.localId)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="table-card" style={{ marginBottom: 0, padding: 0 }}>
+        <table className="billing-grid-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Item name</th>
+              <th className="num">Qty</th>
+              <th className="num">Rate</th>
+              <th className="num">Amount</th>
+              <th className="num">Tax %</th>
+              <th>Interstate</th>
+              <th className="num">CGST</th>
+              <th className="num">SGST</th>
+              <th className="num">IGST</th>
+              <th className="num">Line total</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="fuel-row">
+              <td className="readonly-cell">—</td>
+              <td>
+                <input
+                  list={`${idPrefix}-fuel-item-master`}
+                  value={fuel.productType}
+                  onChange={(e) => fuel.onProductTypeChange(e.target.value)}
+                  placeholder="e.g. Petrol, Diesel"
+                  required
+                />
+                <datalist id={`${idPrefix}-fuel-item-master`}>
+                  {items.map((item) => (
+                    <option key={item.id} value={item.name} />
+                  ))}
+                </datalist>
+              </td>
+              <td className="num">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={fuel.litres}
+                  onChange={(e) => fuel.onLitresChange(e.target.value)}
+                  required
+                />
+              </td>
+              <td className="num readonly-cell">{fuel.resolvedRate ? fuel.resolvedRate.toFixed(2) : '—'}</td>
+              <td className="num">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={fuel.amount}
+                  onChange={(e) => fuel.onAmountChange(e.target.value)}
+                  required
+                />
+              </td>
+              <td className="num readonly-cell">—</td>
+              <td className="readonly-cell">—</td>
+              <td className="num readonly-cell">—</td>
+              <td className="num readonly-cell">—</td>
+              <td className="num readonly-cell">—</td>
+              <td className="num readonly-cell">{fuelAmountNumber.toFixed(2)}</td>
+              <td></td>
+            </tr>
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div className="form-field" style={{ marginBottom: 0, flex: '1 1 160px' }}>
-          <label htmlFor={`${idPrefix}-li-name`}>Item</label>
-          <input
-            id={`${idPrefix}-li-name`}
-            list={`${idPrefix}-li-item-master`}
-            value={draftItemName}
-            onChange={(e) => handleDraftItemNameChange(e.target.value)}
-            placeholder="e.g. Engine Oil 1L"
-          />
-          <datalist id={`${idPrefix}-li-item-master`}>
-            {pickableItems.map((item) => (
-              <option key={item.id} value={item.name} />
-            ))}
-          </datalist>
-        </div>
-        <div className="form-field" style={{ marginBottom: 0, flex: '0 1 90px' }}>
-          <label htmlFor={`${idPrefix}-li-code`}>Code</label>
-          <input id={`${idPrefix}-li-code`} value={draftItemCode} onChange={(e) => setDraftItemCode(e.target.value)} />
-        </div>
-        <div className="form-field" style={{ marginBottom: 0, flex: '0 1 80px' }}>
-          <label htmlFor={`${idPrefix}-li-qty`}>Qty</label>
-          <input
-            id={`${idPrefix}-li-qty`}
-            type="number"
-            min="0"
-            step="0.01"
-            value={draftQuantity}
-            onChange={(e) => setDraftQuantity(e.target.value)}
-          />
-        </div>
-        <div className="form-field" style={{ marginBottom: 0, flex: '0 1 90px' }}>
-          <label htmlFor={`${idPrefix}-li-rate`}>Rate</label>
-          <input
-            id={`${idPrefix}-li-rate`}
-            type="number"
-            min="0"
-            step="0.01"
-            value={draftRate}
-            onChange={(e) => setDraftRate(e.target.value)}
-          />
-        </div>
-        <div className="form-field" style={{ marginBottom: 0, flex: '0 1 80px' }}>
-          <label htmlFor={`${idPrefix}-li-tax`}>Tax %</label>
-          <input
-            id={`${idPrefix}-li-tax`}
-            type="number"
-            min="0"
-            step="0.01"
-            value={draftTaxRate}
-            onChange={(e) => setDraftTaxRate(e.target.value)}
-          />
-        </div>
-        <div className="form-field" style={{ marginBottom: 0, flex: '0 0 auto' }}>
-          <label htmlFor={`${idPrefix}-li-interstate`}>Interstate</label>
-          <input
-            id={`${idPrefix}-li-interstate`}
-            type="checkbox"
-            checked={draftInterstate}
-            onChange={(e) => setDraftInterstate(e.target.checked)}
-            style={{ width: 20, height: 20 }}
-          />
-        </div>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={handleAddLine}
-          disabled={!(Number(draftQuantity) > 0) || !(Number(draftRate) > 0) || draftItemName.trim() === ''}
-        >
-          Add item
-        </button>
+            {lines.map((line) => {
+              const totals = lineItemAmounts(line);
+              return (
+                <tr key={line.localId}>
+                  <td>
+                    <input value={line.itemCode} onChange={(e) => updateLine(line.localId, { itemCode: e.target.value })} />
+                  </td>
+                  <td>
+                    <input
+                      list={`${idPrefix}-li-item-master`}
+                      value={line.itemName}
+                      onChange={(e) => updateLineName(line.localId, e.target.value)}
+                    />
+                  </td>
+                  <td className="num">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.quantity || ''}
+                      onChange={(e) => updateLine(line.localId, { quantity: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td className="num">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.rate || ''}
+                      onChange={(e) => updateLine(line.localId, { rate: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td className="num readonly-cell">{totals.amount.toFixed(2)}</td>
+                  <td className="num">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.taxRate || ''}
+                      onChange={(e) => updateLine(line.localId, { taxRate: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={line.isInterstate}
+                      onChange={(e) => updateLine(line.localId, { isInterstate: e.target.checked })}
+                    />
+                  </td>
+                  <td className="num readonly-cell">{totals.cgstAmount.toFixed(2)}</td>
+                  <td className="num readonly-cell">{totals.sgstAmount.toFixed(2)}</td>
+                  <td className="num readonly-cell">{totals.igstAmount.toFixed(2)}</td>
+                  <td className="num readonly-cell">{totals.lineTotal.toFixed(2)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="row-remove-btn"
+                      onClick={() => handleRemoveLine(line.localId)}
+                      title="Remove item"
+                    >
+                      &times;
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+
+            <tr className="add-row">
+              <td>
+                <input value={draft.itemCode} onChange={(e) => updateDraft({ itemCode: e.target.value })} placeholder="Code" />
+              </td>
+              <td>
+                <input
+                  list={`${idPrefix}-li-item-master`}
+                  value={draft.itemName}
+                  onChange={(e) => updateDraftName(e.target.value)}
+                  placeholder="e.g. Engine Oil 1L"
+                />
+                <datalist id={`${idPrefix}-li-item-master`}>
+                  {pickableItems.map((item) => (
+                    <option key={item.id} value={item.name} />
+                  ))}
+                </datalist>
+              </td>
+              <td className="num">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={draft.quantity || ''}
+                  onChange={(e) => updateDraft({ quantity: Number(e.target.value) })}
+                  placeholder="Qty"
+                />
+              </td>
+              <td className="num">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={draft.rate || ''}
+                  onChange={(e) => updateDraft({ rate: Number(e.target.value) })}
+                  placeholder="Rate"
+                />
+              </td>
+              <td className="num readonly-cell">{canAddDraft ? lineItemAmounts(draft).amount.toFixed(2) : '—'}</td>
+              <td className="num">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={draft.taxRate || ''}
+                  onChange={(e) => updateDraft({ taxRate: Number(e.target.value) })}
+                  placeholder="Tax %"
+                />
+              </td>
+              <td>
+                <input
+                  type="checkbox"
+                  checked={draft.isInterstate}
+                  onChange={(e) => updateDraft({ isInterstate: e.target.checked })}
+                />
+              </td>
+              <td className="num readonly-cell" colSpan={4}></td>
+              <td>
+                <button type="button" className="row-add-btn" onClick={handleAddDraft} disabled={!canAddDraft}>
+                  + Add
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   );

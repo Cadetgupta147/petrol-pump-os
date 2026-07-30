@@ -789,6 +789,154 @@
   overflow-y: auto;
 }
 
+/* Wide variant — bill entry (AddCashBillModal/AddCreditBillModal), which
+   needs room for a spreadsheet-style item grid alongside the identity
+   fields, inspired by a dense legacy pump-billing layout (single screen,
+   compact header fields + one dominant item grid + a prominent total bar)
+   restyled with this app's own tokens rather than copied wholesale. */
+.modal-card.wide {
+  width: 980px;
+  max-width: calc(100vw - 40px);
+}
+
+.bill-header-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .bill-header-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* The item grid itself — fuel row (read/edit via props from the parent
+   modal) plus any extra non-fuel line items, all in one continuous,
+   Excel-style bordered table so entry reads as a single spreadsheet rather
+   than a form with a separate list bolted underneath. Column inputs are
+   borderless until focused, so a filled-in grid reads as data, not a form. */
+.billing-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.billing-grid-table th,
+.billing-grid-table td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.billing-grid-table th {
+  background: var(--page-bg);
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: var(--gray);
+  text-align: left;
+  font-weight: 600;
+}
+
+.billing-grid-table th.num,
+.billing-grid-table td.num {
+  text-align: right;
+}
+
+.billing-grid-table td.readonly-cell {
+  color: var(--gray);
+}
+
+.billing-grid-table input,
+.billing-grid-table select {
+  width: 100%;
+  min-width: 56px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 3px 4px;
+  font-size: 12px;
+  border-radius: 3px;
+}
+
+.billing-grid-table input[type='checkbox'] {
+  width: auto;
+  min-width: 0;
+}
+
+.billing-grid-table input:focus,
+.billing-grid-table select:focus {
+  outline: none;
+  border-color: var(--amber);
+  background: var(--white);
+}
+
+.billing-grid-table tr.fuel-row {
+  background: var(--zebra);
+}
+
+.billing-grid-table tr.fuel-row td {
+  font-weight: 600;
+}
+
+.billing-grid-table tr.add-row td {
+  background: var(--page-bg);
+}
+
+.billing-grid-table .row-remove-btn {
+  background: none;
+  border: none;
+  color: var(--red);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.billing-grid-table .row-add-btn {
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dark);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.billing-grid-table .row-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Bottom summary bar — the bill's grand total made prominent, sitting
+   directly above Cancel/Save, echoing the reference layout's bold total
+   box next to its action buttons. */
+.bill-total-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding: 14px 18px;
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.bill-total-bar-breakdown {
+  font-size: 12px;
+  color: var(--gray);
+}
+
+.bill-total-bar-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text-dark);
+  white-space: nowrap;
+}
+
 .form-field {
   margin-bottom: 14px;
 }

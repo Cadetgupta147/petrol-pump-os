@@ -197,6 +197,11 @@ export interface CreateBillRequest {
   entryChannel: EntryChannel;
   paymentLines: CreateBillPaymentLineRequest[];
   lineItems?: CreateBillLineItemRequest[];
+  // 'YYYY-MM-DD' — backdates the bill's recorded date (entering a past
+  // day's sale after the fact). Omit for "now" (the pre-existing default).
+  // Server combines this with the current time-of-day, not midnight — see
+  // BillsService.resolveBillTimestamp(); rejected if it's a future date.
+  billDate?: string;
 }
 
 // Mirrors apps/backend/src/bills/dto/update-bill.dto.ts — any subset of
@@ -219,6 +224,9 @@ export interface UpdateBillRequest {
   litres?: number;
   productType?: string;
   rateApplied?: number;
+  // 'YYYY-MM-DD' — corrects an already-saved bill's recorded date. Omit to
+  // leave the existing timestamp untouched.
+  billDate?: string;
 }
 
 // ---------- Item Master ----------

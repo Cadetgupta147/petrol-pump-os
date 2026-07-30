@@ -259,6 +259,11 @@ export class BillsService {
       itemsTaxTotal,
     );
 
+    // Backdating support — see resolveBillTimestamp()'s comment. Resolved
+    // before the transaction, same as every other validation above; throws
+    // (400) if dto.billDate is a future date.
+    const resolvedTimestamp = this.resolveBillTimestamp(dto.billDate);
+
     // Bill + its BillPaymentLine rows (and, for quick-add, the new Customer
     // row and/or the CreditLimitAlert row, and the LoyaltyTransaction) are
     // created together in one transaction, alongside a BillAuditLog(CREATED)
@@ -346,6 +351,7 @@ export class BillsService {
             loyaltyPointsEarned: loyaltyCalc?.points ?? 0,
             loyaltyBasisUsed: loyaltyCalc?.basis ?? null,
             clientRequestId: dto.clientRequestId,
+            ...(resolvedTimestamp ? { timestamp: resolvedTimestamp } : {}),
             paymentLines: {
               create: dto.paymentLines.map((line) => ({
                 pumpId,
@@ -644,6 +650,11 @@ export class BillsService {
       creditConfig.enforcementMode,
     );
 
+    // Backdating support — see resolveBillTimestamp()'s comment. undefined
+    // when dto.billDate is omitted, which leaves the bill's existing
+    // timestamp untouched below; throws (400) if it's a future date.
+    const resolvedTimestamp = this.resolveBillTimestamp(dto.billDate);
+
     try {
       // Phase 0.3 (docs/multi-tenancy-plan.md) — resolved once, reused for
       // every create() below (BillPaymentLine's nested write is the only
@@ -673,6 +684,7 @@ export class BillsService {
             customerId: effective.customerId,
             lastEditedById: editedById,
             lastEditedAt: new Date(),
+            ...(resolvedTimestamp ? { timestamp: resolvedTimestamp } : {}),
             // Phase 2 (docs/multi-tenancy-plan.md) — pumpId is stamped
             // explicitly here for the same reason as create() above:
             // nested relation writes don't route through the tenant-
@@ -842,6 +854,43 @@ export class BillsService {
           `but got ${amount.toFixed(2)}`,
       );
     }
+  }
+
+  // Resolves an optional billDate ('YYYY-MM-DD') into the Date to stamp on
+  // Bill.timestamp, or undefined when omitted (meaning: leave the default —
+  // now() at create time, or the bill's existing timestamp on edit).
+  //
+  // Combines the SELECTED date with the CURRENT time-of-day rather than
+  // truncating to midnight — MeterReadingsService.checkVariance() matches a
+  // bill to a shift by timestamp falling within that shift's
+  // [shiftStart, shiftEnd] window (Section 7.2), and shifts run during
+  // business hours, not from midnight. Backdating to 00:00:00 would put
+  // almost every backdated bill outside every shift window that day and
+  // silently break that matching; keeping today's clock time on the
+  // selected calendar day keeps it inside a plausible shift instead.
+  private resolveBillTimestamp(billDate: string | undefined): Date | undefined {
+    if (billDate === undefined) {
+      return undefined;
+    }
+    const [year, month, day] = billDate.slice(0, 10).split('-').map(Number);
+    const now = new Date();
+    const combined = new Date(
+      year,
+      month - 1,
+      day,
+      now.getHours(),
+      now.getMinutes(),
+      now.getSeconds(),
+      now.getMilliseconds(),
+    );
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const selectedDay = new Date(year, month - 1, day);
+    if (selectedDay.getTime() > today.getTime()) {
+      throw new BadRequestException(
+        `billDate (${billDate}) cannot be in the future`,
+      );
+    }
+    return combined;
   }
 
   // Rounds to the nearest paisa — every money field this service computes
