@@ -83,7 +83,10 @@ export function BillDetailPage() {
             <div className="content-header">
               <div className="section-title">
                 <h3>{bill.customerName ?? bill.vehicleNumber ?? 'Walk-in bill'}</h3>
-                <span className="section-note">{formatDateTime(bill.timestamp)} &middot; entered via {bill.entryChannel === 'DSM_APP' ? 'DSM app' : 'web'}</span>
+                <span className="section-note">
+                  {bill.billNumber} &middot; {formatDateTime(bill.timestamp)} &middot; entered via{' '}
+                  {bill.entryChannel === 'DSM_APP' ? 'DSM app' : 'web'}
+                </span>
               </div>
               {!bill.deletedAt && (canEdit || canDelete) && (
                 <div className="content-header-right">

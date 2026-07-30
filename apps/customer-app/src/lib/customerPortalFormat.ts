@@ -12,17 +12,27 @@ import type { CreateRedemptionRequest } from '../api/customerPortalApi';
 // rather than via `toLocaleString('en-IN')`/Intl: Hermes's Intl support
 // varies by RN/Expo build config, and this keeps output deterministic in
 // Jest regardless of the runtime's ICU data.
-export function formatIndianNumber(value: number): string {
-  const rounded = Math.round(Math.abs(value));
+//
+// `decimals` defaults to 0 (points balances/counts — genuinely integers, so
+// rounding is a no-op). Every money call site (bill.amount,
+// outstandingBalance, the cash-value subtext) MUST pass `decimals: 2` —
+// displaying a rupee amount rounded to a whole rupee isn't just cosmetic,
+// it silently disagrees with the exact figure the backend/ledger actually
+// holds, and that gap compounds into a real rupees-per-month drift across
+// many small bills.
+export function formatIndianNumber(value: number, decimals = 0): string {
   const sign = value < 0 ? '-' : '';
-  const digits = String(rounded);
-  if (digits.length <= 3) {
-    return sign + digits;
+  const fixed = Math.abs(value).toFixed(decimals);
+  const [intDigits, decDigits] = fixed.split('.');
+  let grouped: string;
+  if (intDigits.length <= 3) {
+    grouped = intDigits;
+  } else {
+    const last3 = intDigits.slice(-3);
+    const rest = intDigits.slice(0, -3);
+    grouped = `${rest.replace(/\B(?=(\d{2})+(?!\d)$)/g, ',')},${last3}`;
   }
-  const last3 = digits.slice(-3);
-  const rest = digits.slice(0, -3);
-  const grouped = rest.replace(/\B(?=(\d{2})+(?!\d)$)/g, ',');
-  return `${sign}${grouped},${last3}`;
+  return `${sign}${grouped}${decDigits ? `.${decDigits}` : ''}`;
 }
 
 function formatClockTime(date: Date): string {
@@ -94,7 +104,7 @@ export function formatPointsSubtext(
 
   if (typeof cashRedemptionRatio === 'number' && cashRedemptionRatio > 0 && pointsBalance > 0) {
     const cashValue = pointsBalance * cashRedemptionRatio;
-    parts.push(`≈ ₹${formatIndianNumber(cashValue)}`);
+    parts.push(`≈ ₹${formatIndianNumber(cashValue, 2)}`);
   }
 
   if (typeof affordableGiftCount === 'number' && affordableGiftCount > 0) {

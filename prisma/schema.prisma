@@ -164,6 +164,7 @@ model Pump {
   taxRateConfigs          TaxRateConfig[]
   staffAdvances           StaffAdvance[]
   customerOpeningBalances CustomerOpeningBalance[]
+  billNumberCounters      BillNumberCounter[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -516,10 +517,30 @@ model MemberIdCounter {
   lastSeq Int
 }
 
+// Backs Bill.billNumber — same "one counter row per pump, atomically
+// incremented in the same transaction as the row it numbers" pattern as
+// MemberIdCounter/allocateQrMemberId (apps/backend/src/customers/member-id.ts).
+// See apps/backend/src/bills/bill-number.ts (allocateBillNumber()) and
+// formatBillNumber() for the actual <PUMP_CODE>-<seq> format.
+model BillNumberCounter {
+  id      String @id @default(cuid())
+  pump    Pump   @relation(fields: [pumpId], references: [id])
+  pumpId  String @unique
+  lastSeq Int
+}
+
 model Bill {
   id                  String        @id @default(cuid())
   pump                Pump          @relation(fields: [pumpId], references: [id])
   pumpId              String
+  // Human-friendly, server-generated sequence — <PUMP_CODE>-<seq zero-padded
+  // to 6>, e.g. "PUMP001-000123" — so a bill can be found by number instead
+  // of only by date/customer/vehicle. Allocated by allocateBillNumber()
+  // (apps/backend/src/bills/bill-number.ts) inside the same transaction that
+  // creates the Bill row; never client-supplied (CLAUDE.md: never trust the
+  // frontend for anything server-authoritative). @@unique is scoped per-pump
+  // like every other compound key in this schema.
+  billNumber          String
   customer            Customer?     @relation(fields: [customerId], references: [id])
   customerId          String?
   vehicleNumber       String?
@@ -569,6 +590,7 @@ model Bill {
   creditAlerts        CreditLimitAlert[]
 
   @@unique([pumpId, clientRequestId])
+  @@unique([pumpId, billNumber])
 }
 
 // Immutable audit trail for Bill — one row per create/edit/delete action,

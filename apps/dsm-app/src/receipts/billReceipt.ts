@@ -73,7 +73,7 @@ export function buildReceiptHtml(bill: Bill): string {
   </head>
   <body>
     <h1>${escapeHtml(PUMP_NAME_PLACEHOLDER)}</h1>
-    <div class="subtitle">Receipt #${escapeHtml(bill.id)} &middot; ${formatTimestamp(bill.timestamp)}</div>
+    <div class="subtitle">Bill #${escapeHtml(bill.billNumber)} &middot; ${formatTimestamp(bill.timestamp)}</div>
 
     <table>
       ${identityRows.join('')}

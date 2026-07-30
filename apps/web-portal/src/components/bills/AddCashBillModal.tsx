@@ -6,7 +6,7 @@ import { computeCurrentRates } from '../../utils/rateMaster';
 import { ApiError } from '../../api/client';
 import type { Bill, Customer, Item, PaymentDirection, PaymentType, RateHistory } from '../../api/types';
 
-interface AddBillModalProps {
+interface AddCashBillModalProps {
   // Section 3.2 — manual bill entry, full web/DSM parity (NewBillScreen.tsx
   // in apps/dsm-app is the mobile equivalent this mirrors). Customers are
   // passed in rather than re-fetched: BillingRegisterPage already loads the
@@ -45,7 +45,18 @@ function makeLocalId(): string {
 // convenience only, Save fails with the same message either way because
 // VehicleBlacklistService.assertNotBlacklisted() is the real, authoritative
 // block.
-export function AddBillModal({ customers, onClose, onCreated }: AddBillModalProps) {
+//
+// This is the "general" bill-entry path — one or more payment lines across
+// CASH/CARD/UPI, with CREDIT still available as one of several split lines
+// (Section 5A.2: "a regular walk-in pays cash and puts the rest on their
+// running tab" is a real, supported case, not something this flow forbids).
+// A bill that's paid ENTIRELY on credit has its own fast path instead —
+// AddCreditBillModal — which skips the payment-line UI entirely since the
+// answer is always "one CREDIT line for the full amount." Both post to the
+// same POST /bills endpoint and go through the identical
+// BillsService.create() validation; this split is a front-end convenience
+// only, not a different backend code path.
+export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillModalProps) {
   const [customerId, setCustomerId] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -216,7 +227,11 @@ export function AddBillModal({ customers, onClose, onCreated }: AddBillModalProp
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={(e) => { void handleSubmit(e); }}>
         <div className="section-title">
-          <h3>Add bill</h3>
+          <h3>Add cash / split-payment bill</h3>
+          <span className="section-note">
+            For a bill paid entirely on credit, use &ldquo;Add credit bill&rdquo; instead — no payment
+            breakdown needed there.
+          </span>
         </div>
 
         <div className="form-field">

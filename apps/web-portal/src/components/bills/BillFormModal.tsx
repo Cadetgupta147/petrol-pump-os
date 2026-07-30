@@ -6,9 +6,10 @@ import type { Bill } from '../../api/types';
 interface BillFormModalProps {
   // This modal only ever edits an existing bill (Section 3.2 web-side edit
   // parity) — there's no "add" mode here, unlike CustomerFormModal. Manual
-  // bill *creation* lives in a separate component, AddBillModal (different
-  // shape: payment lines, customer linking, quick-add — none of which apply
-  // to editing scalar fields on an existing bill).
+  // bill *creation* lives in two separate components, AddCreditBillModal and
+  // AddCashBillModal (different shape: payment lines, customer linking,
+  // quick-add — none of which apply to editing scalar fields on an existing
+  // bill).
   bill: Bill;
   onClose: () => void;
   onSaved: (bill: Bill) => void;

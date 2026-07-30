@@ -1,9 +1,16 @@
+// Always exactly 2 decimals, never rounded to a whole rupee — this value
+// feeds directly from money fields (Bill.amount, outstanding balances,
+// dashboard totals) that are meaningful to the paisa; rounding for display
+// only (the underlying number was always exact) still reads as a real
+// discrepancy to a dealer reconciling against a printed statement, and
+// compounds into a visible rupees-per-month drift across many small bills.
 const rupeeFormatter = new Intl.NumberFormat('en-IN', {
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
 
 export function formatRupees(value: number): string {
-  return `Rs. ${rupeeFormatter.format(Math.round(value))}`;
+  return `Rs. ${rupeeFormatter.format(value)}`;
 }
 
 export function formatLitres(value: number): string {

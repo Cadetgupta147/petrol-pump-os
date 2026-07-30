@@ -34,7 +34,7 @@ export function BillHistoryScreen({ billsState, onRetry }: Props) {
             <View key={bill.id} style={styles.billCard}>
               <View style={styles.billRowTop}>
                 <Text style={styles.billDate}>{formatBillTimestamp(bill.timestamp)}</Text>
-                <Text style={styles.billAmount}>₹{formatIndianNumber(bill.amount)}</Text>
+                <Text style={styles.billAmount}>₹{formatIndianNumber(bill.amount, 2)}</Text>
               </View>
               <Text style={styles.billDetail}>
                 {bill.litres}L {bill.productType}

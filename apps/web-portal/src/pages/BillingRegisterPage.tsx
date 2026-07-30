@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
-import { AddBillModal } from '../components/bills/AddBillModal';
+import { AddCreditBillModal } from '../components/bills/AddCreditBillModal';
+import { AddCashBillModal } from '../components/bills/AddCashBillModal';
 import { getAllBills } from '../api/bills';
 import { getAllCustomers } from '../api/customers';
 import { getStaffList } from '../api/staff';
@@ -21,6 +22,8 @@ interface FilterFormState {
   staffId: string;
   paymentType: PaymentType | '';
   vehicleNumber: string;
+  customerName: string;
+  billNumber: string;
 }
 
 const EMPTY_FILTERS: FilterFormState = {
@@ -30,6 +33,8 @@ const EMPTY_FILTERS: FilterFormState = {
   staffId: '',
   paymentType: '',
   vehicleNumber: '',
+  customerName: '',
+  billNumber: '',
 };
 
 function toApiFilters(form: FilterFormState, offset: number): ListBillsFilters {
@@ -40,6 +45,8 @@ function toApiFilters(form: FilterFormState, offset: number): ListBillsFilters {
     staffId: form.staffId || undefined,
     paymentType: form.paymentType || undefined,
     vehicleNumber: form.vehicleNumber.trim() || undefined,
+    customerName: form.customerName.trim() || undefined,
+    billNumber: form.billNumber.trim() || undefined,
     limit: PAGE_SIZE,
     offset,
   };
@@ -55,8 +62,11 @@ function billPaymentSummary(bill: Bill): string {
 
 // Section 3.2 — the full bill register: view/search/manage every bill ever
 // entered, from any channel. Filters (date range, customer, DSM, payment
-// type, vehicle number) per the plan's explicit spec; row click opens the
-// existing BillDetailPage, which already has the edit/delete parity built.
+// type, vehicle number) per the plan's explicit spec, plus bill number and
+// typed customer-name search (not in the original spec — added so a bill can
+// be found by its printed number, or by a walk-in's typed name, not only by
+// the linked-customer dropdown). Row click opens the existing BillDetailPage,
+// which already has the edit/delete parity built.
 export function BillingRegisterPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState<FilterFormState>(EMPTY_FILTERS);
@@ -67,7 +77,8 @@ export function BillingRegisterPage() {
   const [staff, setStaff] = useState<StaffListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [showAddCreditModal, setShowAddCreditModal] = useState(false);
+  const [showAddCashModal, setShowAddCashModal] = useState(false);
   const [createdNotice, setCreatedNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -137,7 +148,8 @@ export function BillingRegisterPage() {
   // than triggering a refetch — it always belongs there (bills are ordered
   // newest-first) regardless of which filters/page are currently active.
   function handleBillCreated(bill: Bill) {
-    setShowAddModal(false);
+    setShowAddCreditModal(false);
+    setShowAddCashModal(false);
     setBills((prev) => [bill, ...(prev ?? [])]);
     setTotal((prev) => prev + 1);
     setCreatedNotice(
@@ -161,8 +173,19 @@ export function BillingRegisterPage() {
             <span className="section-note">Section 3.2 — every bill, any channel. Click a row for the full detail/audit trail.</span>
           </div>
           <div className="content-header-right">
-            <button type="button" className="export-btn" onClick={() => { setCreatedNotice(null); setShowAddModal(true); }}>
-              Add bill
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => { setCreatedNotice(null); setShowAddCreditModal(true); }}
+            >
+              Add credit bill
+            </button>
+            <button
+              type="button"
+              className="export-btn"
+              onClick={() => { setCreatedNotice(null); setShowAddCashModal(true); }}
+            >
+              Add cash bill
             </button>
           </div>
         </div>
@@ -190,6 +213,15 @@ export function BillingRegisterPage() {
               />
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>
+              <label htmlFor="br-bill-number">Bill #</label>
+              <input
+                id="br-bill-number"
+                value={form.billNumber}
+                onChange={(e) => setForm({ ...form, billNumber: e.target.value })}
+                placeholder="e.g. PUMP001-000123"
+              />
+            </div>
+            <div className="form-field" style={{ marginBottom: 0 }}>
               <label htmlFor="br-vehicle">Vehicle number</label>
               <input
                 id="br-vehicle"
@@ -199,7 +231,16 @@ export function BillingRegisterPage() {
               />
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>
-              <label htmlFor="br-customer">Customer</label>
+              <label htmlFor="br-customer-name">Customer name (typed)</label>
+              <input
+                id="br-customer-name"
+                value={form.customerName}
+                onChange={(e) => setForm({ ...form, customerName: e.target.value })}
+                placeholder="Partial match, e.g. Sharma"
+              />
+            </div>
+            <div className="form-field" style={{ marginBottom: 0 }}>
+              <label htmlFor="br-customer">Linked customer</label>
               <select
                 id="br-customer"
                 value={form.customerId}
@@ -266,6 +307,7 @@ export function BillingRegisterPage() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th>Bill #</th>
                     <th>Date</th>
                     <th>Customer / vehicle</th>
                     <th>Product</th>
@@ -279,6 +321,7 @@ export function BillingRegisterPage() {
                 <tbody>
                   {bills.map((bill) => (
                     <tr key={bill.id} className="clickable-row" onClick={() => navigate(`/bills/${bill.id}`)}>
+                      <td>{bill.billNumber}</td>
                       <td>{formatDateTime(bill.timestamp)}</td>
                       <td>{bill.customerName ?? bill.vehicleNumber ?? 'Walk-in'}</td>
                       <td>{bill.productType}</td>
@@ -320,10 +363,17 @@ export function BillingRegisterPage() {
         )}
       </div>
 
-      {showAddModal && (
-        <AddBillModal
+      {showAddCreditModal && (
+        <AddCreditBillModal
           customers={customers}
-          onClose={() => setShowAddModal(false)}
+          onClose={() => setShowAddCreditModal(false)}
+          onCreated={handleBillCreated}
+        />
+      )}
+      {showAddCashModal && (
+        <AddCashBillModal
+          customers={customers}
+          onClose={() => setShowAddCashModal(false)}
           onCreated={handleBillCreated}
         />
       )}

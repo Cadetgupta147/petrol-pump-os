@@ -25,6 +25,8 @@ describe('BillsService.assertAmountMatchesRate tolerance', () => {
     creditLimitAlert: { create: jest.Mock };
     loyaltyTransaction: { create: jest.Mock };
     loyaltyConfig: { findUnique: jest.Mock };
+    billNumberCounter: { update: jest.Mock };
+    pump: { findUniqueOrThrow: jest.Mock };
     $transaction: jest.Mock;
   };
   let getCurrentRate: jest.Mock;
@@ -45,6 +47,8 @@ describe('BillsService.assertAmountMatchesRate tolerance', () => {
       creditLimitAlert: { create: jest.fn().mockResolvedValue({}) },
       loyaltyTransaction: { create: jest.fn().mockResolvedValue({}) },
       loyaltyConfig: { findUnique: jest.fn().mockResolvedValue(null) },
+      billNumberCounter: { update: jest.fn().mockResolvedValue({ lastSeq: 1 }) },
+      pump: { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'default_pump', pumpCode: 'PUMP001' }) },
       $transaction: jest.fn(),
     };
     prisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(prisma));

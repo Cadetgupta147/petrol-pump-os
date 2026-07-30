@@ -25,9 +25,16 @@ describe('formatIndianNumber', () => {
     expect(formatIndianNumber(1234567)).toBe('12,34,567');
   });
 
-  it('rounds fractional values and preserves sign', () => {
+  it('rounds fractional values and preserves sign (default: 0 decimals, for point counts)', () => {
     expect(formatIndianNumber(1240.6)).toBe('1,241');
     expect(formatIndianNumber(-500)).toBe('-500');
+  });
+
+  it('with decimals: 2 (money), preserves paise instead of rounding to a whole rupee', () => {
+    expect(formatIndianNumber(4141.5, 2)).toBe('4,141.50');
+    expect(formatIndianNumber(1240, 2)).toBe('1,240.00');
+    expect(formatIndianNumber(-500.25, 2)).toBe('-500.25');
+    expect(formatIndianNumber(123456.7, 2)).toBe('1,23,456.70');
   });
 });
 
@@ -59,11 +66,11 @@ describe('formatBillTimestamp', () => {
 
 describe('formatPointsSubtext', () => {
   it('returns both halves when a cash ratio and affordable gifts exist', () => {
-    expect(formatPointsSubtext(1240, 1, 2)).toBe('≈ ₹1,240 or 2 gifts');
+    expect(formatPointsSubtext(1240, 1, 2)).toBe('≈ ₹1,240.00 or 2 gifts');
   });
 
   it('singularizes "gift" for a count of exactly 1', () => {
-    expect(formatPointsSubtext(1240, 1, 1)).toBe('≈ ₹1,240 or 1 gift');
+    expect(formatPointsSubtext(1240, 1, 1)).toBe('≈ ₹1,240.00 or 1 gift');
   });
 
   it('omits the cash half when no ratio is configured', () => {
@@ -71,7 +78,7 @@ describe('formatPointsSubtext', () => {
   });
 
   it('omits the gift half when no gifts are affordable', () => {
-    expect(formatPointsSubtext(1240, 1, 0)).toBe('≈ ₹1,240');
+    expect(formatPointsSubtext(1240, 1, 0)).toBe('≈ ₹1,240.00');
   });
 
   it('returns null when neither half applies', () => {

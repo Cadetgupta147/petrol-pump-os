@@ -62,6 +62,7 @@ describe('offlineBillQueue', () => {
     await enqueueBill(baseInput);
     mockCreateBill.mockResolvedValue({
       id: 'bill-1',
+      billNumber: 'PUMP001-000001',
       customerId: null,
       vehicleNumber: 'KA01AB1234',
       customerName: null,

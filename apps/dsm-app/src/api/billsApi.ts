@@ -56,6 +56,9 @@ export interface BillPaymentLine {
 
 export interface Bill {
   id: string;
+  // Server-generated, human-friendly sequence (<PUMP_CODE>-<seq>, e.g.
+  // "PUMP001-000123") — never client-supplied.
+  billNumber: string;
   customerId: string | null;
   vehicleNumber: string | null;
   customerName: string | null;

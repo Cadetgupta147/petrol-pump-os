@@ -74,7 +74,7 @@ export function HomeScreen({
         <View style={styles.dueCard} testID="outstanding-due-card">
           <View>
             <Text style={styles.dueLabel}>Outstanding due</Text>
-            <Text style={styles.dueValue}>₹{formatIndianNumber(me.outstandingBalance)}</Text>
+            <Text style={styles.dueValue}>₹{formatIndianNumber(me.outstandingBalance, 2)}</Text>
           </View>
           <Pressable
             style={styles.payNowButton}
@@ -146,7 +146,7 @@ export function HomeScreen({
             <View key={bill.id} style={styles.billRow}>
               <View style={styles.billRowTop}>
                 <Text style={styles.billDate}>{formatBillTimestamp(bill.timestamp)}</Text>
-                <Text style={styles.billAmount}>₹{formatIndianNumber(bill.amount)}</Text>
+                <Text style={styles.billAmount}>₹{formatIndianNumber(bill.amount, 2)}</Text>
               </View>
               <Text style={styles.billDetail}>
                 {bill.litres}L {bill.productType} · +{bill.loyaltyPointsEarned} pts earned

@@ -23,8 +23,9 @@ import type { Item, RateHistory } from '../api/types';
 // would mean one request per distinct product just to render a "current
 // rate" summary. "Current" below is instead derived client-side from the
 // same history list already being displayed (see utils/rateMaster.ts's
-// computeCurrentRates, shared with DashboardPage and AddBillModal), so the
-// page only ever makes the one GET /rate-master call.
+// computeCurrentRates, shared with DashboardPage and the AddCreditBillModal/
+// AddCashBillModal bill-entry forms), so the page only ever makes the one
+// GET /rate-master call.
 
 export function RateMasterPage() {
   const { staff } = useAuth();

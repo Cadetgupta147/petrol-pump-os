@@ -5,8 +5,9 @@ import type { RateHistory } from '../api/types';
 // logic as RateMasterService.getCurrentRate() on the backend, just run
 // client-side against a list already in hand instead of one request per
 // product. Shared by RateMasterPage (its own settings table), DashboardPage
-// (the Rs./L chips), and AddBillModal (amount/litres auto-calc) — pulled out
-// here so the three don't drift out of sync with their own copies.
+// (the Rs./L chips), and AddCreditBillModal/AddCashBillModal (amount/litres
+// auto-calc) — pulled out here so they don't drift out of sync with their
+// own copies.
 export function computeCurrentRates(history: RateHistory[]): RateHistory[] {
   const now = Date.now();
   const current = new Map<string, RateHistory>();

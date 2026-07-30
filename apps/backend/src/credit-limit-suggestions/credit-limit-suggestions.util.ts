@@ -58,7 +58,7 @@ export function computeCreditLimitSuggestion(
     return {
       action: 'FREEZE_OR_REDUCE',
       suggestedLimit,
-      reasoning: `₹${bucket30Plus.toFixed(0)} has been outstanding 30+ days — suggest capping the limit at current outstanding (no further headroom) until this clears.`,
+      reasoning: `₹${bucket30Plus.toFixed(2)} has been outstanding 30+ days — suggest capping the limit at current outstanding (no further headroom) until this clears.`,
     };
   }
 
@@ -71,7 +71,7 @@ export function computeCreditLimitSuggestion(
       action: 'NO_CHANGE',
       suggestedLimit: creditLimit,
       reasoning: bucket15to30 > AGING_EPSILON
-        ? `₹${bucket15to30.toFixed(0)} is aging 15-30 days — not yet 30+, but not clean enough to suggest an increase.`
+        ? `₹${bucket15to30.toFixed(2)} is aging 15-30 days — not yet 30+, but not clean enough to suggest an increase.`
         : 'Outstanding balance is all within 15 days — normal in-progress billing, no change suggested.',
     };
   }

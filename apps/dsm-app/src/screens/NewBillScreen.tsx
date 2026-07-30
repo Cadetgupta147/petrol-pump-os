@@ -530,6 +530,7 @@ export function NewBillScreen({ staff, accessToken, onBack }: Props) {
       <View style={styles.container}>
         <View style={styles.successBox} testID="bill-success">
           <Text style={styles.successTitle}>Bill saved</Text>
+          <Text style={styles.resultLine} testID="bill-number-line">Bill #: {successBill.billNumber}</Text>
           <Text style={styles.resultLine}>Amount: ₹{successBill.amount.toFixed(2)}</Text>
           <Text style={styles.resultLine}>Litres: {successBill.litres}</Text>
           <Text style={styles.resultLine}>Product: {successBill.productType}</Text>

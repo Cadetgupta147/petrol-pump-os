@@ -28,6 +28,7 @@ describe('BillsService vehicle blacklist enforcement (Section 3.4B)', () => {
     customerOpeningBalance: { aggregate: jest.Mock };
     creditLimitAlert: { create: jest.Mock };
     memberIdCounter: { update: jest.Mock };
+    billNumberCounter: { update: jest.Mock };
     pump: { findUniqueOrThrow: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -87,6 +88,9 @@ describe('BillsService vehicle blacklist enforcement (Section 3.4B)', () => {
       creditLimitAlert: { create: jest.fn().mockResolvedValue({}) },
       memberIdCounter: {
         update: jest.fn().mockResolvedValue({ id: 'singleton', pumpId: 'default_pump', lastSeq: 1 }),
+      },
+      billNumberCounter: {
+        update: jest.fn().mockResolvedValue({ id: 'billctr_default_pump', pumpId: 'default_pump', lastSeq: 1 }),
       },
       pump: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'default_pump', pumpCode: 'PUMP001' }),
@@ -201,6 +205,7 @@ describe('BillsService credit-limit evaluation includes CustomerOpeningBalance',
     customerOpeningBalance: { aggregate: jest.Mock };
     creditLimitAlert: { create: jest.Mock };
     memberIdCounter: { update: jest.Mock };
+    billNumberCounter: { update: jest.Mock };
     pump: { findUniqueOrThrow: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -245,6 +250,9 @@ describe('BillsService credit-limit evaluation includes CustomerOpeningBalance',
       creditLimitAlert: { create: jest.fn().mockResolvedValue({}) },
       memberIdCounter: {
         update: jest.fn().mockResolvedValue({ id: 'singleton', pumpId: 'default_pump', lastSeq: 1 }),
+      },
+      billNumberCounter: {
+        update: jest.fn().mockResolvedValue({ id: 'billctr_default_pump', pumpId: 'default_pump', lastSeq: 1 }),
       },
       pump: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'default_pump', pumpCode: 'PUMP001' }),

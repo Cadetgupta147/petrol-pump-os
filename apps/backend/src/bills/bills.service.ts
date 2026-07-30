@@ -20,6 +20,7 @@ import {
   LoyaltyService,
 } from '../loyalty/loyalty.service';
 import { allocateQrMemberId } from '../customers/member-id';
+import { allocateBillNumber } from './bill-number';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { parseDateRangeStrings } from '../common/date-range.util';
 import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
@@ -286,9 +287,12 @@ export class BillsService {
         // BillPaymentLine.pumpId below MUST be stamped explicitly — it's
         // the only one of these that's load-bearing at runtime, not just
         // to satisfy TypeScript.
+        const billNumber = await allocateBillNumber(tx, pumpId);
+
         const created = await tx.bill.create({
           data: {
             pumpId,
+            billNumber,
             customerId: resolvedCustomerId,
             vehicleNumber: dto.vehicleNumber,
             customerName: dto.customerName,
@@ -386,7 +390,8 @@ export class BillsService {
   // are what the new Billing Register screen uses to actually page through
   // results.
   async findAll(query: ListBillsQueryDto = {}) {
-    const { from, to, customerId, staffId, paymentType, vehicleNumber, limit, offset } = query;
+    const { from, to, customerId, staffId, paymentType, vehicleNumber, customerName, billNumber, limit, offset } =
+      query;
 
     if (from && to) {
       const { start } = parseDateRangeStrings(from, from);
@@ -412,6 +417,12 @@ export class BillsService {
     }
     if (vehicleNumber) {
       where.vehicleNumber = { contains: vehicleNumber, mode: 'insensitive' };
+    }
+    if (customerName) {
+      where.customerName = { contains: customerName, mode: 'insensitive' };
+    }
+    if (billNumber) {
+      where.billNumber = { contains: billNumber, mode: 'insensitive' };
     }
     if (paymentType) {
       where.paymentLines = { some: { paymentType, direction: 'IN' } };

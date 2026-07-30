@@ -90,6 +90,7 @@ const CUSTOMER_B_LOOKUP: CustomerLookup = {
 function fakeBill(overrides: Partial<Bill> = {}): Bill {
   return {
     id: 'bill-1',
+    billNumber: 'PUMP001-000001',
     customerId: null,
     vehicleNumber: 'DL01AA1111',
     customerName: null,

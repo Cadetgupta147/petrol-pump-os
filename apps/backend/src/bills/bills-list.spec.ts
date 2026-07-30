@@ -83,6 +83,30 @@ describe('BillsService.findAll (Section 3.2 register filters)', () => {
     );
   });
 
+  it('filters by customerName with a case-insensitive partial match', async () => {
+    await service.findAll({ customerName: 'sharma' });
+    expect(prisma.bill.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          deletedAt: null,
+          customerName: { contains: 'sharma', mode: 'insensitive' },
+        },
+      }),
+    );
+  });
+
+  it('filters by billNumber with a case-insensitive partial match', async () => {
+    await service.findAll({ billNumber: 'PUMP001-0001' });
+    expect(prisma.bill.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          deletedAt: null,
+          billNumber: { contains: 'PUMP001-0001', mode: 'insensitive' },
+        },
+      }),
+    );
+  });
+
   it('filters by paymentType via a paymentLines.some IN-direction match', async () => {
     await service.findAll({ paymentType: 'UPI' });
     expect(prisma.bill.findMany).toHaveBeenCalledWith(
