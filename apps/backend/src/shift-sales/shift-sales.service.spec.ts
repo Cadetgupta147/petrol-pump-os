@@ -8,6 +8,7 @@ import { ShiftSalesService } from './shift-sales.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { UpiCaptureConfigService } from '../upi-capture-config/upi-capture-config.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 
 // Section 8A.2 — money-touching (CLAUDE.md: variance/expected-value math
 // needs tests). Covers create()'s walkInLitres/expectedValue/variance
@@ -48,6 +49,13 @@ describe('ShiftSalesService', () => {
     upiCaptureConfigService = {
       getRaw: jest.fn().mockResolvedValue({ autoCaptureEnabled: false }),
     };
+    // Section 12 — best-effort ledger auto-posting, not under test here (see
+    // ledger-posting.service.spec.ts for its own coverage); stubbed to a
+    // no-op so create()/update() don't need a real LedgerAccount/Voucher
+    // round trip.
+    const ledgerPostingService = {
+      repostShiftSalesVoucher: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -55,6 +63,7 @@ describe('ShiftSalesService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: RateMasterService, useValue: rateMasterService },
         { provide: UpiCaptureConfigService, useValue: upiCaptureConfigService },
+        { provide: LedgerPostingService, useValue: ledgerPostingService },
       ],
     }).compile();
 

@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { UpiCaptureConfigService } from '../upi-capture-config/upi-capture-config.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { CreateShiftSalesSummaryDto } from './dto/create-shift-sales-summary.dto';
 import { UpdateShiftSalesSummaryDto } from './dto/update-shift-sales-summary.dto';
 
@@ -30,6 +31,7 @@ export class ShiftSalesService {
     private readonly prisma: PrismaService,
     private readonly rateMasterService: RateMasterService,
     private readonly upiCaptureConfigService: UpiCaptureConfigService,
+    private readonly ledgerPostingService: LedgerPostingService,
   ) {}
 
   // Section 8A.3 fallback: a manually-entered walkInUpiCollected is only
@@ -144,6 +146,19 @@ export class ShiftSalesService {
       },
     });
 
+    // Section 12 — best-effort, non-blocking (see LedgerPostingService's
+    // header comment): the summary above is already committed regardless of
+    // whether this succeeds.
+    await this.ledgerPostingService.repostShiftSalesVoucher({
+      pumpId: created.pumpId,
+      shiftSalesSummaryId: created.id,
+      dsmId: created.dsmId,
+      walkInCashCollected: created.walkInCashCollected,
+      walkInCardCollected: created.walkInCardCollected,
+      walkInUpiCollected: created.walkInUpiCollected,
+      date: reading.shiftEnd,
+    });
+
     return negativeWalkInWarning
       ? { ...created, warning: negativeWalkInWarning }
       : created;
@@ -183,10 +198,30 @@ export class ShiftSalesService {
       existing.expectedValue -
       (walkInCashCollected + walkInUpiCollected + walkInCardCollected);
 
-    return this.prisma.shiftSalesSummary.update({
+    const updated = await this.prisma.shiftSalesSummary.update({
       where: { id },
       data: { walkInCashCollected, walkInCardCollected, walkInUpiCollected, variance },
     });
+
+    // Section 12 — best-effort, non-blocking (see LedgerPostingService's
+    // header comment). Re-fetches the shift's MeterReading for its date
+    // (ShiftSalesSummary itself has no date field — see the model comment
+    // in schema.prisma) since update() doesn't otherwise need it.
+    const reading = await this.prisma.meterReading.findUnique({
+      where: { id: updated.shiftId },
+      select: { shiftEnd: true },
+    });
+    await this.ledgerPostingService.repostShiftSalesVoucher({
+      pumpId: updated.pumpId,
+      shiftSalesSummaryId: updated.id,
+      dsmId: updated.dsmId,
+      walkInCashCollected: updated.walkInCashCollected,
+      walkInCardCollected: updated.walkInCardCollected,
+      walkInUpiCollected: updated.walkInUpiCollected,
+      date: reading?.shiftEnd ?? updated.createdAt,
+    });
+
+    return updated;
   }
 
   // Section 8A.3 — called by UpiWebhookService inside its own transaction

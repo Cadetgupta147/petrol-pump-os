@@ -28,6 +28,9 @@ import {
   Smartphone,
   Droplet,
   Percent,
+  BookOpen,
+  Landmark,
+  ListPlus,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -91,6 +94,9 @@ const NAV_ENTRIES: NavEntry[] = [
     label: 'Finance',
     icon: CircleDollarSign,
     children: [
+      { label: 'Day book', to: '/day-book', icon: BookOpen },
+      { label: 'Voucher entry', to: '/vouchers', icon: ListPlus },
+      { label: 'Ledger Master', to: '/ledger-accounts', icon: Landmark },
       { label: 'Cash custody', to: '/cash-custody', icon: Banknote },
       { label: 'Expenses', to: '/expenses', icon: ReceiptText },
       { label: 'UPI capture', to: '/upi-capture-settings', icon: Smartphone },

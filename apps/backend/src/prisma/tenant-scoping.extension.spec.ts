@@ -139,6 +139,10 @@ describe('TENANT_SCOPED_MODELS', () => {
       'DensityRangeConfig',
       'TaxRateConfig',
       'StaffAdvance',
+      'LedgerAccount',
+      'Voucher',
+      'VoucherLine',
+      'VoucherNumberCounter',
     ];
     expect([...TENANT_SCOPED_MODELS].sort()).toEqual([...expected].sort());
   });

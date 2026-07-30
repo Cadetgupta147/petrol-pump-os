@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
 import { CashCustodyService } from './cash-custody.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { runInTenantContext } from '../common/tenant-context';
 import type { CreateCashCustodyLogDto } from './dto/create-cash-custody-log.dto';
@@ -35,8 +36,9 @@ describe('CashCustodyService', () => {
       findFirst: jest.Mock;
       create: jest.Mock;
     };
-    staff: { findMany: jest.Mock };
+    staff: { findMany: jest.Mock; findUnique: jest.Mock };
   };
+  let ledgerPostingService: { postCashCustodyVoucher: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -44,13 +46,22 @@ describe('CashCustodyService', () => {
         findFirst: jest.fn(),
         create: jest.fn(),
       },
-      staff: { findMany: jest.fn() },
+      staff: {
+        findMany: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue({ name: 'Test Staff' }),
+      },
     };
+    // Section 12 — best-effort ledger auto-posting, not under test here (see
+    // ledger-posting.service.spec.ts for its own coverage); stubbed to a
+    // no-op so CashCustodyService.create() doesn't need a real
+    // LedgerAccount/Voucher round trip.
+    ledgerPostingService = { postCashCustodyVoucher: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CashCustodyService,
         { provide: PrismaService, useValue: prisma },
+        { provide: LedgerPostingService, useValue: ledgerPostingService },
       ],
     }).compile();
 

@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
 import { requireTenantContext } from '../common/tenant-context';
 import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { CreateCashCustodyLogDto } from './dto/create-cash-custody-log.dto';
 
 // Section 8 — Day-End Cash Reconciliation & Custody. This is money-handling
@@ -22,7 +23,10 @@ const BALANCE_EPSILON = 0.01;
 
 @Injectable()
 export class CashCustodyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledgerPostingService: LedgerPostingService,
+  ) {}
 
   // Section 8.1 step 1 (day-end 3-way split) + step 2 (next-day
   // "brought back" settlement) in one call — see the DTO's top comment for
@@ -104,7 +108,7 @@ export class CashCustodyService {
       cumulativeOutstandingBeforeToday - broughtBackToday + dto.takenHome;
 
     try {
-      return await this.prisma.cashCustodyLog.create({
+      const created = await this.prisma.cashCustodyLog.create({
         data: {
           pumpId: requireTenantContext().pumpId,
           date,
@@ -118,6 +122,18 @@ export class CashCustodyService {
           handledById,
         },
       });
+      // Section 12 — best-effort, non-blocking (see LedgerPostingService's
+      // header comment): the entry above is already committed regardless of
+      // whether this succeeds.
+      const handledByStaff = await this.prisma.staff.findUnique({
+        where: { id: handledById },
+        select: { name: true },
+      });
+      await this.ledgerPostingService.postCashCustodyVoucher(
+        created,
+        handledByStaff?.name ?? handledById,
+      );
+      return created;
     } catch (error) {
       this.handlePrismaError(error, handledById);
     }

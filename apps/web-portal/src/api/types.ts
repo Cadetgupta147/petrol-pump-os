@@ -1133,6 +1133,150 @@ export interface CashCustodyReportRow {
   lastEntryDate: string;
 }
 
+// ---------- Section 12 — Ledger / Day Book ----------
+//
+// A dealer-configurable chart of accounts + double-entry voucher engine
+// (LedgerAccount/Voucher/VoucherLine), so the Day Book can show real named
+// account heads (credit parties, personal draws, expense categories, bank/
+// clearing accounts — e.g. "BABU JI", "JEEP 0711", "TOLL", "STATE BANK OF
+// INDIA") the way a Tally Day Book does. Two ways lines get in: MANUAL
+// (typed in via the Voucher Entry page — Ledger Master's whole reason for
+// existing) or auto-posted by the backend's LedgerPostingService from an
+// already-existing Bill/ExpenseEntry/CashCustodyLog/ShiftSalesSummary row.
+
+export type LedgerGroup =
+  | 'CASH_IN_HAND'
+  | 'BANK'
+  | 'SALES'
+  | 'PURCHASE'
+  | 'SUNDRY_DEBTOR'
+  | 'SUNDRY_CREDITOR'
+  | 'DIRECT_EXPENSE'
+  | 'INDIRECT_EXPENSE'
+  | 'CAPITAL_ACCOUNT'
+  | 'OTHER';
+
+export type DrCr = 'DEBIT' | 'CREDIT';
+
+export type VoucherType = 'PAYMENT' | 'RECEIPT' | 'CONTRA' | 'JOURNAL' | 'SALES';
+
+export type VoucherSource = 'MANUAL' | 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES';
+
+// Mirrors prisma LedgerAccount. isSystemManaged ledgers (Cash, Sales, Card,
+// UPI, Bank, and lazily-created per-customer/per-staff ledgers) are shown
+// alongside dealer-created ones but can't be deleted (LedgerAccountsPage
+// disables that action for them) — see ledger-accounts.service.ts's remove().
+export interface LedgerAccount {
+  id: string;
+  name: string;
+  group: LedgerGroup;
+  openingBalance: number;
+  openingBalanceType: DrCr;
+  isSystemManaged: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateLedgerAccountRequest {
+  name: string;
+  group: LedgerGroup;
+  openingBalance?: number;
+  openingBalanceType?: DrCr;
+}
+
+export interface UpdateLedgerAccountRequest {
+  name?: string;
+  group?: LedgerGroup;
+  openingBalance?: number;
+  openingBalanceType?: DrCr;
+}
+
+export interface VoucherLineInput {
+  ledgerAccountId: string;
+  amount: number;
+  drCr: DrCr;
+}
+
+// POST /vouchers — manual entry only; source is always stamped MANUAL
+// server-side (VouchersService.create()), never client-supplied.
+export interface CreateVoucherRequest {
+  date: string;
+  voucherType: VoucherType;
+  narration?: string;
+  lines: VoucherLineInput[];
+}
+
+// GET /vouchers / GET /vouchers/:id — full ledger detail per line (unlike
+// the Day Book's lines, which only carry the ledger's name — see
+// DayBookVoucherLine below).
+export interface VoucherListItem {
+  id: string;
+  voucherNumber: string;
+  date: string;
+  voucherType: VoucherType;
+  narration: string | null;
+  source: VoucherSource;
+  createdBy: { name: string };
+  lines: { ledgerAccount: { id: string; name: string }; amount: number; drCr: DrCr }[];
+}
+
+export interface DayBookVoucherLine {
+  ledgerAccountName: string;
+  amount: number;
+  drCr: DrCr;
+}
+
+export interface DayBookVoucher {
+  id: string;
+  voucherNumber: string;
+  date: string;
+  voucherType: VoucherType;
+  narration: string | null;
+  source: VoucherSource;
+  lines: DayBookVoucherLine[];
+}
+
+// One ledger's day: the OTHER leg(s) of each voucher touching it are
+// resolved into counterpartyNames (e.g. Cash's entries show "Sales",
+// "Toll", "Babu Ji" — the same convention as the dealer's Tally printout).
+export interface DayBookLedgerEntry {
+  voucherId: string;
+  voucherNumber: string;
+  voucherType: VoucherType;
+  narration: string | null;
+  counterpartyNames: string[];
+  amount: number;
+  drCr: DrCr;
+}
+
+// A single signed balance rendered as a side: 'DR' when the ledger's net is
+// debit-heavy, 'CR' when credit-heavy — same convention Tally itself prints
+// ("O/B Dr 147269.00", "C/B Dr 143349.00").
+export interface DayBookBalance {
+  side: 'DR' | 'CR';
+  amount: number;
+}
+
+export interface DayBookLedgerSection {
+  ledgerAccountId: string;
+  name: string;
+  group: LedgerGroup;
+  openingBalance: DayBookBalance;
+  closingBalance: DayBookBalance;
+  entries: DayBookLedgerEntry[];
+}
+
+// GET /vouchers/day-book?date= — every ledger touched that date (not just
+// Cash/Bank/Sales — see VouchersService.getDayBook()'s comment for why),
+// sorted Cash/Bank/Sales first then alphabetically, plus the flat
+// chronological voucher list (the "vanilla" Day Book view).
+export interface DayBookReport {
+  date: string;
+  vouchers: DayBookVoucher[];
+  ledgers: DayBookLedgerSection[];
+}
+
 // ---------- Section 8A — Walk-in Shift Sales ----------
 
 // Mirrors prisma ShiftSalesSummary. Read-only view in this app (no create/

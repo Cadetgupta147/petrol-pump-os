@@ -7,6 +7,7 @@ import { CreditConfigService } from '../credit-config/credit-config.service';
 import { LoyaltyService } from '../loyalty/loyalty.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { runInTenantContext } from '../common/tenant-context';
 
@@ -126,6 +127,7 @@ describe('BillsService vehicle blacklist enforcement (Section 3.4B)', () => {
         { provide: RateMasterService, useValue: rateMasterService },
         { provide: LoyaltyService, useValue: loyaltyService },
         { provide: VehicleBlacklistService, useValue: vehicleBlacklistService },
+        { provide: LedgerPostingService, useValue: { postBillVoucher: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -290,6 +292,7 @@ describe('BillsService credit-limit evaluation includes CustomerOpeningBalance',
           provide: VehicleBlacklistService,
           useValue: { assertNotBlacklisted: jest.fn().mockResolvedValue(undefined) },
         },
+        { provide: LedgerPostingService, useValue: { postBillVoucher: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

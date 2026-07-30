@@ -24,6 +24,7 @@ import { allocateBillNumber } from './bill-number';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { parseDateRangeStrings } from '../common/date-range.util';
 import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { ListBillsQueryDto } from './dto/list-bills-query.dto';
@@ -64,6 +65,7 @@ export class BillsService {
     private readonly loyaltyService: LoyaltyService,
     private readonly rateMasterService: RateMasterService,
     private readonly vehicleBlacklistService: VehicleBlacklistService,
+    private readonly ledgerPostingService: LedgerPostingService,
   ) {}
 
   // Finding A1 (docs/production-readiness.md) — enteredById is no longer a
@@ -362,6 +364,14 @@ export class BillsService {
 
         return [created];
       });
+
+      // Section 12 — best-effort, non-blocking (see LedgerPostingService's
+      // header comment): the bill above is already committed regardless of
+      // whether this succeeds.
+      await this.ledgerPostingService.postBillVoucher(
+        bill,
+        bill.customer?.name ?? bill.customerName ?? null,
+      );
 
       // The loud part of the no-config decision (see above): a
       // customer-linked bill that earned nothing because loyalty is

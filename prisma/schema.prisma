@@ -34,6 +34,70 @@ enum PaymentDirection {
   OUT
 }
 
+// ---------- Section 12 — Ledger / Day Book (general-ledger accounting) ----------
+//
+// A dealer-configurable chart of accounts + double-entry voucher engine,
+// so the Day Book can show real named account heads (credit parties,
+// personal draws, expense categories, bank/clearing accounts — e.g. "BABU
+// JI", "JEEP 0711", "TOLL", "STATE BANK OF INDIA") the way Tally's Day Book
+// does, instead of only the fixed cash-flow buckets PumpOS's other entities
+// already track. See LedgerAccount/Voucher/VoucherLine below and
+// ledger-posting.service.ts's header comment for the full design.
+
+enum LedgerGroup {
+  CASH_IN_HAND
+  BANK
+  SALES
+  PURCHASE
+  SUNDRY_DEBTOR
+  SUNDRY_CREDITOR
+  DIRECT_EXPENSE
+  INDIRECT_EXPENSE
+  CAPITAL_ACCOUNT
+  OTHER
+}
+
+enum DrCr {
+  DEBIT
+  CREDIT
+}
+
+enum VoucherType {
+  PAYMENT
+  RECEIPT
+  CONTRA
+  JOURNAL
+  SALES
+}
+
+// MANUAL = owner/accountant typed it in directly (Ledger Master's whole
+// reason for existing — parties, personal draws, misc heads PumpOS has no
+// other record of). The rest are auto-posted by LedgerPostingService from
+// an already-existing PumpOS row — see that service for the source ->
+// voucher mapping.
+enum VoucherSource {
+  MANUAL
+  BILL
+  EXPENSE
+  CASH_CUSTODY
+  SHIFT_SALES
+}
+
+// Discriminator for the handful of ledgers LedgerPostingService needs to
+// find-or-create reliably by MEANING rather than by name (a dealer renaming
+// "Cash" to "Till" shouldn't break auto-posting, and two ledgers named
+// "Cash" — one dealer-typo'd — must never both exist). Null on every
+// dealer-created ledger.
+enum SystemLedgerKey {
+  CASH
+  SALES
+  CARD_CLEARING
+  UPI_CLEARING
+  BANK_DEFAULT
+  UNLINKED_CREDIT_SALES
+  UNLINKED_CREDIT_EXPENSE
+}
+
 enum EntryChannel {
   WEB
   DSM_APP
@@ -165,6 +229,10 @@ model Pump {
   staffAdvances           StaffAdvance[]
   customerOpeningBalances CustomerOpeningBalance[]
   billNumberCounters      BillNumberCounter[]
+  ledgerAccounts          LedgerAccount[]
+  vouchers                Voucher[]
+  voucherLines            VoucherLine[]
+  voucherNumberCounters   VoucherNumberCounter[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -280,6 +348,12 @@ model Staff {
   staffAdvancesReceived           StaffAdvance[]           @relation("StaffAdvanceStaff")
   staffAdvancesRecorded           StaffAdvance[]           @relation("StaffAdvanceRecordedBy")
   customerOpeningBalancesRecorded CustomerOpeningBalance[]
+  vouchersCreated                 Voucher[]
+  // LedgerAccount.linkedStaffId's back-relation — the auto-created "personal
+  // draw" ledger LedgerPostingService posts a CashCustodyLog's takenHome/
+  // broughtBackToday against for this staff member (e.g. the screenshot's
+  // "HOME"/"JACCO"-style entries). At most one per staff member.
+  personalLedgerAccount           LedgerAccount?
 
   @@unique([accountId, pumpId])
 }
@@ -419,6 +493,10 @@ model Customer {
   otpRequests            CustomerOtp[]
   vehicleBlacklists      VehicleBlacklist[]
   openingBalances        CustomerOpeningBalance[]
+  // LedgerAccount.linkedCustomerId's back-relation — the auto-created Sundry
+  // Debtor ledger LedgerPostingService posts a CREDIT Bill payment line
+  // against (e.g. the screenshot's "BABU JI"-style named-party entries).
+  ledgerAccount          LedgerAccount?
 
   @@unique([accountId, pumpId])
 }
@@ -648,27 +726,27 @@ model CreditConfig {
 // nullable + unique): becomes the real per-pump singleton key once required
 // (Phase 0.3).
 model BusinessProfile {
-  id            String   @id @default(cuid())
-  pump          Pump     @relation(fields: [pumpId], references: [id])
-  pumpId        String   @unique
-  businessName  String?
-  gstin         String?
-  pumpLicenseNo String?
-  address       String?
+  id                    String   @id @default(cuid())
+  pump                  Pump     @relation(fields: [pumpId], references: [id])
+  pumpId                String   @unique
+  businessName          String?
+  gstin                 String?
+  pumpLicenseNo         String?
+  address               String?
   // Section 5B — Credit Customer Outstanding Statement letterhead.
-  phone         String?
-  omcBrand      OmcBrand @default(NONE)
+  phone                 String?
+  omcBrand              OmcBrand @default(NONE)
   // Base64 data URLs, not file paths — same inline-storage convention
   // CustomersService.qrCard() already uses for its PNG, since no S3/R2 file
   // storage backend is wired up yet (see purchases.controller.ts's own
   // comment on this same gap). Revisit once real object storage exists.
-  logoImageData        String?
-  letterheadImageData  String?
+  logoImageData         String?
+  letterheadImageData   String?
   // When true, the statement prints straight onto the uploaded
   // letterheadImageData instead of the software-generated header built from
   // the fields above.
-  useUploadedLetterhead Boolean @default(false)
-  updatedAt     DateTime @updatedAt
+  useUploadedLetterhead Boolean  @default(false)
+  updatedAt             DateTime @updatedAt
 }
 
 // Section 3.4A — one alert per bill that exceeded the customer's credit
@@ -1394,6 +1472,99 @@ model CashCustodyLog {
   handledBy                        Staff    @relation(fields: [handledById], references: [id])
   handledById                      String
   createdAt                        DateTime @default(now())
+}
+
+// ---------- Ledger / Day Book (Section 12) ----------
+
+// One account head — dealer-created (isSystemManaged = false, e.g. "BABU
+// JI", "JEEP 0711", "TOLL") or auto-created by LedgerPostingService
+// (isSystemManaged = true: Cash, Sales, Card/UPI clearing, Bank, or a
+// lazily-created per-customer/per-staff ledger). name is the display label
+// shown on the Day Book — always unique per pump so it can be picked from a
+// plain dropdown without ambiguity.
+model LedgerAccount {
+  id                 String           @id @default(cuid())
+  pump               Pump             @relation(fields: [pumpId], references: [id])
+  pumpId             String
+  name               String
+  group              LedgerGroup
+  openingBalance     Float            @default(0)
+  openingBalanceType DrCr             @default(DEBIT)
+  isSystemManaged    Boolean          @default(false)
+  // Set only on the handful of pump-level singleton ledgers
+  // (getOrCreateSystemLedger() in ledger-posting.service.ts) — the stable
+  // key auto-posting matches on instead of by name, so a dealer renaming
+  // "Cash" to "Till" doesn't break posting and two ledgers can never both
+  // claim to BE the system Cash account. Null for every other ledger.
+  systemKey          SystemLedgerKey?
+  // The two auto-created-per-real-entity cases where matching by name alone
+  // would be unsafe (two customers, or two staff, can share a display
+  // name) — see getOrCreateCustomerLedger()/getOrCreatePersonalLedger().
+  // Exactly one of these two, or neither, is ever set.
+  linkedCustomer     Customer?        @relation(fields: [linkedCustomerId], references: [id])
+  linkedCustomerId   String?          @unique
+  linkedStaff        Staff?           @relation(fields: [linkedStaffId], references: [id])
+  linkedStaffId      String?          @unique
+  isActive           Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  voucherLines       VoucherLine[]
+
+  @@unique([pumpId, name])
+  @@unique([pumpId, systemKey])
+}
+
+// Per-pump sequential voucher number counter — same "counter row, atomically
+// incremented in the same transaction as the row it numbers" pattern as
+// BillNumberCounter (see bill-number.ts), except self-initializing via
+// upsert (allocateVoucherNumber() in voucher-number.ts) rather than relying
+// on a separate pump-provisioning step to pre-create the row.
+model VoucherNumberCounter {
+  id      String @id @default(cuid())
+  pump    Pump   @relation(fields: [pumpId], references: [id])
+  pumpId  String @unique
+  lastSeq Int    @default(0)
+}
+
+// A double-entry accounting event: two or more VoucherLine rows whose
+// debits and credits balance exactly (enforced in vouchers.service.ts —
+// same "reject, don't clamp" philosophy as CashCustodyLog's 3-way split).
+// MANUAL vouchers are how a dealer records "BABU JI", "TOLL", "JEEP 0711"-
+// style entries the rest of PumpOS has no data for; every other source is
+// auto-posted by LedgerPostingService from an already-existing Bill/
+// ExpenseEntry/CashCustodyLog/ShiftSalesSummary row (source + sourceKey
+// identify exactly which one, so re-processing the same event never
+// double-posts — see that service).
+model Voucher {
+  id            String        @id @default(cuid())
+  pump          Pump          @relation(fields: [pumpId], references: [id])
+  pumpId        String
+  voucherNumber String
+  date          DateTime
+  voucherType   VoucherType
+  narration     String?
+  source        VoucherSource @default(MANUAL)
+  sourceKey     String?
+  createdBy     Staff         @relation(fields: [createdById], references: [id])
+  createdById   String
+  createdAt     DateTime      @default(now())
+  lines         VoucherLine[]
+
+  @@unique([pumpId, voucherNumber])
+  @@unique([pumpId, sourceKey])
+}
+
+model VoucherLine {
+  id              String        @id @default(cuid())
+  pump            Pump          @relation(fields: [pumpId], references: [id])
+  pumpId          String
+  voucher         Voucher       @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  voucherId       String
+  ledgerAccount   LedgerAccount @relation(fields: [ledgerAccountId], references: [id])
+  ledgerAccountId String
+  amount          Float
+  drCr            DrCr
+  createdAt       DateTime      @default(now())
 }
 
 // ---------- Payments (bills + credit dues) ----------

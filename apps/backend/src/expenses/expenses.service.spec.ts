@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { PaymentType } from '@prisma/client';
 import { ExpensesService } from './expenses.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { runInTenantContext } from '../common/tenant-context';
 
 describe('ExpensesService', () => {
@@ -15,6 +16,7 @@ describe('ExpensesService', () => {
       delete: jest.Mock;
     };
   };
+  let ledgerPostingService: { postExpenseVoucher: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -25,11 +27,17 @@ describe('ExpensesService', () => {
         delete: jest.fn(),
       },
     };
+    // Section 12 — best-effort ledger auto-posting, not under test here (see
+    // ledger-posting.service.spec.ts for its own coverage); stubbed to a
+    // no-op so ExpensesService.create() doesn't need a real LedgerAccount/
+    // Voucher round trip.
+    ledgerPostingService = { postExpenseVoucher: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExpensesService,
         { provide: PrismaService, useValue: prisma },
+        { provide: LedgerPostingService, useValue: ledgerPostingService },
       ],
     }).compile();
 

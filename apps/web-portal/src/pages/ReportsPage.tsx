@@ -68,6 +68,14 @@ export function ReportsPage() {
               <div className="card-label">CASH CUSTODY REPORT</div>
               <div className="card-sub">Who&rsquo;s holding pump cash outside premises, and for how long &rsaquo;</div>
             </Link>
+            <Link to="/day-book" className="card" style={{ textDecoration: 'none' }}>
+              <div className="card-label">DAY BOOK</div>
+              <div className="card-sub">Every ledger touched today, with opening/closing balances &rsaquo;</div>
+            </Link>
+            <Link to="/ledger-accounts" className="card" style={{ textDecoration: 'none' }}>
+              <div className="card-label">LEDGER MASTER</div>
+              <div className="card-sub">Set up account heads (parties, expense categories, banks) &rsaquo;</div>
+            </Link>
           </div>
         </div>
 

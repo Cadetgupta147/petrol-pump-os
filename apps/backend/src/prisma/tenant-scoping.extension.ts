@@ -47,6 +47,10 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'DensityRangeConfig',
   'TaxRateConfig',
   'StaffAdvance',
+  'LedgerAccount',
+  'Voucher',
+  'VoucherLine',
+  'VoucherNumberCounter',
 ]);
 
 // Every one of these operations takes a `where` — including the singular

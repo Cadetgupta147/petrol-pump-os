@@ -3,6 +3,7 @@ import { ShiftSalesController } from './shift-sales.controller';
 import { ShiftSalesService } from './shift-sales.service';
 import { RateMasterModule } from '../rate-master/rate-master.module';
 import { UpiCaptureConfigModule } from '../upi-capture-config/upi-capture-config.module';
+import { LedgerModule } from '../ledger/ledger.module';
 
 // Section 8A.2 — walk-in aggregate sales summary + variance. PrismaModule is
 // global (see prisma.module.ts), so no import needed. RateMasterModule is
@@ -15,7 +16,7 @@ import { UpiCaptureConfigModule } from '../upi-capture-config/upi-capture-config
 // autoCaptureEnabled before allowing a manual walkInUpiCollected — see
 // assertManualUpiAllowed().
 @Module({
-  imports: [RateMasterModule, UpiCaptureConfigModule],
+  imports: [RateMasterModule, UpiCaptureConfigModule, LedgerModule],
   controllers: [ShiftSalesController],
   providers: [ShiftSalesService],
   exports: [ShiftSalesService],

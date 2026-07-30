@@ -29,6 +29,9 @@ import { ExpensesPage } from './pages/ExpensesPage';
 import { GeneratorDieselPage } from './pages/GeneratorDieselPage';
 import { MachineTestingPage } from './pages/MachineTestingPage';
 import { ItemSalesPage } from './pages/ItemSalesPage';
+import { DayBookPage } from './pages/DayBookPage';
+import { LedgerAccountsPage } from './pages/LedgerAccountsPage';
+import { VoucherEntryPage } from './pages/VoucherEntryPage';
 
 // Root path just forwards to whichever of /dashboard or /login is correct
 // for the current auth state, rather than being its own page.
@@ -247,6 +250,30 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <ReportsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/day-book"
+        element={
+          <RequireAuth>
+            <DayBookPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/ledger-accounts"
+        element={
+          <RequireAuth>
+            <LedgerAccountsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/vouchers"
+        element={
+          <RequireAuth>
+            <VoucherEntryPage />
           </RequireAuth>
         }
       />

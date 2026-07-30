@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
 import { parseDateRangeStrings } from '../common/date-range.util';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { ListExpensesQueryDto } from './dto/list-expenses-query.dto';
 
@@ -11,12 +12,15 @@ import { ListExpensesQueryDto } from './dto/list-expenses-query.dto';
 // log). Money-touching: flagged for human review before merge per CLAUDE.md.
 @Injectable()
 export class ExpensesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledgerPostingService: LedgerPostingService,
+  ) {}
 
   // recordedById is a plain method arg, never read off the DTO — see
   // ExpensesController, same actor-derivation rule as PurchasesService.create().
-  create(dto: CreateExpenseDto, recordedById: string) {
-    return this.prisma.expenseEntry.create({
+  async create(dto: CreateExpenseDto, recordedById: string) {
+    const expense = await this.prisma.expenseEntry.create({
       data: {
         pumpId: requireTenantContext().pumpId,
         category: dto.category.trim(),
@@ -30,6 +34,11 @@ export class ExpensesService {
         }),
       },
     });
+    // Section 12 — best-effort, non-blocking (see LedgerPostingService's
+    // header comment): the expense above is already committed regardless of
+    // whether this succeeds.
+    await this.ledgerPostingService.postExpenseVoucher(expense);
+    return expense;
   }
 
   findAll(query: ListExpensesQueryDto) {

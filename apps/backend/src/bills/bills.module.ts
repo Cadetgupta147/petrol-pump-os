@@ -5,6 +5,7 @@ import { CreditConfigModule } from '../credit-config/credit-config.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { RateMasterModule } from '../rate-master/rate-master.module';
 import { VehicleBlacklistModule } from '../vehicle-blacklist/vehicle-blacklist.module';
+import { LedgerModule } from '../ledger/ledger.module';
 
 // CreditConfigModule imported for CreditConfigService (Section 3.4A
 // enforcement mode + default informal credit limit). LoyaltyModule imported
@@ -22,6 +23,7 @@ import { VehicleBlacklistModule } from '../vehicle-blacklist/vehicle-blacklist.m
     LoyaltyModule,
     RateMasterModule,
     VehicleBlacklistModule,
+    LedgerModule,
   ],
   controllers: [BillsController],
   providers: [BillsService],
