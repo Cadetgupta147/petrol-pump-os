@@ -8,6 +8,7 @@ import { KpiCard } from '../components/dashboard/KpiCard';
 import { PaymentCollection } from '../components/dashboard/PaymentCollection';
 import { StockPanel } from '../components/dashboard/StockPanel';
 import { NozzleReadingsTable } from '../components/dashboard/NozzleReadingsTable';
+import { DayWiseFuelSalesChart } from '../components/dashboard/DayWiseFuelSalesChart';
 import { RecentBillsTable } from '../components/dashboard/RecentBillsTable';
 import { AlertsPanel, type DashboardAlert } from '../components/dashboard/AlertsPanel';
 import { getSalesSummary, getTankStock, getRecentBills } from '../api/dashboard';
@@ -566,6 +567,14 @@ export function DashboardPage() {
           </div>
           {varianceCheckError && <div className="banner">{varianceCheckError}</div>}
           <NozzleReadingsTable readings={meterReadings} varianceByReadingId={varianceByReadingId} />
+        </div>
+
+        <div className="section">
+          <div className="section-title">
+            <h3>Fuel sales by day</h3>
+            <span className="section-note">{rangeLabel} bills, litres sold per product per day</span>
+          </div>
+          <DayWiseFuelSalesChart bills={rangeBills} />
         </div>
 
         {(loyaltyCostReport || purchaseEntries || attendanceLog) && (

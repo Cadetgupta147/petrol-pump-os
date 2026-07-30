@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { updateBill } from '../../api/bills';
 import { ApiError } from '../../api/client';
+import { localIsoDate } from '../../utils/format';
 import type { Bill } from '../../api/types';
 
 interface BillFormModalProps {
@@ -26,6 +27,11 @@ export function BillFormModal({ bill, onClose, onSaved }: BillFormModalProps) {
   const [litres, setLitres] = useState(String(bill.litres));
   const [productType, setProductType] = useState(bill.productType);
   const [rateApplied, setRateApplied] = useState(String(bill.rateApplied));
+  // Prefilled from the bill's existing recorded date — see Section:
+  // backdating. Bill.timestamp only ever defaulted to the moment the bill
+  // was created, with no way to fix a wrong-dated entry; this closes that
+  // gap for bills that were already saved with the wrong date.
+  const [billDate, setBillDate] = useState(() => localIsoDate(new Date(bill.timestamp)));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -36,6 +42,7 @@ export function BillFormModal({ bill, onClose, onSaved }: BillFormModalProps) {
     try {
       const trimmedVehicle = vehicleNumber.trim();
       const trimmedCustomerName = customerName.trim();
+      const originalDate = localIsoDate(new Date(bill.timestamp));
 
       const saved = await updateBill(bill.id, {
         vehicleNumber: trimmedVehicle === '' ? undefined : trimmedVehicle,
@@ -44,6 +51,11 @@ export function BillFormModal({ bill, onClose, onSaved }: BillFormModalProps) {
         litres: Number(litres),
         productType: productType.trim(),
         rateApplied: Number(rateApplied),
+        // Only sent when actually changed — omitting it on update leaves
+        // the bill's existing timestamp (time-of-day included) untouched,
+        // which matters since resolveBillTimestamp() otherwise recombines
+        // the date with "now"'s clock time, not the original entry time.
+        billDate: billDate === originalDate ? undefined : billDate,
       });
 
       onSaved(saved);
@@ -125,6 +137,17 @@ export function BillFormModal({ bill, onClose, onSaved }: BillFormModalProps) {
             step="0.01"
             value={rateApplied}
             onChange={(e) => setRateApplied(e.target.value)}
+            required
+          />
+        </div>
+        <div className="form-field">
+          <label htmlFor="bf-date">Bill date</label>
+          <input
+            id="bf-date"
+            type="date"
+            value={billDate}
+            max={localIsoDate()}
+            onChange={(e) => setBillDate(e.target.value)}
             required
           />
         </div>

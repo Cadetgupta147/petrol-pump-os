@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { StatusBadge } from '../common/StatusBadge';
 import type { MeterReading, MeterVariance } from '../../api/types';
-import { formatLitres, formatSignedLitres, formatTime } from '../../utils/format';
+import { formatLitres, formatSignedLitres, formatTime, localIsoDate } from '../../utils/format';
 
 interface NozzleReadingsTableProps {
   readings: MeterReading[];
@@ -84,9 +84,29 @@ function VarianceBar({ variance, maxAbs }: { variance: number; maxAbs: number })
 
 // Real data note: the schema's MeterReading is one row per open/close shift
 // per nozzle, at whatever times staff actually opened/closed it — there is
-// no fixed "6am-6pm / 6pm-6am" split anywhere server-side (that was a
-// mockup convention, not a real constraint). Showing actual shift start/end
-// times here instead of forcing them into two artificial buckets.
+// no fixed "6am-6pm / 6pm-6am" split, nor a stored shift-number column,
+// anywhere server-side (that was a mockup convention, not a real
+// constraint). "Shift N" is derived the same way MeterReadingsPage already
+// does it: each nozzle's shifts are numbered in chronological order WITHIN
+// their local calendar day (a multi-day dashboard range must not let a
+// nozzle's 3rd shift on Tuesday collide with its 3rd shift on Wednesday).
+function computeShiftNumbers(readings: MeterReading[]): Map<string, number> {
+  const byNozzleDay = new Map<string, MeterReading[]>();
+  for (const r of readings) {
+    const dayKey = localIsoDate(new Date(r.shiftStart));
+    const key = `${r.nozzleId}::${dayKey}`;
+    const bucket = byNozzleDay.get(key);
+    if (bucket) bucket.push(r);
+    else byNozzleDay.set(key, [r]);
+  }
+  const shiftNumberByReadingId = new Map<string, number>();
+  for (const bucket of byNozzleDay.values()) {
+    bucket.sort((a, b) => new Date(a.shiftStart).getTime() - new Date(b.shiftStart).getTime());
+    bucket.forEach((r, i) => shiftNumberByReadingId.set(r.id, i + 1));
+  }
+  return shiftNumberByReadingId;
+}
+
 export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleReadingsTableProps) {
   const maxAbsVariance = useMemo(() => {
     let max = 0;
@@ -95,6 +115,8 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
     }
     return max;
   }, [varianceByReadingId]);
+
+  const shiftNumberByReadingId = useMemo(() => computeShiftNumbers(readings), [readings]);
 
   if (readings.length === 0) {
     return <div className="empty-box">No meter reading shifts recorded today.</div>;
@@ -108,9 +130,9 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
           <tr>
             <th>Nozzle</th>
             <th>Staff ID</th>
-            <th>Shift start</th>
-            <th>Shift end</th>
-            <th className="num">Meter reading</th>
+            <th>Shift</th>
+            <th className="num">Opening</th>
+            <th className="num">Closing</th>
             <th className="num">Litres sold</th>
             <th className="num">Billed</th>
             <th className="num">Variance</th>
@@ -127,12 +149,11 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
                   {reading.nozzle.label} <span className="section-note">({reading.nozzle.item.name})</span>
                 </td>
                 <td title={reading.staffId}>{reading.staffId.slice(0, 8)}&hellip;</td>
-                <td>{formatTime(reading.shiftStart)}</td>
-                <td>{reading.shiftEnd ? formatTime(reading.shiftEnd) : '—'}</td>
-                <td className="num">
-                  {reading.openingReading.toFixed(1)}
-                  {reading.closingReading !== null ? ` → ${reading.closingReading.toFixed(1)}` : ' → open'}
+                <td title={`started ${formatTime(reading.shiftStart)}${reading.shiftEnd ? `, ended ${formatTime(reading.shiftEnd)}` : ''}`}>
+                  Shift {shiftNumberByReadingId.get(reading.id) ?? 1}
                 </td>
+                <td className="num">{reading.openingReading.toFixed(1)}</td>
+                <td className="num">{reading.closingReading !== null ? reading.closingReading.toFixed(1) : '—'}</td>
                 <td className="num">
                   {reading.litresSold !== null ? formatLitres(reading.litresSold) : '—'}
                 </td>
