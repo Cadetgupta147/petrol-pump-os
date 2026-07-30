@@ -100,17 +100,40 @@ function isWithinLocalRange(iso: string, from: string, to: string): boolean {
   return key >= from && key <= to;
 }
 
-function computeProductTotals(bills: Bill[]): { productType: string; litres: number; amount: number }[] {
-  const totals = new Map<string, { litres: number; amount: number }>();
-  for (const bill of bills) {
-    const existing = totals.get(bill.productType) ?? { litres: 0, amount: 0 };
-    existing.litres += bill.litres;
-    existing.amount += bill.amount;
-    totals.set(bill.productType, existing);
+// Fuel identity per nozzle, per productType (falls back to the nozzle's own
+// item name) — same convention DayWiseFuelSalesChart's fuelTypeOf() and
+// MeterReadingsPage's Product column already use; productType is only null
+// on legacy pre-Nozzle-master rows.
+function fuelTypeOfReading(reading: MeterReading): string {
+  return reading.productType ?? reading.nozzle.item.name;
+}
+
+// "Petrol sale" / "Diesel sale" KPI cards — litres now come from the meter
+// (closed shifts' litresSold, i.e. closingReading − openingReading), not
+// from billed litres, for the same reason DayWiseFuelSalesChart switched:
+// a shift's billed total can lag the meter (walk-in sales not yet
+// itemized), so "how much fuel did we actually sell" is the meter's own
+// number. There's no rupee figure on a MeterReading though, so the ₹
+// subtext is an ESTIMATE — litres × the current Rate Master price for that
+// fuel (case-insensitive match, since raw productType casing varies by
+// DSM entry) — not the actual billed revenue; the footnote below says so.
+function computeProductTotalsFromReadings(
+  readings: MeterReading[],
+  currentRates: RateHistory[],
+): { productType: string; litres: number; amount: number | null }[] {
+  const rateByProductLower = new Map(currentRates.map((r) => [r.productType.toLowerCase(), r.rate]));
+  const litresByProduct = new Map<string, number>();
+  for (const reading of readings) {
+    if (reading.litresSold === null) continue;
+    const productType = fuelTypeOfReading(reading);
+    litresByProduct.set(productType, (litresByProduct.get(productType) ?? 0) + reading.litresSold);
   }
-  return Array.from(totals.entries())
-    .map(([productType, v]) => ({ productType, ...v }))
-    .sort((a, b) => b.amount - a.amount);
+  return Array.from(litresByProduct.entries())
+    .map(([productType, litres]) => {
+      const rate = rateByProductLower.get(productType.toLowerCase());
+      return { productType, litres, amount: rate != null ? litres * rate : null };
+    })
+    .sort((a, b) => b.litres - a.litres);
 }
 
 // Distinct customers with a CREDIT+IN line within the selected range — the
@@ -469,12 +492,12 @@ export function DashboardPage() {
 
   const { salesSummary, tankStock, recentBills, rangeBills } = data;
   const rangeLabel = RANGE_LABELS[rangeTab];
-  const productTotals = computeProductTotals(rangeBills);
+  const latestRates = computeCurrentRates(rateHistory);
+  const productTotals = computeProductTotalsFromReadings(meterReadings, latestRates);
   const topProducts = productTotals.slice(0, 3);
   const extraProductCount = productTotals.length - topProducts.length;
   const creditForRange = Math.max(0, salesSummary.byPaymentType.CREDIT);
   const creditCustomersForRange = countCreditCustomers(rangeBills);
-  const latestRates = computeCurrentRates(rateHistory);
   const kpiCount = topProducts.length + 2;
   const kpiGridClass = kpiCount >= 5 ? 'grid-5' : kpiCount === 4 ? 'grid-4' : 'grid-3';
 
@@ -510,7 +533,7 @@ export function DashboardPage() {
                 key={p.productType}
                 label={`${p.productType} sale`}
                 value={formatLitres(p.litres)}
-                sub={formatRupees(p.amount)}
+                sub={p.amount != null ? `~${formatRupees(p.amount)} at current rate` : undefined}
                 dotColor={DOT.teal}
                 icon={Fuel}
               />
@@ -534,10 +557,12 @@ export function DashboardPage() {
             />
           </div>
           <div className="footnote">
-            Petrol/diesel split above is computed here from the selected range&rsquo;s bills (GET /bills?from=&amp;to=
-            filters server-side; the per-product grouping itself is still done client-side). Rate chips instead use
-            every non-deleted bill ever entered, regardless of the selected range, so the latest configured rate
-            always shows. &ldquo;Total collection&rdquo; comes from the server-aggregated /dashboard/sales-summary.
+            Petrol/diesel litres above come from closed meter-reading shifts (closing − opening reading) in the
+            selected range, not billed litres — the ₹ subtext is an estimate (litres &times; the current Rate Master
+            price for that fuel), not actual billed revenue. Rate chips use every non-deleted bill ever entered,
+            regardless of the selected range, so the latest configured rate always shows. &ldquo;Total
+            collection&rdquo; comes from the server-aggregated /dashboard/sales-summary (still bill-based — that one
+            is real collected money, unlike the estimate above).
             {extraProductCount > 0 && ` (${extraProductCount} more product type${extraProductCount === 1 ? '' : 's'} not shown.)`}
           </div>
         </div>
