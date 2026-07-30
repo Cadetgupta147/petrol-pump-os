@@ -23,6 +23,7 @@ export class ItemsService {
           name: dto.name.trim(),
           category: dto.category,
           unit: dto.unit,
+          code: dto.code?.trim() || undefined,
         },
       });
     } catch (error) {
@@ -60,6 +61,7 @@ export class ItemsService {
           ...(dto.name !== undefined && { name: dto.name.trim() }),
           ...(dto.category !== undefined && { category: dto.category }),
           ...(dto.unit !== undefined && { unit: dto.unit }),
+          ...(dto.code !== undefined && { code: dto.code.trim() || null }),
           ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         },
       });

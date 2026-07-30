@@ -194,6 +194,7 @@ model Pump {
   bills                   Bill[]
   billAuditLogs           BillAuditLog[]
   billPaymentLines        BillPaymentLine[]
+  billLineItems           BillLineItem[]
   creditConfigs           CreditConfig[]
   businessProfiles        BusinessProfile[]
   creditLimitAlerts       CreditLimitAlert[]
@@ -623,9 +624,28 @@ model Bill {
   customerId          String?
   vehicleNumber       String?
   customerName        String?
+  // Grand total actually payable/collected — fuel component (litres ×
+  // rateApplied, tax-inclusive, unchanged from before line items existed)
+  // plus itemsSubtotal plus itemsTaxTotal below. BillPaymentLine rows must
+  // still balance to exactly this (CLAUDE.md's split-payment hard rule),
+  // which is why it now includes tax/extra items rather than just fuel —
+  // that's genuinely what the customer owes. Server-computed/validated in
+  // BillsService (see assertAmountMatchesRate), never trusted from the
+  // client, same as before.
   amount              Float
   litres              Float
   productType         String
+  // Fuel's per-litre rate at Indian pumps is already VAT-inclusive (baked
+  // into the OMC-set price, not added at billing time) — deliberately NO
+  // separate fuel VAT field anywhere on Bill. Only non-fuel BillLineItem
+  // rows carry tax (CGST/SGST/IGST, added on top of qty×rate).
+  //
+  // itemsSubtotal/itemsTaxTotal are the pre-tax and tax portions of the
+  // extra (non-fuel) BillLineItem rows below, server-computed and stored
+  // for reporting/display convenience — both 0 when a bill has no line
+  // items (the pre-existing single-fuel-product bill case, unchanged).
+  itemsSubtotal       Float         @default(0)
+  itemsTaxTotal       Float         @default(0)
   // Section 3.3.1 — which nozzle this bill was rung up against, if known.
   // Nullable: every historical bill and most current entry points don't
   // set it yet (this is schema/backend groundwork, not a completed UI
@@ -664,11 +684,58 @@ model Bill {
 
   loyaltyTransactions LoyaltyTransaction[]
   paymentLines        BillPaymentLine[]
+  lineItems           BillLineItem[]
   auditLogs           BillAuditLog[]
   creditAlerts        CreditLimitAlert[]
 
   @@unique([pumpId, clientRequestId])
   @@unique([pumpId, billNumber])
+}
+
+// Extra (non-fuel) items sold alongside the fuel on a bill — e.g. a can of
+// engine oil handed over with the same fill-up — so a single bill/invoice
+// can list more than the one fuel product it always could before. Deliberately
+// scoped to the NON-fuel case only: the fuel sale itself stays exactly the
+// existing Bill.litres/productType/rateApplied fields (untouched, no tax
+// field there — see Bill's comment on why). itemId is optional/nullable and
+// itemCode/itemName are denormalized (snapshotted at bill time) so a bill
+// prints correctly even if the linked Item is later renamed, recoded, or
+// deleted — same "don't let master-data drift rewrite history" reasoning as
+// BillAuditLog's snapshot column.
+//
+// GST is added ON TOP of quantity × rate (standard invoice practice, not
+// MRP-inclusive) — taxRate is the combined GST % (e.g. 18 for 9+9), split
+// into cgstAmount+sgstAmount for an intra-state sale or igstAmount alone for
+// an inter-state one (isInterstate), never both. taxRate/amount/tax columns
+// are all server-computed and stored (never trust the frontend for money
+// fields, CLAUDE.md) — see BillsService.create()'s line-item resolution.
+model BillLineItem {
+  id           String   @id @default(cuid())
+  pump         Pump     @relation(fields: [pumpId], references: [id])
+  pumpId       String
+  bill         Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  billId       String
+  item         Item?    @relation(fields: [itemId], references: [id])
+  itemId       String?
+  itemCode     String?
+  itemName     String
+  quantity     Float
+  rate         Float
+  // quantity * rate, server-computed.
+  amount       Float
+  isInterstate Boolean  @default(false)
+  // Combined GST % actually used for this line (prefilled from Item.taxRate
+  // when itemId is given, but always editable per-line at bill time — see
+  // Section on tax accuracy in the AddCashBillModal/AddCreditBillModal
+  // comment).
+  taxRate      Float    @default(0)
+  cgstAmount   Float    @default(0)
+  sgstAmount   Float    @default(0)
+  igstAmount   Float    @default(0)
+  // amount + cgstAmount + sgstAmount + igstAmount, server-computed.
+  lineTotal    Float
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
 }
 
 // Immutable audit trail for Bill — one row per create/edit/delete action,
@@ -864,12 +931,24 @@ model Item {
   name      String // e.g. "Petrol", "Diesel", "Speed 97", "Urea/AdBlue"
   category  ItemCategory
   unit      ItemUnit
+  // Item code (the "Code" column on a printed bill/line-item grid) — plain
+  // dealer-assigned string (SKU-style), not a generated sequence like
+  // Bill.billNumber. Optional: most FUEL items won't bother setting one.
+  //
+  // Deliberately NO taxRate field here — TaxRateConfig (Section 17.22)
+  // already models "the GST rate for productType X" per-pump, and is what
+  // the sales/purchase register reads; a BillLineItem's default tax rate
+  // reuses that same map (keyed by itemName) instead of a second,
+  // Item-scoped rate that could drift out of sync with it — see
+  // BillsService.resolveLineItems().
+  code      String?
   isActive  Boolean      @default(true)
   createdAt DateTime     @default(now())
 
   nozzles       Nozzle[]
   lubricantItem LubricantItem?
   itemSales     ItemSale[]
+  billLineItems BillLineItem[]
 
   @@unique([pumpId, name])
 }

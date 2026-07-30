@@ -109,6 +109,12 @@ export function BillDetailPage() {
                 <div className="card">
                   <div className="card-label">AMOUNT</div>
                   <div className="card-value">{formatRupees(bill.amount)}</div>
+                  {bill.lineItems.length > 0 && (
+                    <div className="card-sub">
+                      fuel {formatRupees(bill.amount - bill.itemsSubtotal - bill.itemsTaxTotal)} + items{' '}
+                      {formatRupees(bill.itemsSubtotal)} + tax {formatRupees(bill.itemsTaxTotal)}
+                    </div>
+                  )}
                 </div>
                 <div className="card">
                   <div className="card-label">LITRES</div>
@@ -119,6 +125,58 @@ export function BillDetailPage() {
                   <div className="card-label">VEHICLE</div>
                   <div className="card-value" style={{ fontSize: 16 }}>{bill.vehicleNumber ?? '—'}</div>
                 </div>
+              </div>
+            </div>
+
+            <div className="section">
+              <div className="section-title">
+                <h3>Items</h3>
+                <span className="section-note">
+                  Fuel is already tax-inclusive (no separate VAT line); extra items carry GST on top.
+                </span>
+              </div>
+              <div className="table-card">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Item</th>
+                      <th className="num">Qty</th>
+                      <th className="num">Rate</th>
+                      <th className="num">Amount</th>
+                      <th className="num">CGST</th>
+                      <th className="num">SGST</th>
+                      <th className="num">IGST</th>
+                      <th className="num">Line total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>&mdash;</td>
+                      <td>{bill.productType} (fuel)</td>
+                      <td className="num">{bill.litres.toFixed(2)}</td>
+                      <td className="num">{formatRupees(bill.rateApplied)}</td>
+                      <td className="num">{formatRupees(bill.litres * bill.rateApplied)}</td>
+                      <td className="num">&mdash;</td>
+                      <td className="num">&mdash;</td>
+                      <td className="num">&mdash;</td>
+                      <td className="num">{formatRupees(bill.litres * bill.rateApplied)}</td>
+                    </tr>
+                    {bill.lineItems.map((line) => (
+                      <tr key={line.id}>
+                        <td>{line.itemCode ?? '—'}</td>
+                        <td>{line.itemName}</td>
+                        <td className="num">{line.quantity}</td>
+                        <td className="num">{formatRupees(line.rate)}</td>
+                        <td className="num">{formatRupees(line.amount)}</td>
+                        <td className="num">{formatRupees(line.cgstAmount)}</td>
+                        <td className="num">{formatRupees(line.sgstAmount)}</td>
+                        <td className="num">{formatRupees(line.igstAmount)}</td>
+                        <td className="num">{formatRupees(line.lineTotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 

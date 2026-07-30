@@ -8,6 +8,7 @@ import { LoyaltyService } from '../loyalty/loyalty.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
 import { LedgerPostingService } from '../ledger/ledger-posting.service';
+import { TaxRateConfigService } from '../tax-rate-config/tax-rate-config.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { runInTenantContext } from '../common/tenant-context';
 
@@ -67,6 +68,7 @@ describe('BillsService.assertAmountMatchesRate tolerance', () => {
         { provide: RateMasterService, useValue: { getCurrentRate } },
         { provide: VehicleBlacklistService, useValue: { assertNotBlacklisted: jest.fn().mockResolvedValue(undefined) } },
         { provide: LedgerPostingService, useValue: { postBillVoucher: jest.fn().mockResolvedValue(undefined) } },
+        { provide: TaxRateConfigService, useValue: { resolveTaxRateMap: jest.fn().mockResolvedValue({}) } },
       ],
     }).compile();
 

@@ -25,7 +25,9 @@ import { RateMasterService } from '../rate-master/rate-master.service';
 import { parseDateRangeStrings } from '../common/date-range.util';
 import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
 import { LedgerPostingService } from '../ledger/ledger-posting.service';
+import { TaxRateConfigService } from '../tax-rate-config/tax-rate-config.service';
 import { CreateBillDto } from './dto/create-bill.dto';
+import { CreateBillLineItemDto } from './dto/create-bill-line-item.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { ListBillsQueryDto } from './dto/list-bills-query.dto';
 
@@ -57,6 +59,27 @@ type CreditLimitEvaluation = {
   overage: number;
 };
 
+// A CreateBillLineItemDto after resolveLineItems() has looked up its Item
+// (if any) and computed every money field server-side — ready for a nested
+// Prisma create (pumpId is stamped separately at write time, same reason as
+// BillPaymentLine's nested writes — see the "Phase 2 known nuance" comment
+// in create()).
+type ResolvedLineItem = {
+  itemId?: string;
+  itemCode?: string;
+  itemName: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+  isInterstate: boolean;
+  taxRate: number;
+  cgstAmount: number;
+  sgstAmount: number;
+  igstAmount: number;
+  lineTotal: number;
+  sortOrder: number;
+};
+
 @Injectable()
 export class BillsService {
   constructor(
@@ -66,6 +89,7 @@ export class BillsService {
     private readonly rateMasterService: RateMasterService,
     private readonly vehicleBlacklistService: VehicleBlacklistService,
     private readonly ledgerPostingService: LedgerPostingService,
+    private readonly taxRateConfigService: TaxRateConfigService,
   ) {}
 
   // Finding A1 (docs/production-readiness.md) — enteredById is no longer a
@@ -85,7 +109,7 @@ export class BillsService {
     if (dto.clientRequestId) {
       const existing = await this.prisma.bill.findFirst({
         where: { clientRequestId: dto.clientRequestId },
-        include: { paymentLines: true, customer: true },
+        include: { paymentLines: true, lineItems: true, customer: true },
       });
       if (existing) {
         return existing;
@@ -213,15 +237,27 @@ export class BillsService {
       dto.productType,
     );
 
+    // Extra (non-fuel) items on this bill, if any — resolved and
+    // tax-computed server-side before the transaction, same reasoning as
+    // resolvedRate above.
+    const { resolved: resolvedLineItems, itemsSubtotal, itemsTaxTotal } =
+      await this.resolveLineItems(dto.lineItems);
+
     // Never trust a client-submitted amount that's decoupled from
-    // litres × rate (CLAUDE.md: "never trust the frontend" for money
-    // fields) — resolvedRate.rate is the one thing above that's already
-    // server-authoritative, so this is the only place left that closes the
-    // gap: without it, a client could dispense/record 50 litres of diesel
-    // (correctly deducting real tank stock) while submitting `amount: 1`,
-    // and the only other amount check (assertBalanced) is trivially
-    // satisfied by a single payment line of 1.
-    this.assertAmountMatchesRate(dto.amount, dto.litres, resolvedRate.rate);
+    // litres × rate (+ any line items) (CLAUDE.md: "never trust the
+    // frontend" for money fields) — resolvedRate.rate is the one thing above
+    // that's already server-authoritative, so this is the only place left
+    // that closes the gap: without it, a client could dispense/record 50
+    // litres of diesel (correctly deducting real tank stock) while
+    // submitting `amount: 1`, and the only other amount check
+    // (assertBalanced) is trivially satisfied by a single payment line of 1.
+    this.assertAmountMatchesRate(
+      dto.amount,
+      dto.litres,
+      resolvedRate.rate,
+      itemsSubtotal,
+      itemsTaxTotal,
+    );
 
     // Bill + its BillPaymentLine rows (and, for quick-add, the new Customer
     // row and/or the CreditLimitAlert row, and the LoyaltyTransaction) are
@@ -301,6 +337,8 @@ export class BillsService {
             amount: dto.amount,
             litres: dto.litres,
             productType: dto.productType,
+            itemsSubtotal,
+            itemsTaxTotal,
             nozzleId: dto.nozzleId,
             rateApplied: resolvedRate.rate,
             enteredById,
@@ -316,10 +354,16 @@ export class BillsService {
                 direction: line.direction,
               })),
             },
+            lineItems: {
+              create: resolvedLineItems.map((line) => ({
+                pumpId,
+                ...line,
+              })),
+            },
           },
           // customer included so a quick-added customer's id/verificationStatus
           // is visible directly in the response, not just its id.
-          include: { paymentLines: true, customer: true },
+          include: { paymentLines: true, lineItems: true, customer: true },
         });
 
         // The customer's points balance is derived (sum of pointsDelta), not
@@ -442,7 +486,7 @@ export class BillsService {
       this.prisma.bill.findMany({
         where,
         orderBy: { timestamp: 'desc' },
-        include: { paymentLines: true },
+        include: { paymentLines: true, lineItems: true },
         ...(limit ? { take: limit, skip: offset ?? 0 } : {}),
       }),
       this.prisma.bill.count({ where }),
@@ -456,7 +500,7 @@ export class BillsService {
     // audit/detail view (Section 3.2 bill history requirement).
     const bill = await this.prisma.bill.findUnique({
       where: { id },
-      include: { paymentLines: true },
+      include: { paymentLines: true, lineItems: true },
     });
     if (!bill) {
       throw new NotFoundException(`Bill ${id} not found`);
@@ -485,6 +529,24 @@ export class BillsService {
         'Bill has been deleted and cannot be edited',
       );
     }
+
+    // Line items are only recomputed when the caller sends a replacement
+    // array — same "full replacement, not a merge" convention as
+    // paymentLines below. Omitting dto.lineItems leaves the bill's existing
+    // extra items (and their already-stored itemsSubtotal/itemsTaxTotal)
+    // untouched.
+    const lineItemsProvided = dto.lineItems !== undefined;
+    const {
+      resolved: resolvedLineItems,
+      itemsSubtotal: effectiveItemsSubtotal,
+      itemsTaxTotal: effectiveItemsTaxTotal,
+    } = lineItemsProvided
+      ? await this.resolveLineItems(dto.lineItems)
+      : {
+          resolved: [] as ResolvedLineItem[],
+          itemsSubtotal: existing.itemsSubtotal,
+          itemsTaxTotal: existing.itemsTaxTotal,
+        };
 
     // Section 3.4A — quick-add is NOT supported on edit. Editing an existing
     // bill to spontaneously attach a brand-new customer is out of scope;
@@ -539,6 +601,8 @@ export class BillsService {
       effective.amount,
       effective.litres,
       effective.rateApplied,
+      effectiveItemsSubtotal,
+      effectiveItemsTaxTotal,
     );
 
     // Confirm the referenced Customer actually exists (if changed / present).
@@ -591,6 +655,9 @@ export class BillsService {
         if (dto.paymentLines) {
           await tx.billPaymentLine.deleteMany({ where: { billId: id } });
         }
+        if (lineItemsProvided) {
+          await tx.billLineItem.deleteMany({ where: { billId: id } });
+        }
 
         const updated = await tx.bill.update({
           where: { id },
@@ -600,6 +667,8 @@ export class BillsService {
             amount: effective.amount,
             litres: effective.litres,
             productType: effective.productType,
+            itemsSubtotal: effectiveItemsSubtotal,
+            itemsTaxTotal: effectiveItemsTaxTotal,
             rateApplied: effective.rateApplied,
             customerId: effective.customerId,
             lastEditedById: editedById,
@@ -620,8 +689,18 @@ export class BillsService {
                   },
                 }
               : {}),
+            ...(lineItemsProvided
+              ? {
+                  lineItems: {
+                    create: resolvedLineItems.map((line) => ({
+                      pumpId,
+                      ...line,
+                    })),
+                  },
+                }
+              : {}),
           },
-          include: { paymentLines: true, customer: true },
+          include: { paymentLines: true, lineItems: true, customer: true },
         });
 
         await tx.billAuditLog.create({
@@ -674,6 +753,8 @@ export class BillsService {
     if (existing.deletedAt) {
       throw new ConflictException('Bill already deleted');
     }
+    // (remove() only ever reads amount/deletedAt off `existing`, both plain
+    // Bill columns — the lineItems relation isn't needed here.)
 
     try {
       const pumpId = requireTenantContext().pumpId;
@@ -684,7 +765,7 @@ export class BillsService {
             deletedAt: new Date(),
             deletedById,
           },
-          include: { paymentLines: true },
+          include: { paymentLines: true, lineItems: true },
         });
 
         await tx.billAuditLog.create({
@@ -749,15 +830,129 @@ export class BillsService {
     amount: number,
     litres: number,
     rate: number,
+    itemsSubtotal = 0,
+    itemsTaxTotal = 0,
   ) {
-    const expected = litres * rate;
+    const expected = litres * rate + itemsSubtotal + itemsTaxTotal;
     const tolerance = Math.max(BALANCE_EPSILON, 0.01 * rate);
     if (Math.abs(expected - amount) > tolerance) {
       throw new BadRequestException(
-        `amount does not match litres × rate: expected ${expected.toFixed(2)} ` +
-          `(${litres} × ${rate}), but got ${amount.toFixed(2)}`,
+        `amount does not match litres × rate + line items: expected ${expected.toFixed(2)} ` +
+          `(fuel ${(litres * rate).toFixed(2)} + items ${itemsSubtotal.toFixed(2)} + tax ${itemsTaxTotal.toFixed(2)}), ` +
+          `but got ${amount.toFixed(2)}`,
       );
     }
+  }
+
+  // Rounds to the nearest paisa — every money field this service computes
+  // itself (as opposed to echoing back a client-supplied value) goes through
+  // this so float drift from repeated multiplication/division never leaves
+  // e.g. 149.99999999999997 sitting in a DB column.
+  private roundRupees(value: number): number {
+    return Math.round(value * 100) / 100;
+  }
+
+  // Extra (non-fuel) items sold alongside the fuel on a bill (prisma/schema.
+  // prisma's BillLineItem comment has the full reasoning). Looks up every
+  // referenced Item in one query (tenant-scoped automatically by the Prisma
+  // extension, same as the customerId lookup above), then computes amount =
+  // quantity × rate and GST split (CGST+SGST for intra-state, IGST alone for
+  // inter-state) server-side — CLAUDE.md's "never trust the frontend" rule
+  // for money fields applies here exactly as it does to rateApplied.
+  // Returns [] / 0 / 0 for undefined or empty input, which is the
+  // pre-existing single-fuel-product bill, completely unchanged.
+  //
+  // The default taxRate (when a line doesn't specify its own) comes from
+  // TaxRateConfigService.resolveTaxRateMap() — the SAME dealer-configured
+  // per-productType GST rate the sales/purchase register already reads
+  // (Section 17.22) — keyed by the resolved itemName, not a second,
+  // Item-scoped rate field. Two independent places to configure "the tax
+  // rate for Engine Oil" would drift out of sync; this reuses the one that
+  // already exists.
+  private async resolveLineItems(
+    lineItems: CreateBillLineItemDto[] | undefined,
+  ): Promise<{
+    resolved: ResolvedLineItem[];
+    itemsSubtotal: number;
+    itemsTaxTotal: number;
+  }> {
+    if (!lineItems || lineItems.length === 0) {
+      return { resolved: [], itemsSubtotal: 0, itemsTaxTotal: 0 };
+    }
+
+    const itemIds = [
+      ...new Set(
+        lineItems
+          .map((line) => line.itemId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const [items, taxRateMap] = await Promise.all([
+      itemIds.length
+        ? this.prisma.item.findMany({ where: { id: { in: itemIds } } })
+        : Promise.resolve([]),
+      this.taxRateConfigService.resolveTaxRateMap(),
+    ]);
+    const itemById = new Map(items.map((item) => [item.id, item]));
+
+    let itemsSubtotal = 0;
+    let itemsTaxTotal = 0;
+
+    const resolved = lineItems.map((line, index) => {
+      const item = line.itemId ? itemById.get(line.itemId) : undefined;
+      if (line.itemId && !item) {
+        throw new NotFoundException(
+          `lineItems[${index}].itemId (${line.itemId}) does not reference an existing Item`,
+        );
+      }
+
+      const itemName = line.itemName?.trim() || item?.name;
+      if (!itemName) {
+        throw new BadRequestException(
+          `lineItems[${index}] needs itemName when no itemId is given`,
+        );
+      }
+
+      const itemCode = line.itemCode?.trim() || item?.code || undefined;
+      const taxRate = line.taxRate ?? taxRateMap[itemName] ?? 0;
+      const isInterstate = line.isInterstate ?? false;
+
+      const amount = this.roundRupees(line.quantity * line.rate);
+      const taxAmount = this.roundRupees(amount * (taxRate / 100));
+      const cgstAmount = isInterstate ? 0 : this.roundRupees(taxAmount / 2);
+      // Subtract rather than re-round the other half, so cgst+sgst always
+      // sums exactly back to taxAmount even when taxAmount is an odd number
+      // of paise.
+      const sgstAmount = isInterstate ? 0 : this.roundRupees(taxAmount - cgstAmount);
+      const igstAmount = isInterstate ? taxAmount : 0;
+      const lineTotal = this.roundRupees(amount + cgstAmount + sgstAmount + igstAmount);
+
+      itemsSubtotal += amount;
+      itemsTaxTotal += cgstAmount + sgstAmount + igstAmount;
+
+      const resolvedLine: ResolvedLineItem = {
+        itemId: item?.id,
+        itemCode,
+        itemName,
+        quantity: line.quantity,
+        rate: line.rate,
+        amount,
+        isInterstate,
+        taxRate,
+        cgstAmount,
+        sgstAmount,
+        igstAmount,
+        lineTotal,
+        sortOrder: index,
+      };
+      return resolvedLine;
+    });
+
+    return {
+      resolved,
+      itemsSubtotal: this.roundRupees(itemsSubtotal),
+      itemsTaxTotal: this.roundRupees(itemsTaxTotal),
+    };
   }
 
   // Section 3.4A — compute this bill's net credit impact and, if non-zero,

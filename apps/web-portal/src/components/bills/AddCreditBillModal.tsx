@@ -5,6 +5,7 @@ import { getRateHistory } from '../../api/rateMaster';
 import { computeCurrentRates } from '../../utils/rateMaster';
 import { ApiError } from '../../api/client';
 import type { Bill, Customer, Item, RateHistory } from '../../api/types';
+import { LineItemsEditor, computeLineItemTotals, toCreateBillLineItemRequests, type LocalLineItem } from './LineItemsEditor';
 
 interface AddCreditBillModalProps {
   customers: Customer[];
@@ -36,6 +37,7 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
   const [productType, setProductType] = useState('');
   const [items, setItems] = useState<Item[]>([]);
   const [rateHistory, setRateHistory] = useState<RateHistory[]>([]);
+  const [lineItems, setLineItems] = useState<LocalLineItem[]>([]);
 
   // Quick-add is the fallback whenever no existing customer is linked — see
   // Section 3.4A. Unlike AddCashBillModal this isn't conditional on "does a
@@ -104,13 +106,15 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
   }
 
   const needsQuickAdd = !customerId;
-  const parsedBillAmount = Number(amount) || 0;
+  const parsedFuelAmount = Number(amount) || 0;
+  const { itemsSubtotal, itemsTaxTotal } = computeLineItemTotals(lineItems);
+  const grandTotal = Math.round((parsedFuelAmount + itemsSubtotal + itemsTaxTotal) * 100) / 100;
   const hasVehicleOrName = vehicleNumber.trim() !== '' || customerName.trim() !== '';
 
   const canSave =
     !submitting &&
     hasVehicleOrName &&
-    parsedBillAmount > 0 &&
+    parsedFuelAmount > 0 &&
     Number(litres) > 0 &&
     productType.trim() !== '' &&
     (!needsQuickAdd || (quickAddName.trim() !== '' && quickAddVehicle.trim() !== ''));
@@ -130,13 +134,15 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
           : undefined,
         vehicleNumber: trimmedVehicle === '' ? undefined : trimmedVehicle,
         customerName: trimmedCustomerName === '' ? undefined : trimmedCustomerName,
-        amount: parsedBillAmount,
+        amount: grandTotal,
         litres: Number(litres),
         productType: productType.trim(),
         entryChannel: 'WEB',
         // The whole point of this modal: exactly one payment line, always
-        // CREDIT, always the full bill amount — never hand-entered.
-        paymentLines: [{ paymentType: 'CREDIT', amount: parsedBillAmount, direction: 'IN' }],
+        // CREDIT, always the full bill amount (fuel + any extra items +
+        // their tax) — never hand-entered.
+        paymentLines: [{ paymentType: 'CREDIT', amount: grandTotal, direction: 'IN' }],
+        lineItems: lineItems.length > 0 ? toCreateBillLineItemRequests(lineItems) : undefined,
       });
       onCreated(bill);
     } catch (err) {
@@ -201,7 +207,7 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
         {!hasVehicleOrName && <div className="form-error">Vehicle number or customer name is required.</div>}
 
         <div className="form-field">
-          <label htmlFor="acb-amount">Amount (Rs.)</label>
+          <label htmlFor="acb-amount">Fuel amount (Rs.)</label>
           <input
             id="acb-amount"
             type="number"
@@ -248,9 +254,15 @@ export function AddCreditBillModal({ customers, onClose, onCreated }: AddCreditB
           )}
         </div>
 
+        <LineItemsEditor items={items} lines={lineItems} onChange={setLineItems} idPrefix="acb" />
+
         <div className="form-field">
           <div className="section-note">
-            This entire amount — Rs.{parsedBillAmount.toFixed(2)} — will be recorded as CREDIT for this customer.
+            Fuel Rs.{parsedFuelAmount.toFixed(2)}
+            {lineItems.length > 0 && (
+              <> + items Rs.{itemsSubtotal.toFixed(2)} + tax Rs.{itemsTaxTotal.toFixed(2)}</>
+            )}
+            {' '}= grand total <strong>Rs.{grandTotal.toFixed(2)}</strong>, recorded as CREDIT for this customer.
           </div>
         </div>
 

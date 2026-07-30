@@ -27,6 +27,7 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
   const [name, setName] = useState('');
   const [category, setCategory] = useState<ItemCategory>('FUEL');
   const [unit, setUnit] = useState<ItemUnit>('LITRE');
+  const [code, setCode] = useState('');
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
@@ -34,6 +35,7 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
   const [editName, setEditName] = useState('');
   const [editCategory, setEditCategory] = useState<ItemCategory>('FUEL');
   const [editUnit, setEditUnit] = useState<ItemUnit>('LITRE');
+  const [editCode, setEditCode] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -72,10 +74,16 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
     setAddError(null);
     setAdding(true);
     try {
-      await createItem({ name: name.trim(), category, unit });
+      await createItem({
+        name: name.trim(),
+        category,
+        unit,
+        code: code.trim() || undefined,
+      });
       setName('');
       setCategory('FUEL');
       setUnit('LITRE');
+      setCode('');
       await loadItems();
     } catch (err) {
       setAddError(err instanceof ApiError ? err.message : "Can't reach the backend.");
@@ -89,6 +97,7 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
     setEditName(item.name);
     setEditCategory(item.category);
     setEditUnit(item.unit);
+    setEditCode(item.code ?? '');
     setEditError(null);
   }
 
@@ -98,7 +107,12 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
     setEditError(null);
     setSavingEdit(true);
     try {
-      await updateItem(editingId, { name: editName.trim(), category: editCategory, unit: editUnit });
+      await updateItem(editingId, {
+        name: editName.trim(),
+        category: editCategory,
+        unit: editUnit,
+        code: editCode.trim(),
+      });
       setEditingId(null);
       await loadItems();
     } catch (err) {
@@ -123,7 +137,10 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
         <h3>Item master</h3>
         <span className="section-note">
           Everything this pump sells — Petrol, Diesel, Speed, Urea/AdBlue, lubricant SKUs, or anything
-          else. Nozzle setup below reads this list instead of a free-text product field.
+          else. Nozzle setup below reads this list instead of a free-text product field. Code is the
+          default prefilled when this item is added as an extra line on a bill. Tax rate isn&rsquo;t set
+          here — see &ldquo;GST / tax rate settings&rdquo; to configure the GST % per product, which
+          bills and the sales/purchase register both read from.
         </span>
       </div>
 
@@ -141,6 +158,7 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
                   <th>Name</th>
                   <th>Category</th>
                   <th>Unit</th>
+                  <th>Code</th>
                   <th>Status</th>
                   {canManage && <th></th>}
                 </tr>
@@ -149,7 +167,7 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
                 {items.map((item) =>
                   editingId === item.id ? (
                     <tr key={item.id}>
-                      <td colSpan={canManage ? 5 : 4}>
+                      <td colSpan={canManage ? 6 : 5}>
                         <form
                           onSubmit={(e) => {
                             void handleSaveEdit(e);
@@ -177,6 +195,12 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
                               </option>
                             ))}
                           </select>
+                          <input
+                            value={editCode}
+                            onChange={(e) => setEditCode(e.target.value)}
+                            placeholder="Code"
+                            style={{ width: 90 }}
+                          />
                           <button type="submit" className="export-btn" disabled={savingEdit}>
                             {savingEdit ? 'Saving…' : 'Save'}
                           </button>
@@ -197,6 +221,7 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
                       <td style={{ fontWeight: 700 }}>{item.name}</td>
                       <td>{item.category}</td>
                       <td>{item.unit}</td>
+                      <td>{item.code ?? '—'}</td>
                       <td>
                         <StatusBadge tone={item.isActive ? 'good' : 'neutral'} label={item.isActive ? 'Active' : 'Disabled'} />
                       </td>
@@ -262,6 +287,10 @@ export function ItemSettings({ canManage }: ItemSettingsProps) {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="form-field" style={{ marginBottom: 0 }}>
+              <label htmlFor="item-code">Code (optional)</label>
+              <input id="item-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. OIL-1L" />
             </div>
           </div>
           {addError && <div className="form-error">{addError}</div>}

@@ -5,6 +5,7 @@ import { getRateHistory } from '../../api/rateMaster';
 import { computeCurrentRates } from '../../utils/rateMaster';
 import { ApiError } from '../../api/client';
 import type { Bill, Customer, Item, PaymentDirection, PaymentType, RateHistory } from '../../api/types';
+import { LineItemsEditor, computeLineItemTotals, toCreateBillLineItemRequests, type LocalLineItem } from './LineItemsEditor';
 
 interface AddCashBillModalProps {
   // Section 3.2 — manual bill entry, full web/DSM parity (NewBillScreen.tsx
@@ -65,6 +66,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
   const [productType, setProductType] = useState('');
   const [items, setItems] = useState<Item[]>([]);
   const [rateHistory, setRateHistory] = useState<RateHistory[]>([]);
+  const [lineItems, setLineItems] = useState<LocalLineItem[]>([]);
 
   const [lines, setLines] = useState<LocalPaymentLine[]>([]);
   const [draftType, setDraftType] = useState<PaymentType>('CASH');
@@ -171,8 +173,12 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
 
   const sumIn = lines.filter((l) => l.direction === 'IN').reduce((t, l) => t + l.amount, 0);
   const sumOut = lines.filter((l) => l.direction === 'OUT').reduce((t, l) => t + l.amount, 0);
-  const parsedBillAmount = Number(amount) || 0;
-  const remaining = parsedBillAmount - (sumIn - sumOut);
+  const parsedFuelAmount = Number(amount) || 0;
+  const { itemsSubtotal, itemsTaxTotal } = computeLineItemTotals(lineItems);
+  // Grand total — what the customer actually owes and what the payment
+  // lines below must balance to (Section 5A.1), not just the fuel amount.
+  const grandTotal = Math.round((parsedFuelAmount + itemsSubtotal + itemsTaxTotal) * 100) / 100;
+  const remaining = grandTotal - (sumIn - sumOut);
   const balanced = Math.abs(remaining) <= EPSILON;
 
   const hasVehicleOrName = vehicleNumber.trim() !== '' || customerName.trim() !== '';
@@ -180,7 +186,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
   const canSave =
     !submitting &&
     hasVehicleOrName &&
-    parsedBillAmount > 0 &&
+    parsedFuelAmount > 0 &&
     Number(litres) > 0 &&
     productType.trim() !== '' &&
     lines.length > 0 &&
@@ -202,7 +208,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
           : undefined,
         vehicleNumber: trimmedVehicle === '' ? undefined : trimmedVehicle,
         customerName: trimmedCustomerName === '' ? undefined : trimmedCustomerName,
-        amount: parsedBillAmount,
+        amount: grandTotal,
         litres: Number(litres),
         productType: productType.trim(),
         entryChannel: 'WEB',
@@ -211,6 +217,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
           amount: lineAmount,
           direction,
         })),
+        lineItems: lineItems.length > 0 ? toCreateBillLineItemRequests(lineItems) : undefined,
       });
       onCreated(bill);
     } catch (err) {
@@ -268,7 +275,7 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
         {!hasVehicleOrName && <div className="form-error">Vehicle number or customer name is required.</div>}
 
         <div className="form-field">
-          <label htmlFor="ab-amount">Amount (Rs.)</label>
+          <label htmlFor="ab-amount">Fuel amount (Rs.)</label>
           <input
             id="ab-amount"
             type="number"
@@ -315,10 +322,17 @@ export function AddCashBillModal({ customers, onClose, onCreated }: AddCashBillM
           )}
         </div>
 
+        <LineItemsEditor items={items} lines={lineItems} onChange={setLineItems} idPrefix="ab" />
+
         <div className="form-field">
           <label>Payments</label>
           <div className="section-note" style={{ marginBottom: 8 }}>
-            Remaining to collect: Rs.{remaining.toFixed(2)} {balanced ? '(balanced)' : ''}
+            Fuel Rs.{parsedFuelAmount.toFixed(2)}
+            {lineItems.length > 0 && (
+              <> + items Rs.{itemsSubtotal.toFixed(2)} + tax Rs.{itemsTaxTotal.toFixed(2)}</>
+            )}
+            {' '}= grand total Rs.{grandTotal.toFixed(2)} · Remaining to collect: Rs.{remaining.toFixed(2)}{' '}
+            {balanced ? '(balanced)' : ''}
           </div>
 
           {lines.map((line) => (

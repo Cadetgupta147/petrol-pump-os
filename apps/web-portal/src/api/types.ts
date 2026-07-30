@@ -64,6 +64,27 @@ export interface BillPaymentLine {
   createdAt: string;
 }
 
+// Extra (non-fuel) item sold alongside the fuel on a bill — e.g. a can of
+// engine oil handed over with the same fill-up. Every money field here is
+// server-computed (see apps/backend/src/bills/bills.service.ts's
+// resolveLineItems()) — never trust/recompute these client-side.
+export interface BillLineItem {
+  id: string;
+  itemId: string | null;
+  itemCode: string | null;
+  itemName: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+  isInterstate: boolean;
+  taxRate: number;
+  cgstAmount: number;
+  sgstAmount: number;
+  igstAmount: number;
+  lineTotal: number;
+  sortOrder: number;
+}
+
 export interface Bill {
   id: string;
   // Server-generated, human-friendly sequence (<PUMP_CODE>-<seq>, e.g.
@@ -73,10 +94,17 @@ export interface Bill {
   customerId: string | null;
   vehicleNumber: string | null;
   customerName: string | null;
+  // Grand total payable — fuel (litres × rateApplied, already VAT-inclusive,
+  // no separate fuel tax field) plus itemsSubtotal plus itemsTaxTotal below.
   amount: number;
   litres: number;
   productType: string;
   rateApplied: number;
+  // Pre-tax subtotal and GST total of the extra (non-fuel) lineItems below —
+  // both 0 when the bill has no line items (the pre-existing
+  // single-fuel-product case).
+  itemsSubtotal: number;
+  itemsTaxTotal: number;
   enteredById: string;
   entryChannel: EntryChannel;
   timestamp: string;
@@ -93,6 +121,7 @@ export interface Bill {
   deletedById: string | null;
   deletedAt: string | null;
   paymentLines: BillPaymentLine[];
+  lineItems: BillLineItem[];
   customer?: { id: string; name: string; verificationStatus: string } | null;
 }
 
@@ -134,11 +163,29 @@ export interface QuickAddCustomerRequest {
   vehicleNumber: string;
 }
 
+// Mirrors apps/backend/src/bills/dto/create-bill-line-item.dto.ts. Every
+// money field the server actually stores (amount, cgst/sgst/igst,
+// lineTotal) is computed server-side from quantity/rate/taxRate — see
+// BillsService.resolveLineItems() — this request shape only carries the
+// inputs.
+export interface CreateBillLineItemRequest {
+  itemId?: string;
+  itemCode?: string;
+  itemName?: string;
+  quantity: number;
+  rate: number;
+  isInterstate?: boolean;
+  taxRate?: number;
+}
+
 // Mirrors apps/backend/src/bills/dto/create-bill.dto.ts — Section 3.2 manual
 // bill entry (web/DSM parity). rateApplied and loyalty points are NOT
 // fields here: the server resolves both authoritatively (Rate Master +
 // LoyaltyConfig) rather than trusting client-supplied values, per CLAUDE.md's
 // "never trust the frontend" rule for money fields — see BillsService.create().
+// amount must equal fuel (litres × the server-resolved rate) plus whatever
+// lineItems add up to (base + GST) — the server validates this, it isn't
+// just trusted.
 export interface CreateBillRequest {
   customerId?: string;
   quickAddCustomer?: QuickAddCustomerRequest;
@@ -149,6 +196,7 @@ export interface CreateBillRequest {
   productType: string;
   entryChannel: EntryChannel;
   paymentLines: CreateBillPaymentLineRequest[];
+  lineItems?: CreateBillLineItemRequest[];
 }
 
 // Mirrors apps/backend/src/bills/dto/update-bill.dto.ts — any subset of
@@ -186,6 +234,12 @@ export interface Item {
   name: string;
   category: ItemCategory;
   unit: ItemUnit;
+  // Item code (the "Code" column on a bill's line-item grid). Optional —
+  // meaningless for FUEL items, since fuel's rate is already tax-inclusive.
+  // No taxRate here — that's TaxRateConfig (Section 17.22, /tax-rate-config,
+  // TaxRateSettingsPage), keyed by this item's name, so there's one place to
+  // configure it rather than two that could drift apart.
+  code: string | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -195,6 +249,7 @@ export interface CreateItemRequest {
   name: string;
   category: ItemCategory;
   unit: ItemUnit;
+  code?: string;
 }
 
 // Mirrors apps/backend/src/items/dto/update-item.dto.ts — any subset.
@@ -202,6 +257,7 @@ export interface UpdateItemRequest {
   name?: string;
   category?: ItemCategory;
   unit?: ItemUnit;
+  code?: string;
   isActive?: boolean;
 }
 

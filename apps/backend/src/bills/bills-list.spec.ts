@@ -7,6 +7,7 @@ import { LoyaltyService } from '../loyalty/loyalty.service';
 import { RateMasterService } from '../rate-master/rate-master.service';
 import { VehicleBlacklistService } from '../vehicle-blacklist/vehicle-blacklist.service';
 import { LedgerPostingService } from '../ledger/ledger-posting.service';
+import { TaxRateConfigService } from '../tax-rate-config/tax-rate-config.service';
 
 // Section 3.2 — GET /bills filtering + opt-in pagination (BillsService.findAll()).
 // Covers: each filter builds the expected Prisma where clause, filters
@@ -34,6 +35,7 @@ describe('BillsService.findAll (Section 3.2 register filters)', () => {
         { provide: RateMasterService, useValue: {} },
         { provide: VehicleBlacklistService, useValue: {} },
         { provide: LedgerPostingService, useValue: {} },
+        { provide: TaxRateConfigService, useValue: {} },
       ],
     }).compile();
 

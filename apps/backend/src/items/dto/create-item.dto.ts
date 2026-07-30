@@ -1,4 +1,4 @@
-import { IsEnum, IsString, MinLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { ItemCategory, ItemUnit } from '@prisma/client';
 
 // POST /items — Item Master: everything this pump sells (Petrol, Diesel,
@@ -20,4 +20,12 @@ export class CreateItemDto {
 
   @IsEnum(ItemUnit)
   unit!: ItemUnit;
+
+  // Item code (the "Code" column on a bill's line-item grid). Optional —
+  // most FUEL items won't set one. No taxRate field here — see
+  // prisma/schema.prisma's Item comment: that lives in TaxRateConfig
+  // (Section 17.22, /tax-rate-config) instead, keyed by this item's name.
+  @IsOptional()
+  @IsString()
+  code?: string;
 }

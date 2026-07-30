@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 import { EntryChannel } from '@prisma/client';
 import { CreateBillPaymentLineDto } from './create-bill-payment-line.dto';
+import { CreateBillLineItemDto } from './create-bill-line-item.dto';
 import { QuickAddCustomerDto } from './quick-add-customer.dto';
 
 // Section 3.2 (manual bill entry, web/DSM parity) + Section 5A (split payments)
@@ -51,6 +52,11 @@ export class CreateBillDto {
   @IsString()
   customerName?: string;
 
+  // Grand total payable — fuel (litres × the server-resolved rate) plus
+  // whatever lineItems below add up to (base + GST). Still fully
+  // server-validated against that sum, same "never trust the frontend for
+  // money fields" reasoning as before line items existed — see
+  // BillsService.assertAmountMatchesRate().
   @IsNumber()
   @IsPositive()
   amount!: number;
@@ -61,6 +67,16 @@ export class CreateBillDto {
 
   @IsString()
   productType!: string;
+
+  // Extra (non-fuel) items sold alongside the fuel on this bill — e.g. a can
+  // of engine oil handed over with the same fill-up. Optional: omitting it
+  // (or sending []) is the pre-existing single-fuel-product bill, completely
+  // unchanged. See CreateBillLineItemDto and prisma/schema.prisma's
+  // BillLineItem comment for the tax-calculation rules.
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CreateBillLineItemDto)
+  lineItems?: CreateBillLineItemDto[];
 
   // Optional: which nozzle this bill was rung up against, if known. Not
   // required — most entry points don't send this yet (schema/backend

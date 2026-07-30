@@ -1,0 +1,39 @@
+-- AlterTable
+ALTER TABLE "Bill" ADD COLUMN     "itemsSubtotal" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "itemsTaxTotal" DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "Item" ADD COLUMN     "code" TEXT,
+ADD COLUMN     "taxRate" DOUBLE PRECISION;
+
+-- CreateTable
+CREATE TABLE "BillLineItem" (
+    "id" TEXT NOT NULL,
+    "pumpId" TEXT NOT NULL,
+    "billId" TEXT NOT NULL,
+    "itemId" TEXT,
+    "itemCode" TEXT,
+    "itemName" TEXT NOT NULL,
+    "quantity" DOUBLE PRECISION NOT NULL,
+    "rate" DOUBLE PRECISION NOT NULL,
+    "amount" DOUBLE PRECISION NOT NULL,
+    "isInterstate" BOOLEAN NOT NULL DEFAULT false,
+    "taxRate" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "cgstAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "sgstAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "igstAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "lineTotal" DOUBLE PRECISION NOT NULL,
+    "sortOrder" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "BillLineItem_pkey" PRIMARY KEY ("id")
+);
+
+-- AddForeignKey
+ALTER TABLE "BillLineItem" ADD CONSTRAINT "BillLineItem_pumpId_fkey" FOREIGN KEY ("pumpId") REFERENCES "Pump"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BillLineItem" ADD CONSTRAINT "BillLineItem_billId_fkey" FOREIGN KEY ("billId") REFERENCES "Bill"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BillLineItem" ADD CONSTRAINT "BillLineItem_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "Item"("id") ON DELETE SET NULL ON UPDATE CASCADE;

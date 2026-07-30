@@ -6,6 +6,7 @@ import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { RateMasterModule } from '../rate-master/rate-master.module';
 import { VehicleBlacklistModule } from '../vehicle-blacklist/vehicle-blacklist.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { TaxRateConfigModule } from '../tax-rate-config/tax-rate-config.module';
 
 // CreditConfigModule imported for CreditConfigService (Section 3.4A
 // enforcement mode + default informal credit limit). LoyaltyModule imported
@@ -16,7 +17,11 @@ import { LedgerModule } from '../ledger/ledger.module';
 // outright when the vehicle/company/customer is on an active blacklist).
 // CreditAlertsModule is NOT imported here — alert creation happens directly
 // via the shared Prisma transaction client inside BillsService, not through
-// CreditAlertsService.
+// CreditAlertsService. TaxRateConfigModule imported for TaxRateConfigService.
+// resolveTaxRateMap() — the same dealer-configured per-productType GST rate
+// (Section 17.22) the sales/purchase register already reads, now reused as
+// the default taxRate for a bill's extra (non-fuel) line items too, keyed
+// by BillLineItem.itemName against that same productType string.
 @Module({
   imports: [
     CreditConfigModule,
@@ -24,6 +29,7 @@ import { LedgerModule } from '../ledger/ledger.module';
     RateMasterModule,
     VehicleBlacklistModule,
     LedgerModule,
+    TaxRateConfigModule,
   ],
   controllers: [BillsController],
   providers: [BillsService],
