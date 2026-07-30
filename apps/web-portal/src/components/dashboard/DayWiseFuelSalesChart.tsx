@@ -1,19 +1,15 @@
 import { useMemo } from 'react';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { Bill } from '../../api/types';
-import { formatLitres, formatRupees, localIsoDate } from '../../utils/format';
+import type { MeterReading } from '../../api/types';
+import { formatLitres, localIsoDate } from '../../utils/format';
 
 interface DayWiseFuelSalesChartProps {
-  bills: Bill[];
+  readings: MeterReading[];
 }
 
 // Fixed categorical order (never cycled/reassigned) — same validated
 // --chart-cat-* ramp tokens.css already carries for exactly this purpose
-// (see that file's comment); this is simply the first component to draw
-// from it. Product types are whatever a DSM has typed as Bill.productType,
-// so this maps in first-seen order rather than a hardcoded Petrol/Diesel
-// enum — a 6th+ product folds into the last slot rather than cycling back
-// to a color already in use.
+// (see that file's comment).
 const CATEGORICAL_COLORS = [
   'var(--chart-cat-1)',
   'var(--chart-cat-2)',
@@ -25,41 +21,44 @@ const CATEGORICAL_COLORS = [
 interface DayRow {
   day: string;
   dayLabel: string;
-  [productType: string]: string | number | { litres: number; amount: number };
+  [productType: string]: string | number;
 }
 
-function buildDayRows(bills: Bill[]): { rows: DayRow[]; productTypes: string[] } {
-  const productTypes = Array.from(new Set(bills.map((b) => b.productType))).sort();
+// Fuel identity per nozzle, per productType (falls back to the nozzle's own
+// item name, same convention MeterReadingsPage already uses for its Product
+// column — productType is only null on legacy pre-Nozzle-master rows).
+function fuelTypeOf(reading: MeterReading): string {
+  return reading.productType ?? reading.nozzle.item.name;
+}
+
+// The physical litres actually dispensed, straight from the meter
+// (closingReading - openingReading, i.e. MeterReading.litresSold) — NOT
+// derived from Bill rows. A shift's billed total can under/over-count the
+// meter (walk-in sales not yet itemized, variance not yet reconciled — see
+// NozzleReadingsTable), so "how much fuel did we actually sell today" is
+// the meter's own number, grouped by the nozzle's fuel type and the local
+// calendar day the shift started on. Only closed shifts have a litresSold
+// to count; a still-open shift hasn't dispensed a final figure yet.
+function buildDayRows(readings: MeterReading[]): { rows: DayRow[]; productTypes: string[] } {
+  const closed = readings.filter((r) => r.litresSold !== null);
+  const productTypes = Array.from(new Set(closed.map(fuelTypeOf))).sort();
   const byDay = new Map<string, DayRow>();
 
-  for (const bill of bills) {
-    const day = localIsoDate(new Date(bill.timestamp));
+  for (const reading of closed) {
+    const day = localIsoDate(new Date(reading.shiftStart));
     let row = byDay.get(day);
     if (!row) {
       row = {
         day,
-        dayLabel: new Date(bill.timestamp).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        dayLabel: new Date(reading.shiftStart).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
       };
-      for (const pt of productTypes) row[pt] = { litres: 0, amount: 0 };
+      for (const pt of productTypes) row[pt] = 0;
       byDay.set(day, row);
     }
-    const existing = row[bill.productType] as { litres: number; amount: number };
-    existing.litres += bill.litres;
-    existing.amount += bill.amount;
+    row[fuelTypeOf(reading)] = (row[fuelTypeOf(reading)] as number) + (reading.litresSold as number);
   }
 
   const rows = Array.from(byDay.values()).sort((a, b) => a.day.localeCompare(b.day));
-  // Flatten each product's {litres, amount} into a plain litres number for
-  // the bar's dataKey (recharts needs a number to size the bar), keeping
-  // the amount alongside under a `__amount_<productType>` key so the
-  // tooltip can still show both.
-  for (const row of rows) {
-    for (const pt of productTypes) {
-      const cell = row[pt] as { litres: number; amount: number };
-      row[`__amount_${pt}`] = cell.amount;
-      row[pt] = cell.litres;
-    }
-  }
   return { rows, productTypes };
 }
 
@@ -83,13 +82,11 @@ function ChartTooltip({
       {productTypes.map((pt, i) => {
         const litres = row[pt] as number;
         if (!litres) return null;
-        const amount = row[`__amount_${pt}`] as number;
         return (
           <div key={pt} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: CATEGORICAL_COLORS[i % CATEGORICAL_COLORS.length], flexShrink: 0 }} />
             <span style={{ color: 'var(--gray)', flex: 1 }}>{pt}</span>
             <span style={{ fontWeight: 600 }}>{formatLitres(litres)}</span>
-            <span style={{ color: 'var(--gray)' }}>({formatRupees(amount)})</span>
           </div>
         );
       })}
@@ -98,17 +95,19 @@ function ChartTooltip({
 }
 
 // Section 3.1 dashboard addition — fuel sales (litres) broken down by
-// calendar day and product type, for the currently selected date-range tab.
-// A stacked bar per day: one series per fuel product, so a multi-day range
-// (week/month) shows the day-over-day trend, not just the range total the
-// KPI cards above already cover. See the dataviz skill: magnitude-by-day
-// broken by identity is a stacked-bar job, categorical hues assigned in
-// fixed order and validated against tokens.css's own palette check.
-export function DayWiseFuelSalesChart({ bills }: DayWiseFuelSalesChartProps) {
-  const { rows, productTypes } = useMemo(() => buildDayRows(bills), [bills]);
+// calendar day and fuel type, sourced from closed meter-reading shifts (not
+// bills — see buildDayRows()'s comment) for the currently selected
+// date-range tab. A stacked bar per day: one series per fuel, so a
+// multi-day range (week/month) shows the day-over-day trend, not just the
+// range total the KPI cards above already cover. See the dataviz skill:
+// magnitude-by-day broken by identity is a stacked-bar job, categorical
+// hues assigned in fixed order and validated against tokens.css's own
+// palette check.
+export function DayWiseFuelSalesChart({ readings }: DayWiseFuelSalesChartProps) {
+  const { rows, productTypes } = useMemo(() => buildDayRows(readings), [readings]);
 
   if (rows.length === 0) {
-    return <div className="empty-box">No fuel sales recorded for this range.</div>;
+    return <div className="empty-box">No closed meter-reading shifts for this range yet.</div>;
   }
 
   return (
@@ -174,8 +173,8 @@ export function DayWiseFuelSalesChart({ bills }: DayWiseFuelSalesChartProps) {
       </table>
 
       <div className="footnote">
-        Litres sold per day, stacked by fuel product type, from the selected range&rsquo;s bills. Hover a bar for the
-        exact litres and amount per product.
+        Litres sold per day, stacked by fuel type, from closed meter-reading shifts (closing − opening reading) in
+        the selected range — not from billed amounts, so uninvoiced walk-in litres still count.
       </div>
     </div>
   );

@@ -572,9 +572,9 @@ export function DashboardPage() {
         <div className="section">
           <div className="section-title">
             <h3>Fuel sales by day</h3>
-            <span className="section-note">{rangeLabel} bills, litres sold per product per day</span>
+            <span className="section-note">{rangeLabel} meter-reading shifts, litres sold per fuel per day</span>
           </div>
-          <DayWiseFuelSalesChart bills={rangeBills} />
+          <DayWiseFuelSalesChart readings={meterReadings} />
         </div>
 
         {(loyaltyCostReport || purchaseEntries || attendanceLog) && (

@@ -13,7 +13,9 @@ interface NozzleReadingsTableProps {
 // meterReadingId/variance fetch in DashboardPage) and names the flagged
 // nozzles driving it. Tolerance itself is per-shift (toleranceLitres on
 // MeterVariance), not a single fixed number, so it's described rather than
-// quoted as one blanket ± figure.
+// quoted as one blanket ± figure. Kept even though the per-row Billed/
+// Variance columns below were removed for a cleaner view — this is still
+// the only place that surfaces the reconciliation-needed signal.
 function VarianceSummaryBanner({ readings, varianceByReadingId }: NozzleReadingsTableProps) {
   const variances = readings
     .map((r) => varianceByReadingId.get(r.id))
@@ -57,31 +59,6 @@ function VarianceSummaryBanner({ readings, varianceByReadingId }: NozzleReadings
   );
 }
 
-// Small diverging bar, direct-labeled by the numeric variance cell right
-// beside it (per the dataviz skill's "selective direct labels" rule — the
-// bar carries magnitude+direction at a glance, the number stays the
-// authoritative value). Blue = under (shortage), orange = over (excess) —
-// deliberately not red/green, since --red is already reserved for the
-// separate "flagged" status meaning (see StatusBadge) and reusing it here
-// would conflate direction with severity.
-function VarianceBar({ variance, maxAbs }: { variance: number; maxAbs: number }) {
-  const magnitudePct = maxAbs > 0 ? Math.min(100, (Math.abs(variance) / maxAbs) * 100) : 0;
-  const isPositive = variance >= 0;
-  return (
-    <div className="variance-bar-track" title={`${formatSignedLitres(variance)} vs billed`}>
-      <div className="variance-bar-zero" />
-      <div
-        className="variance-bar-fill"
-        style={{
-          width: `${magnitudePct / 2}%`,
-          background: isPositive ? 'var(--chart-diverging-pos)' : 'var(--chart-diverging-neg)',
-          ...(isPositive ? { left: '50%' } : { right: '50%' }),
-        }}
-      />
-    </div>
-  );
-}
-
 // Real data note: the schema's MeterReading is one row per open/close shift
 // per nozzle, at whatever times staff actually opened/closed it — there is
 // no fixed "6am-6pm / 6pm-6am" split, nor a stored shift-number column,
@@ -90,6 +67,9 @@ function VarianceBar({ variance, maxAbs }: { variance: number; maxAbs: number })
 // does it: each nozzle's shifts are numbered in chronological order WITHIN
 // their local calendar day (a multi-day dashboard range must not let a
 // nozzle's 3rd shift on Tuesday collide with its 3rd shift on Wednesday).
+// Computed from EVERY reading (open + closed) so a still-open shift still
+// occupies its real slot in the sequence, even though open shifts themselves
+// are filtered out of the rendered rows below.
 function computeShiftNumbers(readings: MeterReading[]): Map<string, number> {
   const byNozzleDay = new Map<string, MeterReading[]>();
   for (const r of readings) {
@@ -108,18 +88,25 @@ function computeShiftNumbers(readings: MeterReading[]): Map<string, number> {
 }
 
 export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleReadingsTableProps) {
-  const maxAbsVariance = useMemo(() => {
-    let max = 0;
-    for (const variance of varianceByReadingId.values()) {
-      max = Math.max(max, Math.abs(variance.variance));
-    }
-    return max;
-  }, [varianceByReadingId]);
-
   const shiftNumberByReadingId = useMemo(() => computeShiftNumbers(readings), [readings]);
+
+  // Cleaner view: a shift still in progress has no closing reading yet, so
+  // there's nothing meaningful to show in Opening/Closing/Litres/Status for
+  // it — drop those rows rather than padding the table with dashes. Shift
+  // numbering above already accounted for them, so a closed "Shift 2" still
+  // correctly implies an in-progress "Shift 1" happened first.
+  const closedReadings = useMemo(() => readings.filter((r) => r.closingReading !== null), [readings]);
 
   if (readings.length === 0) {
     return <div className="empty-box">No meter reading shifts recorded today.</div>;
+  }
+
+  if (closedReadings.length === 0) {
+    return (
+      <div className="table-card">
+        <div className="empty-box">All shifts in this range are still open — nothing closed to show yet.</div>
+      </div>
+    );
   }
 
   return (
@@ -129,61 +116,31 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
         <thead>
           <tr>
             <th>Nozzle</th>
-            <th>Staff ID</th>
             <th>Shift</th>
             <th className="num">Opening</th>
             <th className="num">Closing</th>
             <th className="num">Litres sold</th>
-            <th className="num">Billed</th>
-            <th className="num">Variance</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody>
-          {readings.map((reading) => {
+          {closedReadings.map((reading) => {
             const variance = varianceByReadingId.get(reading.id);
-            const isOpen = reading.closingReading === null;
             return (
               <tr key={reading.id}>
                 <td>
                   {reading.nozzle.label} <span className="section-note">({reading.nozzle.item.name})</span>
                 </td>
-                <td title={reading.staffId}>{reading.staffId.slice(0, 8)}&hellip;</td>
                 <td title={`started ${formatTime(reading.shiftStart)}${reading.shiftEnd ? `, ended ${formatTime(reading.shiftEnd)}` : ''}`}>
                   Shift {shiftNumberByReadingId.get(reading.id) ?? 1}
                 </td>
                 <td className="num">{reading.openingReading.toFixed(1)}</td>
-                <td className="num">{reading.closingReading !== null ? reading.closingReading.toFixed(1) : '—'}</td>
+                <td className="num">{(reading.closingReading as number).toFixed(1)}</td>
                 <td className="num">
                   {reading.litresSold !== null ? formatLitres(reading.litresSold) : '—'}
                 </td>
-                <td className="num">
-                  {variance ? formatLitres(variance.litresBilled) : isOpen ? '—' : 'loading…'}
-                </td>
-                <td
-                  className="num"
-                  style={{
-                    fontWeight: 700,
-                    color: variance?.flagged
-                      ? 'var(--red)'
-                      : variance?.reconciliationPending
-                        ? 'var(--amber)'
-                        : 'var(--text-dark)',
-                  }}
-                >
-                  {variance ? (
-                    <>
-                      {formatSignedLitres(variance.variance)}
-                      <VarianceBar variance={variance.variance} maxAbs={maxAbsVariance} />
-                    </>
-                  ) : (
-                    '—'
-                  )}
-                </td>
                 <td>
-                  {isOpen ? (
-                    <StatusBadge tone="warning" label="Shift open" />
-                  ) : variance ? (
+                  {variance ? (
                     variance.flagged ? (
                       <StatusBadge tone="critical" label="Flagged" />
                     ) : variance.reconciliationPending ? (
@@ -200,9 +157,6 @@ export function NozzleReadingsTable({ readings, varianceByReadingId }: NozzleRea
           })}
         </tbody>
       </table>
-      <div className="footnote">
-        Staff IDs aren&rsquo;t resolved to names because no endpoint exposes Staff lookups yet.
-      </div>
     </div>
   );
 }
