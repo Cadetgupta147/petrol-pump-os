@@ -7,6 +7,9 @@ import { allocateVoucherNumber } from './voucher-number';
 import { CreateVoucherDto } from './dto/create-voucher.dto';
 import { ListVouchersQueryDto } from './dto/list-vouchers-query.dto';
 
+const GROUP_SORT_RANK: Record<string, number> = { CASH_IN_HAND: 0, BANK: 1, SALES: 2 };
+const signedDelta = (amount: number, drCr: DrCr) => (drCr === 'DEBIT' ? amount : -amount);
+
 const BALANCE_EPSILON = 0.01;
 
 // Manual voucher entry (Payment/Receipt/Contra/Journal) — Section 12 Day
@@ -157,8 +160,6 @@ export class VouchersService {
       }),
     ]);
 
-    const signedDelta = (amount: number, drCr: DrCr) => (drCr === 'DEBIT' ? amount : -amount);
-
     const openingByLedger = new Map<string, number>();
     for (const ledger of ledgerAccounts) {
       openingByLedger.set(
@@ -203,7 +204,6 @@ export class VouchersService {
       }
     }
 
-    const groupSortRank: Record<string, number> = { CASH_IN_HAND: 0, BANK: 1, SALES: 2 };
     const ledgers = ledgerAccounts
       .map((ledger) => {
         const opening = openingByLedger.get(ledger.id) ?? 0;
@@ -222,8 +222,8 @@ export class VouchersService {
         };
       })
       .sort((a, b) => {
-        const rankA = groupSortRank[a.group] ?? 99;
-        const rankB = groupSortRank[b.group] ?? 99;
+        const rankA = GROUP_SORT_RANK[a.group] ?? 99;
+        const rankB = GROUP_SORT_RANK[b.group] ?? 99;
         return rankA !== rankB ? rankA - rankB : a.name.localeCompare(b.name);
       });
 
@@ -244,5 +244,63 @@ export class VouchersService {
       })),
       ledgers,
     };
+  }
+
+  // Section 12 fix (docs/ledger-accounting-review.md finding #8) — every
+  // active ledger's running balance as of a date, not just ones touched on
+  // one specific day like the Day Book above. Generalizes the same opening-
+  // balance math (ledger's own openingBalance/openingBalanceType, plus every
+  // VoucherLine dated on-or-before `asOf`) into a single running balance per
+  // ledger rather than a same-day opening/closing pair.
+  async getTrialBalance(asOfStr?: string) {
+    const asOf = asOfStr ? asOfStr.slice(0, 10) : formatLocalDate(new Date());
+    const { end } = parseDateRangeStrings(asOf, asOf);
+
+    const [ledgerAccounts, lines] = await Promise.all([
+      this.prisma.ledgerAccount.findMany({ where: { isActive: true } }),
+      this.prisma.voucherLine.findMany({
+        where: { voucher: { date: { lte: end } } },
+        select: { ledgerAccountId: true, amount: true, drCr: true },
+      }),
+    ]);
+
+    const balanceByLedger = new Map<string, number>();
+    for (const ledger of ledgerAccounts) {
+      balanceByLedger.set(ledger.id, signedDelta(ledger.openingBalance, ledger.openingBalanceType));
+    }
+    for (const line of lines) {
+      if (!balanceByLedger.has(line.ledgerAccountId)) continue;
+      balanceByLedger.set(
+        line.ledgerAccountId,
+        (balanceByLedger.get(line.ledgerAccountId) ?? 0) + signedDelta(line.amount, line.drCr),
+      );
+    }
+
+    const rows = ledgerAccounts
+      .map((ledger) => {
+        const balance = balanceByLedger.get(ledger.id) ?? 0;
+        return {
+          ledgerAccountId: ledger.id,
+          name: ledger.name,
+          group: ledger.group,
+          balance: { side: (balance >= 0 ? 'DR' : 'CR') as 'DR' | 'CR', amount: Math.abs(balance) },
+        };
+      })
+      .sort((a, b) => {
+        const rankA = GROUP_SORT_RANK[a.group] ?? 99;
+        const rankB = GROUP_SORT_RANK[b.group] ?? 99;
+        return rankA !== rankB ? rankA - rankB : a.name.localeCompare(b.name);
+      });
+
+    const totals = rows.reduce(
+      (acc, row) => {
+        if (row.balance.side === 'DR') acc.dr += row.balance.amount;
+        else acc.cr += row.balance.amount;
+        return acc;
+      },
+      { dr: 0, cr: 0 },
+    );
+
+    return { asOf, rows, totals };
   }
 }

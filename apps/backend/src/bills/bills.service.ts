@@ -741,6 +741,17 @@ export class BillsService {
 
         return [updated];
       });
+
+      // Section 12 fix — repost so the ledger reflects the edit (amount,
+      // payment split, customer) instead of drifting stale against the
+      // originally-posted voucher. Best-effort/non-blocking, same as
+      // create()'s call above — the bill update above is already committed
+      // regardless of whether this succeeds.
+      await this.ledgerPostingService.postBillVoucher(
+        bill,
+        bill.customer?.name ?? bill.customerName ?? null,
+      );
+
       return bill;
     } catch (error) {
       this.handlePrismaError(error, editedById);
@@ -792,6 +803,13 @@ export class BillsService {
 
         return [deleted];
       });
+
+      // Section 12 fix — a voided bill shouldn't keep inflating Cash/Sales/
+      // the customer's Sundry Debtor balance. Best-effort/non-blocking, same
+      // as every other ledger call site — the soft-delete above is already
+      // committed regardless.
+      await this.ledgerPostingService.voidVoucherBySourceKey(pumpId, `bill:${id}`);
+
       return bill;
     } catch (error) {
       this.handlePrismaError(error, deletedById);

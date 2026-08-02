@@ -3,6 +3,7 @@ import { PurchasesController } from './purchases.controller';
 import { PurchasesService } from './purchases.service';
 import { OcrModule } from '../ocr/ocr.module';
 import { DensityLogsModule } from '../density-logs/density-logs.module';
+import { LedgerModule } from '../ledger/ledger.module';
 
 // Section 7.1/7.2 — manual purchase entry. PrismaModule is global (see
 // prisma.module.ts), so no imports needed.
@@ -13,8 +14,10 @@ import { DensityLogsModule } from '../density-logs/density-logs.module';
 // computeDensityFlag() pure function + this.prisma.densityLog.create()
 // directly inside its existing array-form transaction, not
 // DensityLogsService via DI — see that method's comment).
+// Section 12 fix — LedgerModule imported so PurchasesService can auto-post a
+// Purchase voucher (postPurchaseVoucher), same pattern as ExpensesModule.
 @Module({
-  imports: [OcrModule, DensityLogsModule],
+  imports: [OcrModule, DensityLogsModule, LedgerModule],
   controllers: [PurchasesController],
   providers: [PurchasesService],
 })

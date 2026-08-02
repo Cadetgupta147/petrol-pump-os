@@ -1173,6 +1173,10 @@ export interface CashCustodyLog {
   newOutstanding: number;
   handledById: string;
   handledBy?: { id: string; name: string };
+  // Section 12 fix — which Bank-group ledger the deposit went into; null
+  // means the single generic system Bank ledger (every row before this
+  // field existed, or an entry that didn't name one).
+  bankLedgerAccountId: string | null;
   createdAt: string;
 }
 
@@ -1193,6 +1197,7 @@ export interface CreateCashCustodyLogRequest {
   takenHome: number;
   handledById?: string;
   broughtBackToday?: number;
+  bankLedgerAccountId?: string;
 }
 
 // GET /cash-custody/report — CashCustodyService.getReport(). Already sorted
@@ -1361,6 +1366,23 @@ export interface DayBookReport {
   date: string;
   vouchers: DayBookVoucher[];
   ledgers: DayBookLedgerSection[];
+}
+
+// GET /vouchers/trial-balance?asOf= — Section 12 fix (finding #8). Every
+// active ledger's running balance as of a date, reusing DayBookBalance's
+// {side, amount} shape — no entries/vouchers list, unlike the Day Book,
+// since this is a snapshot, not a per-day register.
+export interface TrialBalanceRow {
+  ledgerAccountId: string;
+  name: string;
+  group: LedgerGroup;
+  balance: DayBookBalance;
+}
+
+export interface TrialBalanceReport {
+  asOf: string;
+  rows: TrialBalanceRow[];
+  totals: { dr: number; cr: number };
 }
 
 // ---------- Section 8A — Walk-in Shift Sales ----------

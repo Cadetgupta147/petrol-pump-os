@@ -16,7 +16,7 @@ describe('ExpensesService', () => {
       delete: jest.Mock;
     };
   };
-  let ledgerPostingService: { postExpenseVoucher: jest.Mock };
+  let ledgerPostingService: { postExpenseVoucher: jest.Mock; voidVoucherBySourceKey: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -31,7 +31,10 @@ describe('ExpensesService', () => {
     // ledger-posting.service.spec.ts for its own coverage); stubbed to a
     // no-op so ExpensesService.create() doesn't need a real LedgerAccount/
     // Voucher round trip.
-    ledgerPostingService = { postExpenseVoucher: jest.fn().mockResolvedValue(undefined) };
+    ledgerPostingService = {
+      postExpenseVoucher: jest.fn().mockResolvedValue(undefined),
+      voidVoucherBySourceKey: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -118,8 +121,8 @@ describe('ExpensesService', () => {
     expect(prisma.expenseEntry.delete).not.toHaveBeenCalled();
   });
 
-  it('remove() deletes an existing entry', async () => {
-    prisma.expenseEntry.findUnique.mockResolvedValue({ id: 'e1' });
+  it('remove() deletes an existing entry and voids its posted voucher', async () => {
+    prisma.expenseEntry.findUnique.mockResolvedValue({ id: 'e1', pumpId: 'pump-1' });
     prisma.expenseEntry.delete.mockResolvedValue({ id: 'e1' });
 
     const result = await service.remove('e1');
@@ -127,6 +130,7 @@ describe('ExpensesService', () => {
     expect(prisma.expenseEntry.delete).toHaveBeenCalledWith({
       where: { id: 'e1' },
     });
+    expect(ledgerPostingService.voidVoucherBySourceKey).toHaveBeenCalledWith('pump-1', 'expense:e1');
     expect(result).toEqual({ id: 'e1' });
   });
 });

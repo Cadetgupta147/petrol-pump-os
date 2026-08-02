@@ -9,6 +9,7 @@ import {
   LedgerGroup,
   Payment,
   PaymentType,
+  PurchaseEntry,
   SystemLedgerKey,
   VoucherType,
 } from '@prisma/client';
@@ -74,12 +75,18 @@ export class LedgerPostingService {
         lines.push({ ledgerAccountId: ledger.id, amount, drCr: 'DEBIT' });
         total += amount;
       }
-      if (total <= 0) return;
+      if (total <= 0) {
+        // An edit that zeroes out every payment line (edge case — DTOs
+        // require a positive amount in practice) still needs to void
+        // whatever was posted before, not just skip silently.
+        await this.voidVoucherBySourceKey(bill.pumpId, `bill:${bill.id}`);
+        return;
+      }
 
       const sales = await this.getOrCreateSystemLedger(bill.pumpId, 'SALES', 'Sales', 'SALES');
       lines.push({ ledgerAccountId: sales.id, amount: total, drCr: 'CREDIT' });
 
-      await this.createVoucherIfAbsent({
+      await this.replaceVoucher({
         pumpId: bill.pumpId,
         sourceKey: `bill:${bill.id}`,
         date: bill.timestamp,
@@ -107,7 +114,7 @@ export class LedgerPostingService {
         'expense',
       );
 
-      await this.createVoucherIfAbsent({
+      await this.replaceVoucher({
         pumpId: expense.pumpId,
         sourceKey: `expense:${expense.id}`,
         date: expense.expenseDate,
@@ -124,14 +131,69 @@ export class LedgerPostingService {
     }
   }
 
+  // Section 12 fix — a fuel/lubricant delivery, the payables side the
+  // ledger was missing entirely (docs/master-plan.md §3.6's "Supplier
+  // ledger" bullet). paidVia is nullable on PurchaseEntry for backward
+  // compatibility (rows entered before this existed) — null means "not
+  // ledger-tracked," skip silently rather than guess a payment method for a
+  // historical delivery. Dr a single system "Purchase" ledger; Cr whichever
+  // ledger the cost actually left — CASH/CARD/UPI hit the same clearing
+  // ledgers Expense/Bill already use, CREDIT hits a REAL PER-SUPPLIER Sundry
+  // Creditor ledger (getOrCreateLedgerByName, same mechanism Sales uses per
+  // customer) rather than one shared bucket — this is the actual fix for
+  // "no supplier-level payables tracking."
+  async postPurchaseVoucher(purchase: PurchaseEntry): Promise<void> {
+    try {
+      // Both null together for pre-fix rows (see schema comments); guard on
+      // both since Voucher.createdById is a required FK to Staff.
+      if (!purchase.paidVia || !purchase.recordedById || purchase.amount <= 0) return;
+      const purchaseLedger = await this.getOrCreateSystemLedger(
+        purchase.pumpId,
+        'PURCHASE',
+        'Purchase',
+        'PURCHASE',
+      );
+      const creditLedger =
+        purchase.paidVia === 'CREDIT'
+          ? await this.getOrCreateLedgerByName(
+              purchase.pumpId,
+              purchase.supplierName.trim(),
+              'SUNDRY_CREDITOR',
+            )
+          : await this.resolveCashCardUpiLedger(purchase.pumpId, purchase.paidVia);
+
+      await this.replaceVoucher({
+        pumpId: purchase.pumpId,
+        sourceKey: `purchase:${purchase.id}`,
+        date: purchase.createdAt,
+        voucherType: 'PURCHASE',
+        narration: `${purchase.supplierName}${purchase.invoiceNo ? ` — Invoice ${purchase.invoiceNo}` : ''}`,
+        createdById: purchase.recordedById,
+        lines: [
+          { ledgerAccountId: purchaseLedger.id, amount: purchase.amount, drCr: 'DEBIT' },
+          { ledgerAccountId: creditLedger.id, amount: purchase.amount, drCr: 'CREDIT' },
+        ],
+      });
+    } catch (error) {
+      this.logger.warn(`postPurchaseVoucher failed for purchase ${purchase.id}: ${String(error)}`);
+    }
+  }
+
   async postCashCustodyVoucher(log: CashCustodyLog, staffName: string): Promise<void> {
     try {
       const lines: { ledgerAccountId: string; amount: number; drCr: DrCr }[] = [];
       const cash = await this.getOrCreateSystemLedger(log.pumpId, 'CASH', 'Cash', 'CASH_IN_HAND');
 
       if (log.depositedToBank > 0) {
-        const bank = await this.getOrCreateSystemLedger(log.pumpId, 'BANK_DEFAULT', 'Bank', 'BANK');
-        lines.push({ ledgerAccountId: bank.id, amount: log.depositedToBank, drCr: 'DEBIT' });
+        // Section 12 fix — a dealer-picked specific Bank ledger (finding #7)
+        // when the entry named one; the single generic system Bank ledger
+        // otherwise, unchanged from before this field existed.
+        const bank = log.bankLedgerAccountId
+          ? await this.prisma.ledgerAccount.findUnique({ where: { id: log.bankLedgerAccountId } })
+          : null;
+        const bankLedger =
+          bank ?? (await this.getOrCreateSystemLedger(log.pumpId, 'BANK_DEFAULT', 'Bank', 'BANK'));
+        lines.push({ ledgerAccountId: bankLedger.id, amount: log.depositedToBank, drCr: 'DEBIT' });
         lines.push({ ledgerAccountId: cash.id, amount: log.depositedToBank, drCr: 'CREDIT' });
       }
       if (log.takenHome > 0) {
@@ -289,6 +351,16 @@ export class LedgerPostingService {
     });
   }
 
+  // Section 12 fix — seeds the ledger's opening balance from whatever
+  // CustomerOpeningBalance rows already exist for this customer at the
+  // moment their ledger is first created (the common real-world case: a
+  // credit customer onboarded with a starting balance BEFORE their first
+  // bill/payment in this system — see Section 3.4). Sign convention matches
+  // outstanding-statement.util.ts's own doc comment: positive = money owed
+  // increases (DEBIT), negative = a reduction/correction (CREDIT). A
+  // CustomerOpeningBalance recorded LATER, after this ledger already has
+  // transaction history, does NOT retroactively rewrite this field — see
+  // postOpeningBalanceAdjustment() below for that case instead.
   private async getOrCreateCustomerLedger(
     pumpId: string,
     customerId: string,
@@ -298,6 +370,11 @@ export class LedgerPostingService {
       where: { linkedCustomerId: customerId },
     });
     if (existing) return existing;
+    const { _sum } = await this.prisma.customerOpeningBalance.aggregate({
+      where: { customerId },
+      _sum: { amount: true },
+    });
+    const openingSum = _sum.amount ?? 0;
     return this.prisma.$transaction(async (tx) => {
       const code = await allocateLedgerAccountCode(tx, pumpId);
       return tx.ledgerAccount.create({
@@ -308,9 +385,62 @@ export class LedgerPostingService {
           group: 'SUNDRY_DEBTOR',
           isSystemManaged: true,
           linkedCustomerId: customerId,
+          openingBalance: Math.abs(openingSum),
+          openingBalanceType: openingSum >= 0 ? 'DEBIT' : 'CREDIT',
         },
       });
     });
+  }
+
+  // Section 12 fix — for a CustomerOpeningBalance recorded AFTER the
+  // customer's ledger already has transaction history: posts a small
+  // correcting Journal voucher instead of silently rewriting the stored
+  // openingBalance field, so the correction stays auditable in the Day Book.
+  // Offset against a dedicated suspense ledger rather than Capital Account —
+  // this is a bookkeeping correction (fixing a number that was wrong),
+  // not an owner equity movement.
+  async postOpeningBalanceAdjustment(params: {
+    pumpId: string;
+    customerId: string;
+    customerName: string;
+    openingBalanceId: string;
+    amount: number;
+    effectiveAt: Date;
+    recordedById: string;
+  }): Promise<void> {
+    try {
+      if (Math.abs(params.amount) <= 0.005) return;
+      const customer = await this.getOrCreateCustomerLedger(
+        params.pumpId,
+        params.customerId,
+        params.customerName,
+      );
+      const adjustments = await this.getOrCreateSystemLedger(
+        params.pumpId,
+        'OPENING_BALANCE_ADJUSTMENTS',
+        'Opening Balance Adjustments',
+        'OTHER',
+      );
+      const owesMore = params.amount > 0;
+      const amount = Math.abs(params.amount);
+
+      await this.createVoucherIfAbsent({
+        pumpId: params.pumpId,
+        sourceKey: `opening-balance:${params.openingBalanceId}`,
+        date: params.effectiveAt,
+        voucherType: 'JOURNAL',
+        narration: `Opening balance correction — ${params.customerName}`,
+        createdById: params.recordedById,
+        lines: [
+          { ledgerAccountId: customer.id, amount, drCr: owesMore ? 'DEBIT' : 'CREDIT' },
+          { ledgerAccountId: adjustments.id, amount, drCr: owesMore ? 'CREDIT' : 'DEBIT' },
+        ],
+      });
+    } catch (error) {
+      this.logger.warn(
+        `postOpeningBalanceAdjustment failed for customer ${params.customerId}: ${String(error)}`,
+      );
+    }
   }
 
   private async getOrCreatePersonalLedger(
@@ -408,6 +538,25 @@ export class LedgerPostingService {
     }
   }
 
+  // A cash/card/UPI-settled Purchase's credit side — same three system
+  // clearing ledgers every other cash/card/UPI flow resolves to. Typed to
+  // exclude CREDIT since postPurchaseVoucher() only calls this on the
+  // non-credit branch (CREDIT resolves to a per-supplier Sundry Creditor
+  // instead, via getOrCreateLedgerByName).
+  private resolveCashCardUpiLedger(
+    pumpId: string,
+    paymentType: Exclude<PaymentType, 'CREDIT'>,
+  ): Promise<LedgerAccount> {
+    switch (paymentType) {
+      case 'CASH':
+        return this.getOrCreateSystemLedger(pumpId, 'CASH', 'Cash', 'CASH_IN_HAND');
+      case 'CARD':
+        return this.getOrCreateSystemLedger(pumpId, 'CARD_CLEARING', 'Card', 'BANK');
+      case 'UPI':
+        return this.getOrCreateSystemLedger(pumpId, 'UPI_CLEARING', 'UPI', 'BANK');
+    }
+  }
+
   // ---------- voucher writers ----------
 
   private async createVoucherIfAbsent(params: {
@@ -449,9 +598,32 @@ export class LedgerPostingService {
     await this.writeVoucher(params, this.sourceFromKey(params.sourceKey));
   }
 
+  // Section 12 fix — deletes whatever's posted for this sourceKey and posts
+  // nothing in its place. Used when a source record is voided (a Bill
+  // soft-deleted, an Expense hard-deleted) rather than edited — there's no
+  // new content to repost, just the old entry to remove. A thin wrapper
+  // around replaceVoucher's own delete-then-lines.length===0-skip path, so
+  // there's one place that owns "how a voucher gets deleted for a
+  // sourceKey," not two.
+  async voidVoucherBySourceKey(pumpId: string, sourceKey: string): Promise<void> {
+    try {
+      await this.replaceVoucher({
+        pumpId,
+        sourceKey,
+        date: new Date(),
+        voucherType: 'JOURNAL',
+        narration: '',
+        createdById: '',
+        lines: [],
+      });
+    } catch (error) {
+      this.logger.warn(`voidVoucherBySourceKey failed for ${sourceKey}: ${String(error)}`);
+    }
+  }
+
   private sourceFromKey(
     sourceKey: string,
-  ): 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES' | 'PAYMENT' {
+  ): 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES' | 'PAYMENT' | 'PURCHASE' | 'OPENING_BALANCE' {
     const prefix = sourceKey.split(':')[0];
     switch (prefix) {
       case 'bill':
@@ -464,6 +636,10 @@ export class LedgerPostingService {
         return 'SHIFT_SALES';
       case 'payment':
         return 'PAYMENT';
+      case 'purchase':
+        return 'PURCHASE';
+      case 'opening-balance':
+        return 'OPENING_BALANCE';
       default:
         throw new Error(`Unrecognized sourceKey prefix: ${sourceKey}`);
     }
@@ -479,7 +655,7 @@ export class LedgerPostingService {
       createdById: string;
       lines: { ledgerAccountId: string; amount: number; drCr: DrCr }[];
     },
-    source: 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES' | 'PAYMENT',
+    source: 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES' | 'PAYMENT' | 'PURCHASE' | 'OPENING_BALANCE',
   ): Promise<void> {
     const debitTotal = params.lines
       .filter((l) => l.drCr === 'DEBIT')

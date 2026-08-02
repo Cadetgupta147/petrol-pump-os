@@ -1,6 +1,6 @@
 import {
-  BillForExport,
-  PaymentForExport,
+  LedgerAccountForExport,
+  VoucherForExport,
   buildTallyExportXml,
   escapeXml,
 } from './tally-xml-builder.util';
@@ -44,141 +44,176 @@ function voucherDebitCreditTotals(xml: string, voucherNumber: string) {
   return { debitTotal, creditTotal, ledgerNames };
 }
 
+function account(overrides: Partial<LedgerAccountForExport> = {}): LedgerAccountForExport {
+  return {
+    name: 'Cash',
+    group: 'CASH_IN_HAND',
+    openingBalance: 0,
+    openingBalanceType: 'DEBIT',
+    ...overrides,
+  };
+}
+
 describe('buildTallyExportXml', () => {
   const companyName = 'Test Pump Pvt Ltd';
 
-  it('produces a balanced Sales Voucher for a single-bill cash payment', () => {
-    const bill: BillForExport = {
-      id: 'bill-1',
-      timestamp: new Date('2026-07-01T10:00:00'),
-      amount: 500,
-      customerName: 'Walk-in',
-      vehicleNumber: null,
-      customer: null,
-      paymentLines: [
-        { paymentType: 'CASH', amount: 500, direction: 'IN' },
+  it('produces a balanced Sales voucher for a single-ledger-pair cash sale', () => {
+    const voucher: VoucherForExport = {
+      voucherNumber: 'PUMP001-V-000001',
+      date: new Date('2026-07-01T10:00:00'),
+      voucherType: 'SALES',
+      narration: 'Bill PUMP001-000001',
+      lines: [
+        { ledgerAccountName: 'Cash', amount: 500, drCr: 'DEBIT', narration: null },
+        { ledgerAccountName: 'Sales', amount: 500, drCr: 'CREDIT', narration: null },
       ],
     };
 
-    const xml = buildTallyExportXml({ companyName, bills: [bill], payments: [] });
+    const xml = buildTallyExportXml({
+      companyName,
+      ledgerAccounts: [account(), account({ name: 'Sales', group: 'SALES' })],
+      vouchers: [voucher],
+    });
 
     expect(xml).toContain('VCHTYPE="Sales"');
-
-    const { debitTotal, creditTotal, ledgerNames } =
-      voucherDebitCreditTotals(xml, 'bill-1');
+    const { debitTotal, creditTotal, ledgerNames } = voucherDebitCreditTotals(
+      xml,
+      'PUMP001-V-000001',
+    );
     expect(debitTotal).toBeCloseTo(creditTotal, 2);
     expect(debitTotal).toBeCloseTo(500, 2);
-    expect(ledgerNames).toContain('Cash');
-    expect(ledgerNames).toContain('Sales Account');
+    expect(ledgerNames).toEqual(expect.arrayContaining(['Cash', 'Sales']));
   });
 
-  it('produces a balanced Sales Voucher for a split cash+UPI bill', () => {
-    const bill: BillForExport = {
-      id: 'bill-2',
-      timestamp: new Date('2026-07-02T11:00:00'),
-      amount: 450,
-      customerName: null,
-      vehicleNumber: 'KA-01-AB-1234',
-      customer: null,
-      paymentLines: [
-        { paymentType: 'CASH', amount: 300, direction: 'IN' },
-        { paymentType: 'UPI', amount: 150, direction: 'IN' },
+  it('produces a balanced Purchase voucher against a per-supplier Sundry Creditor ledger', () => {
+    const voucher: VoucherForExport = {
+      voucherNumber: 'PUMP001-V-000002',
+      date: new Date('2026-07-02T11:00:00'),
+      voucherType: 'PURCHASE',
+      narration: 'BPCL Distributor — Invoice INV-77',
+      lines: [
+        { ledgerAccountName: 'Purchase', amount: 180000, drCr: 'DEBIT', narration: null },
+        {
+          ledgerAccountName: 'BPCL Distributor',
+          amount: 180000,
+          drCr: 'CREDIT',
+          narration: null,
+        },
       ],
     };
 
-    const xml = buildTallyExportXml({ companyName, bills: [bill], payments: [] });
-    const { debitTotal, creditTotal, ledgerNames } =
-      voucherDebitCreditTotals(xml, 'bill-2');
+    const xml = buildTallyExportXml({
+      companyName,
+      ledgerAccounts: [
+        account({ name: 'Purchase', group: 'PURCHASE' }),
+        account({ name: 'BPCL Distributor', group: 'SUNDRY_CREDITOR' }),
+      ],
+      vouchers: [voucher],
+    });
 
-    expect(debitTotal).toBeCloseTo(creditTotal, 2);
-    expect(debitTotal).toBeCloseTo(450, 2);
-    expect(ledgerNames).toEqual(
-      expect.arrayContaining(['Cash', 'UPI', 'Sales Account']),
+    expect(xml).toContain('VCHTYPE="Purchase"');
+    const { debitTotal, creditTotal, ledgerNames } = voucherDebitCreditTotals(
+      xml,
+      'PUMP001-V-000002',
     );
+    expect(debitTotal).toBeCloseTo(creditTotal, 2);
+    expect(ledgerNames).toContain('BPCL Distributor');
+    expect(xml).toContain('<NAME>BPCL Distributor</NAME>');
+    expect(xml).toContain('<PARENT>Sundry Creditors</PARENT>');
   });
 
-  it('still balances a split bill where one payment type nets negative (overpay + change given back)', () => {
-    // Customer pays 500 by UPI against a 450 bill, gets 50 cash change back.
-    const bill: BillForExport = {
-      id: 'bill-3',
-      timestamp: new Date('2026-07-03T12:00:00'),
-      amount: 450,
-      customerName: 'Change Customer',
-      vehicleNumber: null,
-      customer: null,
-      paymentLines: [
-        { paymentType: 'UPI', amount: 500, direction: 'IN' },
-        { paymentType: 'CASH', amount: 50, direction: 'OUT' },
+  it('produces a balanced Receipt voucher for a payment against a customer', () => {
+    const voucher: VoucherForExport = {
+      voucherNumber: 'PUMP001-V-000003',
+      date: new Date('2026-07-05T14:00:00'),
+      voucherType: 'RECEIPT',
+      narration: 'Payment received from Suresh Traders',
+      lines: [
+        { ledgerAccountName: 'Cash', amount: 750, drCr: 'DEBIT', narration: null },
+        { ledgerAccountName: 'Suresh Traders', amount: 750, drCr: 'CREDIT', narration: null },
       ],
     };
 
-    const xml = buildTallyExportXml({ companyName, bills: [bill], payments: [] });
-    const { debitTotal, creditTotal } = voucherDebitCreditTotals(xml, 'bill-3');
-
-    expect(debitTotal).toBeCloseTo(creditTotal, 2);
-    expect(debitTotal).toBeCloseTo(500, 2); // UPI debit 500 = CASH credit 50 + Sales credit 450
-  });
-
-  it('maps a CREDIT bill line to the specific customer ledger, not a static ledger', () => {
-    const bill: BillForExport = {
-      id: 'bill-4',
-      timestamp: new Date('2026-07-04T09:00:00'),
-      amount: 1000,
-      customerName: 'Ramesh Transports',
-      vehicleNumber: null,
-      customer: { id: 'cust-1', name: 'Ramesh Transports' },
-      paymentLines: [
-        { paymentType: 'CREDIT', amount: 1000, direction: 'IN' },
-      ],
-    };
-
-    const xml = buildTallyExportXml({ companyName, bills: [bill], payments: [] });
-    const { ledgerNames, debitTotal, creditTotal } =
-      voucherDebitCreditTotals(xml, 'bill-4');
-
-    expect(ledgerNames).toContain('Ramesh Transports');
-    expect(debitTotal).toBeCloseTo(creditTotal, 2);
-    // A ledger master should also have been emitted for this customer.
-    expect(xml).toContain('<NAME>Ramesh Transports</NAME>');
-    expect(xml).toContain('<PARENT>Sundry Debtors</PARENT>');
-  });
-
-  it('produces a balanced Receipt Voucher for a payment against a customer', () => {
-    const payment: PaymentForExport = {
-      id: 'pay-1',
-      createdAt: new Date('2026-07-05T14:00:00'),
-      amount: 750,
-      method: 'CASH',
-      customer: { id: 'cust-2', name: 'Suresh Traders' },
-    };
-
-    const xml = buildTallyExportXml({ companyName, bills: [], payments: [payment] });
+    const xml = buildTallyExportXml({
+      companyName,
+      ledgerAccounts: [account(), account({ name: 'Suresh Traders', group: 'SUNDRY_DEBTOR' })],
+      vouchers: [voucher],
+    });
 
     expect(xml).toContain('VCHTYPE="Receipt"');
-    const { debitTotal, creditTotal, ledgerNames } =
-      voucherDebitCreditTotals(xml, 'pay-1');
-
+    const { debitTotal, creditTotal, ledgerNames } = voucherDebitCreditTotals(
+      xml,
+      'PUMP001-V-000003',
+    );
     expect(debitTotal).toBeCloseTo(creditTotal, 2);
     expect(debitTotal).toBeCloseTo(750, 2);
-    expect(ledgerNames).toEqual(
-      expect.arrayContaining(['Cash', 'Suresh Traders']),
-    );
+    expect(ledgerNames).toEqual(expect.arrayContaining(['Cash', 'Suresh Traders']));
   });
 
-  it('escapes XML special characters in a customer name containing & and <', () => {
-    const bill: BillForExport = {
-      id: 'bill-5',
-      timestamp: new Date('2026-07-06T08:00:00'),
-      amount: 200,
-      customerName: 'Bharat & Sons <Traders>',
-      vehicleNumber: null,
-      customer: { id: 'cust-3', name: 'Bharat & Sons <Traders>' },
-      paymentLines: [
-        { paymentType: 'CREDIT', amount: 200, direction: 'IN' },
+  // Section 12 fix — a MANUAL voucher (Toll paid in cash, entered via
+  // Voucher Entry, never touching Bill/Payment at all) now shows up in the
+  // export, closing the exact gap finding #4 described.
+  it('exports a manual (non-Bill/Payment-sourced) voucher just like any other', () => {
+    const voucher: VoucherForExport = {
+      voucherNumber: 'PUMP001-V-000004',
+      date: new Date('2026-07-06T09:00:00'),
+      voucherType: 'PAYMENT',
+      narration: 'Toll for JEEP 0711',
+      lines: [
+        { ledgerAccountName: 'Toll', amount: 500, drCr: 'DEBIT', narration: null },
+        { ledgerAccountName: 'Cash', amount: 500, drCr: 'CREDIT', narration: null },
       ],
     };
 
-    const xml = buildTallyExportXml({ companyName, bills: [bill], payments: [] });
+    const xml = buildTallyExportXml({
+      companyName,
+      ledgerAccounts: [account(), account({ name: 'Toll', group: 'DIRECT_EXPENSE' })],
+      vouchers: [voucher],
+    });
+
+    expect(xml).toContain('VCHTYPE="Payment"');
+    const { debitTotal, creditTotal } = voucherDebitCreditTotals(xml, 'PUMP001-V-000004');
+    expect(debitTotal).toBeCloseTo(creditTotal, 2);
+    expect(debitTotal).toBeCloseTo(500, 2);
+  });
+
+  it('emits every active ledger as a master with its opening balance, even ones untouched in this date range', () => {
+    const xml = buildTallyExportXml({
+      companyName,
+      ledgerAccounts: [
+        account({ name: 'SBI', group: 'BANK', openingBalance: 1200, openingBalanceType: 'DEBIT' }),
+      ],
+      vouchers: [],
+    });
+
+    expect(xml).toContain('<NAME>SBI</NAME>');
+    expect(xml).toContain('<PARENT>Bank Accounts</PARENT>');
+    expect(xml).toContain('<OPENINGBALANCE>1200.00</OPENINGBALANCE>');
+  });
+
+  it('writes a CREDIT-type opening balance as a negative OPENINGBALANCE', () => {
+    const xml = buildTallyExportXml({
+      companyName,
+      ledgerAccounts: [
+        account({
+          name: 'BPCL Distributor',
+          group: 'SUNDRY_CREDITOR',
+          openingBalance: 5000,
+          openingBalanceType: 'CREDIT',
+        }),
+      ],
+      vouchers: [],
+    });
+
+    expect(xml).toContain('<OPENINGBALANCE>-5000.00</OPENINGBALANCE>');
+  });
+
+  it('escapes XML special characters in a ledger name containing & and <', () => {
+    const xml = buildTallyExportXml({
+      companyName,
+      ledgerAccounts: [account({ name: 'Bharat & Sons <Traders>', group: 'SUNDRY_DEBTOR' })],
+      vouchers: [],
+    });
 
     expect(xml).not.toContain('Bharat & Sons <Traders>');
     expect(xml).toContain('Bharat &amp; Sons &lt;Traders&gt;');
@@ -189,7 +224,24 @@ describe('buildTallyExportXml', () => {
   });
 
   it('emits the company name in SVCURRENTCOMPANY', () => {
-    const xml = buildTallyExportXml({ companyName, bills: [], payments: [] });
+    const xml = buildTallyExportXml({ companyName, ledgerAccounts: [], vouchers: [] });
     expect(xml).toContain(`<SVCURRENTCOMPANY>${companyName}</SVCURRENTCOMPANY>`);
+  });
+
+  it('skips a voucher whose lines are all negligible (rounding-noise) amounts', () => {
+    const voucher: VoucherForExport = {
+      voucherNumber: 'PUMP001-V-000005',
+      date: new Date('2026-07-07T09:00:00'),
+      voucherType: 'JOURNAL',
+      narration: null,
+      lines: [
+        { ledgerAccountName: 'Cash', amount: 0.001, drCr: 'DEBIT', narration: null },
+        { ledgerAccountName: 'Sales', amount: 0.001, drCr: 'CREDIT', narration: null },
+      ],
+    };
+
+    const xml = buildTallyExportXml({ companyName, ledgerAccounts: [], vouchers: [voucher] });
+
+    expect(xml).not.toContain('PUMP001-V-000005');
   });
 });

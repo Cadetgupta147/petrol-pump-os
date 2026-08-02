@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CustomersService } from './customers.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 
 // Section 6.3 step 2/3 — GET /customers/by-member-id/:qrMemberId, the DSM
 // app's QR-scan/manual-entry resolution. Covers: valid lookup returns the
@@ -42,6 +43,9 @@ describe('CustomersService.findByMemberId (Section 6.3 scan lookup)', () => {
       providers: [
         CustomersService,
         { provide: PrismaService, useValue: prisma },
+        // Section 12 — not exercised by these lookup tests; just needs to
+        // resolve so CustomersService's constructor is satisfiable.
+        { provide: LedgerPostingService, useValue: {} },
       ],
     }).compile();
 

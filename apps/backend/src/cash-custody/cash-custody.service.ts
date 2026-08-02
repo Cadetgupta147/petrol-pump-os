@@ -120,6 +120,7 @@ export class CashCustodyService {
           broughtBackToday,
           newOutstanding,
           handledById,
+          bankLedgerAccountId: dto.bankLedgerAccountId,
         },
       });
       // Section 12 — best-effort, non-blocking (see LedgerPostingService's

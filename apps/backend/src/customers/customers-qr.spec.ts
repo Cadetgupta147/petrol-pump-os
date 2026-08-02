@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CustomersService } from './customers.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 
 // Section 6.1 — the QR is a pointer, not a wallet. This spec pins the core
 // privacy rule: the ONLY thing handed to the QR encoder is qrMemberId —
@@ -55,6 +56,9 @@ describe('CustomersService.qrCard (Section 6.1)', () => {
       providers: [
         CustomersService,
         { provide: PrismaService, useValue: prisma },
+        // Section 12 — not exercised by these QR-card tests; just needs to
+        // resolve so CustomersService's constructor is satisfiable.
+        { provide: LedgerPostingService, useValue: {} },
       ],
     }).compile();
 

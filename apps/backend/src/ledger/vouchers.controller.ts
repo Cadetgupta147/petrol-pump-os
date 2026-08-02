@@ -7,6 +7,7 @@ import { VouchersService } from './vouchers.service';
 import { CreateVoucherDto } from './dto/create-voucher.dto';
 import { ListVouchersQueryDto } from './dto/list-vouchers-query.dto';
 import { DayBookQueryDto } from './dto/day-book-query.dto';
+import { TrialBalanceQueryDto } from './dto/trial-balance-query.dto';
 
 // Section 12 — manual voucher entry + the Day Book report. Same role split
 // as cash custody: Owner/Accountant/Manager can enter vouchers, Read-only
@@ -27,10 +28,16 @@ export class VouchersController {
     return this.vouchersService.findAll(query);
   }
 
-  // Placed before ':id' so 'day-book' isn't swallowed as a route param.
+  // Placed before ':id' so 'day-book'/'trial-balance' aren't swallowed as a
+  // route param.
   @Get('day-book')
   getDayBook(@Query() query: DayBookQueryDto) {
     return this.vouchersService.getDayBook(query.date);
+  }
+
+  @Get('trial-balance')
+  getTrialBalance(@Query() query: TrialBalanceQueryDto) {
+    return this.vouchersService.getTrialBalance(query.asOf);
   }
 
   @Get(':id')

@@ -4,18 +4,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
 import { ExportRangeDto } from './dto/export-range.dto';
 import {
-  BillForExport,
-  PaymentForExport,
+  LedgerAccountForExport,
+  VoucherForExport,
   buildTallyExportXml,
 } from './tally-xml-builder.util';
 
 const DEFAULT_COMPANY_NAME = 'Petrol Pump OS';
 
-// Section 10 — Tally XML export. Only Bill and Payment records feed this
-// export (Section 10.2's mapping list restricted to what was actually
-// asked for this round); walk-in sales captured only in ShiftSalesSummary
-// and PurchaseEntry -> Purchase Voucher are explicitly out of scope — see
-// the task spec / follow-up note in the PR description.
+// Section 10 — Tally XML export (Section 12 fix, docs/ledger-accounting-
+// review.md finding #4). Reads the SAME LedgerAccount/Voucher/VoucherLine
+// tables the Day Book reads, not Bill/Payment directly — every source that
+// posts to the ledger (Bills, Expenses, Cash Custody, Shift Sales, manual
+// Voucher Entry, Purchases) is exported, with no per-source-type mapping
+// code needed here. Every active ledger is included as a master regardless
+// of whether it was touched in this date range, so importing a later period
+// never references an unknown ledger.
 @Injectable()
 export class TallyExportService {
   constructor(
@@ -33,47 +36,43 @@ export class TallyExportService {
     let recordCount = 0;
     const pumpId = requireTenantContext().pumpId;
     try {
-      const [bills, payments] = await Promise.all([
-        this.prisma.bill.findMany({
-          where: { deletedAt: null, timestamp: { gte: start, lte: end } },
-          include: { paymentLines: true, customer: true },
+      const [ledgerAccounts, vouchers] = await Promise.all([
+        this.prisma.ledgerAccount.findMany({
+          where: { isActive: true },
         }),
-        this.prisma.payment.findMany({
-          where: { createdAt: { gte: start, lte: end } },
-          include: { customer: true },
+        this.prisma.voucher.findMany({
+          where: { date: { gte: start, lte: end } },
+          include: { lines: { include: { ledgerAccount: true } } },
+          orderBy: [{ date: 'asc' }, { voucherNumber: 'asc' }],
         }),
       ]);
 
-      const billInputs: BillForExport[] = bills.map((bill) => ({
-        id: bill.id,
-        timestamp: bill.timestamp,
-        amount: bill.amount,
-        customerName: bill.customerName,
-        vehicleNumber: bill.vehicleNumber,
-        customer: bill.customer
-          ? { id: bill.customer.id, name: bill.customer.name }
-          : null,
-        paymentLines: bill.paymentLines.map((line) => ({
-          paymentType: line.paymentType,
+      const ledgerAccountInputs: LedgerAccountForExport[] = ledgerAccounts.map((account) => ({
+        name: account.name,
+        group: account.group,
+        openingBalance: account.openingBalance,
+        openingBalanceType: account.openingBalanceType,
+      }));
+
+      const voucherInputs: VoucherForExport[] = vouchers.map((voucher) => ({
+        voucherNumber: voucher.voucherNumber,
+        date: voucher.date,
+        voucherType: voucher.voucherType,
+        narration: voucher.narration,
+        lines: voucher.lines.map((line) => ({
+          ledgerAccountName: line.ledgerAccount.name,
           amount: line.amount,
-          direction: line.direction,
+          drCr: line.drCr,
+          narration: line.narration,
         })),
       }));
 
-      const paymentInputs: PaymentForExport[] = payments.map((payment) => ({
-        id: payment.id,
-        createdAt: payment.createdAt,
-        amount: payment.amount,
-        method: payment.method,
-        customer: { id: payment.customer.id, name: payment.customer.name },
-      }));
-
-      recordCount = billInputs.length + paymentInputs.length;
+      recordCount = voucherInputs.length;
 
       const xml = buildTallyExportXml({
         companyName,
-        bills: billInputs,
-        payments: paymentInputs,
+        ledgerAccounts: ledgerAccountInputs,
+        vouchers: voucherInputs,
       });
 
       await this.prisma.tallyExportLog.create({

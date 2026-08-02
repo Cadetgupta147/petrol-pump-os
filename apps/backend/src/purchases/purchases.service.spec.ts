@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PurchasesService } from './purchases.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 
 // Section 7.1/7.2 — manual purchase entry increments the matching tank in
 // the same transaction, and hard-rejects when no Tank exists for the stated
@@ -25,9 +26,12 @@ describe('PurchasesService', () => {
     quantityLitres: 1000,
     amount: 95000,
     ratePerLitre: 95,
+    paidVia: 'CASH' as const,
     invoiceNo: 'INV-001',
     tankerNo: 'TN-01',
   };
+
+  let ledgerPostingService: { postPurchaseVoucher: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -44,11 +48,13 @@ describe('PurchasesService', () => {
       densityRangeConfig: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
     };
+    ledgerPostingService = { postPurchaseVoucher: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PurchasesService,
         { provide: PrismaService, useValue: prisma },
+        { provide: LedgerPostingService, useValue: ledgerPostingService },
       ],
     }).compile();
 
@@ -81,6 +87,8 @@ describe('PurchasesService', () => {
         quantityLitres: baseDto.quantityLitres,
         amount: baseDto.amount,
         ratePerLitre: baseDto.ratePerLitre,
+        paidVia: baseDto.paidVia,
+        recordedById: 'staff-1',
         invoiceNo: baseDto.invoiceNo,
         tankerNo: baseDto.tankerNo,
         invoiceImageUrl: undefined,
@@ -95,6 +103,8 @@ describe('PurchasesService', () => {
     // transaction.
     expect(prisma.densityLog.create).not.toHaveBeenCalled();
     expect(result).toEqual(createdEntry);
+    // Section 12 fix — every create() posts (best-effort) a Purchase voucher.
+    expect(ledgerPostingService.postPurchaseVoucher).toHaveBeenCalledWith(createdEntry);
   });
 
   it('persists ocrExtracted: true when the client sends it (Section 9 provenance metadata)', async () => {

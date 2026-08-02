@@ -68,6 +68,7 @@ enum VoucherType {
   CONTRA
   JOURNAL
   SALES
+  PURCHASE
 }
 
 // MANUAL = owner/accountant typed it in directly (Ledger Master's whole
@@ -82,6 +83,8 @@ enum VoucherSource {
   CASH_CUSTODY
   SHIFT_SALES
   PAYMENT
+  PURCHASE
+  OPENING_BALANCE
 }
 
 // Discriminator for the handful of ledgers LedgerPostingService needs to
@@ -97,6 +100,8 @@ enum SystemLedgerKey {
   BANK_DEFAULT
   UNLINKED_CREDIT_SALES
   UNLINKED_CREDIT_EXPENSE
+  PURCHASE
+  OPENING_BALANCE_ADJUSTMENTS
 }
 
 enum EntryChannel {
@@ -343,6 +348,7 @@ model Staff {
   dipReadings                     DipReading[]
   densityLogs                     DensityLog[]
   expenseEntries                  ExpenseEntry[]
+  purchaseEntries                 PurchaseEntry[]
   generatorDieselLogs             GeneratorDieselLog[]
   machineTestingLogs              MachineTestingLog[]
   itemSales                       ItemSale[]
@@ -1310,6 +1316,20 @@ model PurchaseEntry {
   tankerNo        String?
   invoiceImageUrl String? // OCR source image, Section 9
   ocrExtracted    Boolean  @default(false)
+  // Section 12 fix — how this delivery was settled, mirrors ExpenseEntry's
+  // paidVia. Nullable: null means "entered before this field existed, not
+  // ledger-tracked" — LedgerPostingService.postPurchaseVoucher() skips
+  // posting entirely when this is null, rather than guessing a payment
+  // method for historical deliveries. Always required going forward (see
+  // CreatePurchaseEntryDto).
+  paidVia         PaymentType?
+  // Section 12 fix — who entered this delivery, needed as Voucher.createdById
+  // for postPurchaseVoucher(). Nullable for the same reason as paidVia
+  // (pre-fix rows never captured it); PurchasesController already resolves
+  // the caller's staffId today (used only for a linked DensityLog), so new
+  // rows always set this alongside paidVia.
+  recordedBy      Staff?   @relation(fields: [recordedById], references: [id])
+  recordedById    String?
   createdAt       DateTime @default(now())
 
   densityLogs DensityLog[]
@@ -1555,6 +1575,14 @@ model CashCustodyLog {
   newOutstanding                   Float
   handledBy                        Staff    @relation(fields: [handledById], references: [id])
   handledById                      String
+  // Section 12 fix — which real Bank-group LedgerAccount depositedToBank
+  // went into, dealer-picked at entry time. Nullable: null means "use the
+  // single generic system Bank ledger" (postCashCustodyVoucher()'s
+  // pre-existing BANK_DEFAULT fallback), which is exactly correct for every
+  // row created before this field existed — there was only ever one choice
+  // then, so nothing to backfill.
+  bankLedgerAccount                LedgerAccount? @relation(fields: [bankLedgerAccountId], references: [id])
+  bankLedgerAccountId              String?
   createdAt                        DateTime @default(now())
 }
 
@@ -1600,6 +1628,7 @@ model LedgerAccount {
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   voucherLines       VoucherLine[]
+  cashCustodyDeposits CashCustodyLog[]
 
   @@unique([pumpId, name])
   @@unique([pumpId, systemKey])

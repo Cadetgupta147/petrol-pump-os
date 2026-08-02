@@ -30,6 +30,7 @@ import { GeneratorDieselPage } from './pages/GeneratorDieselPage';
 import { MachineTestingPage } from './pages/MachineTestingPage';
 import { ItemSalesPage } from './pages/ItemSalesPage';
 import { DayBookPage } from './pages/DayBookPage';
+import { TrialBalancePage } from './pages/TrialBalancePage';
 import { LedgerAccountsPage } from './pages/LedgerAccountsPage';
 import { VoucherEntryPage } from './pages/VoucherEntryPage';
 
@@ -258,6 +259,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <DayBookPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/trial-balance"
+        element={
+          <RequireAuth>
+            <TrialBalancePage />
           </RequireAuth>
         }
       />

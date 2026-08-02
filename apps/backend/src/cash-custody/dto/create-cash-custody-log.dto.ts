@@ -46,6 +46,14 @@ export class CreateCashCustodyLogDto {
   @IsString()
   handledById?: string;
 
+  // Section 12 fix — which real Bank-group LedgerAccount depositedToBank
+  // went into. Optional: omitted (or depositedToBank === 0) falls back to
+  // the single generic system Bank ledger, same as before this field
+  // existed.
+  @IsOptional()
+  @IsString()
+  bankLedgerAccountId?: string;
+
   // How much of a PRIOR outstanding balance this person is settling today.
   // Optional/defaults to 0 — most day-end entries have nothing to bring
   // back (e.g. a person's first-ever entry, or one with no outstanding).

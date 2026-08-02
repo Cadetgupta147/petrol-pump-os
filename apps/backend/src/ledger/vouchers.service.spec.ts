@@ -218,4 +218,54 @@ describe('VouchersService', () => {
       expect(result.ledgers.map((l) => l.name)).toEqual(['Cash', 'Sales']);
     });
   });
+
+  describe('getTrialBalance', () => {
+    it('includes every active ledger, not just ones touched as of the date', async () => {
+      prisma.ledgerAccount.findMany.mockResolvedValue([
+        { id: 'cash', name: 'Cash', group: 'CASH_IN_HAND', openingBalance: 1000, openingBalanceType: 'DEBIT' },
+        { id: 'toll', name: 'Toll', group: 'DIRECT_EXPENSE', openingBalance: 0, openingBalanceType: 'DEBIT' },
+      ]);
+      // Nothing posted at all — untouched ledgers still get a row, using
+      // just their own opening balance.
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      const result = await service.getTrialBalance('2026-07-20');
+
+      expect(result.asOf).toBe('2026-07-20');
+      expect(result.rows).toEqual([
+        { ledgerAccountId: 'cash', name: 'Cash', group: 'CASH_IN_HAND', balance: { side: 'DR', amount: 1000 } },
+        { ledgerAccountId: 'toll', name: 'Toll', group: 'DIRECT_EXPENSE', balance: { side: 'DR', amount: 0 } },
+      ]);
+    });
+
+    it('sums every VoucherLine dated on-or-before asOf into a single running balance per ledger', async () => {
+      prisma.ledgerAccount.findMany.mockResolvedValue([
+        { id: 'cash', name: 'Cash', group: 'CASH_IN_HAND', openingBalance: 0, openingBalanceType: 'DEBIT' },
+        { id: 'sales', name: 'Sales', group: 'SALES', openingBalance: 0, openingBalanceType: 'DEBIT' },
+      ]);
+      prisma.voucherLine.findMany.mockResolvedValue([
+        { ledgerAccountId: 'cash', amount: 1000, drCr: 'DEBIT' },
+        { ledgerAccountId: 'sales', amount: 1000, drCr: 'CREDIT' },
+        { ledgerAccountId: 'cash', amount: 200, drCr: 'CREDIT' },
+      ]);
+
+      const result = await service.getTrialBalance('2026-07-20');
+
+      const cashRow = result.rows.find((r) => r.ledgerAccountId === 'cash')!;
+      expect(cashRow.balance).toEqual({ side: 'DR', amount: 800 }); // 1000 - 200
+      const salesRow = result.rows.find((r) => r.ledgerAccountId === 'sales')!;
+      expect(salesRow.balance).toEqual({ side: 'CR', amount: 1000 });
+
+      expect(result.totals).toEqual({ dr: 800, cr: 1000 });
+    });
+
+    it('defaults asOf to today when omitted', async () => {
+      prisma.ledgerAccount.findMany.mockResolvedValue([]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      const result = await service.getTrialBalance();
+
+      expect(result.asOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+  });
 });

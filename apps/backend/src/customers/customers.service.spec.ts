@@ -1,8 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CustomersService } from './customers.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { runInTenantContext } from '../common/tenant-context';
 import { AuthenticatedUser } from '../auth/types/jwt-payload.interface';
+
+// Section 12 — none of the tests in this file exercise ledger auto-posting
+// itself (see ledger-posting.service.spec.ts for that); CustomersService just
+// needs SOMETHING injectable here so its constructor resolves.
+function fakeLedgerPostingService() {
+  return { postOpeningBalanceAdjustment: jest.fn().mockResolvedValue(undefined) };
+}
 
 // jest's asymmetric matchers are typed `any`; these wrappers give them an
 // `unknown` type so they can sit inside object-literal expectations without
@@ -61,6 +69,7 @@ describe('CustomersService — phone normalization', () => {
       providers: [
         CustomersService,
         { provide: PrismaService, useValue: prisma },
+        { provide: LedgerPostingService, useValue: fakeLedgerPostingService() },
       ],
     }).compile();
 
@@ -245,7 +254,11 @@ describe('CustomersService — DPDP compliance scaffolding', () => {
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CustomersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        CustomersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: LedgerPostingService, useValue: fakeLedgerPostingService() },
+      ],
     }).compile();
 
     service = module.get(CustomersService);
@@ -334,7 +347,9 @@ describe('CustomersService — opening balance & ledger', () => {
     bill: { findMany: jest.Mock };
     payment: { findMany: jest.Mock };
     customerOpeningBalance: { findMany: jest.Mock; create: jest.Mock };
+    ledgerAccount: { findUnique: jest.Mock };
   };
+  let ledgerPostingService: { postOpeningBalanceAdjustment: jest.Mock };
   const user: AuthenticatedUser = {
     staffId: 'staff-1',
     pumpId: 'default_pump',
@@ -347,10 +362,20 @@ describe('CustomersService — opening balance & ledger', () => {
       bill: { findMany: jest.fn().mockResolvedValue([]) },
       payment: { findMany: jest.fn().mockResolvedValue([]) },
       customerOpeningBalance: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+      // Section 12 fix — addOpeningBalance() checks for a pre-existing
+      // ledger before deciding whether to post a correcting voucher; null
+      // (no ledger yet) is the common case exercised by the existing tests
+      // below, which never assert on ledger-posting behavior.
+      ledgerAccount: { findUnique: jest.fn().mockResolvedValue(null) },
     };
+    ledgerPostingService = { postOpeningBalanceAdjustment: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CustomersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        CustomersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: LedgerPostingService, useValue: ledgerPostingService },
+      ],
     }).compile();
 
     service = module.get(CustomersService);
@@ -399,6 +424,49 @@ describe('CustomersService — opening balance & ledger', () => {
           }),
         }),
       );
+    });
+
+    // Section 12 fix — no existing ledger means this customer's ledger will
+    // be lazily created on their first bill/payment, and that creation path
+    // sums ALL CustomerOpeningBalance rows (including this new one) into its
+    // seed value — posting a correcting voucher here too would double-count
+    // it, so it must NOT be posted when there's no ledger yet.
+    it('does not post a correcting voucher when the customer has no ledger yet', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1', name: 'Babu Ji' });
+      prisma.customerOpeningBalance.create.mockResolvedValue({ id: 'ob-1' });
+      prisma.ledgerAccount.findUnique.mockResolvedValue(null);
+
+      await runInTenantContext({ pumpId: 'default_pump' }, () =>
+        service.addOpeningBalance('cust-1', { amount: 5000 }, user),
+      );
+
+      expect(ledgerPostingService.postOpeningBalanceAdjustment).not.toHaveBeenCalled();
+    });
+
+    // A customer who already has transaction history gets a correcting
+    // Journal voucher instead — the ledger's existing openingBalance field is
+    // never silently rewritten.
+    it('posts a correcting voucher when the customer already has a ledger', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 'cust-1', name: 'Babu Ji' });
+      prisma.customerOpeningBalance.create.mockResolvedValue({
+        id: 'ob-2',
+        effectiveAt: new Date('2026-03-01T00:00:00.000Z'),
+      });
+      prisma.ledgerAccount.findUnique.mockResolvedValue({ id: 'ledger-1' });
+
+      await runInTenantContext({ pumpId: 'default_pump' }, () =>
+        service.addOpeningBalance('cust-1', { amount: 1500 }, user),
+      );
+
+      expect(ledgerPostingService.postOpeningBalanceAdjustment).toHaveBeenCalledWith({
+        pumpId: 'default_pump',
+        customerId: 'cust-1',
+        customerName: 'Babu Ji',
+        openingBalanceId: 'ob-2',
+        amount: 1500,
+        effectiveAt: new Date('2026-03-01T00:00:00.000Z'),
+        recordedById: 'staff-1',
+      });
     });
 
     it('honors an explicit backdated effectiveAt', async () => {

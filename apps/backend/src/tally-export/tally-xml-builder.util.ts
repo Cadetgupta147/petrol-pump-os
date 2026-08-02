@@ -1,71 +1,87 @@
-import { PaymentDirection, PaymentType } from '@prisma/client';
-import { aggregateByPaymentType } from '../dashboard/payment-line-aggregation.util';
+import { DrCr, LedgerGroup, VoucherType } from '@prisma/client';
 
-// Section 10 — Tally XML export (ENVELOPE > HEADER > BODY > IMPORTDATA >
-// REQUESTDATA > TALLYMESSAGE, containing <LEDGER> masters and <VOUCHER>
-// entries). Pure string-building, no Prisma/Nest imports — mirrors how
-// payment-line-aggregation.util.ts is kept pure and unit-tested in
-// isolation from dashboard.service.ts (see that file's header comment).
+// Section 12 fix (docs/ledger-accounting-review.md finding #4) — this used
+// to re-derive Sales/Receipt vouchers straight from Bill/Payment rows with a
+// hardcoded ledger set ('Cash', 'Bank', 'UPI', 'Sales Account'), completely
+// bypassing the real LedgerAccount/Voucher/VoucherLine tables — so every
+// Expense, Cash Custody entry, Shift Sales entry, manual Voucher Entry, and
+// Purchase was invisible to whatever an accountant actually received. Now
+// generic over the SAME LedgerAccount/Voucher/VoucherLine rows the Day Book
+// reads: every active ledger becomes a Tally LEDGER master (with its real
+// name/code-derived identity and opening balance — Tally masters key off
+// NAME, never off our internal id/code), and every Voucher in the export
+// range becomes a Tally VOUCHER, regardless of which PumpOS source posted
+// it. A future source posting to the ledger is exported automatically, with
+// no per-source-type code needed here.
 //
 // Tally sign convention followed throughout: a debit ledger entry carries
 // ISDEEMEDPOSITIVE=Yes and a NEGATIVE amount; a credit ledger entry carries
 // ISDEEMEDPOSITIVE=No and a POSITIVE amount. This is the standard convention
 // used in Tally's own sample import XML — flagged for human review since
 // there's no live Tally instance in this environment to verify the import
-// actually behaves as expected.
+// actually behaves as expected. Opening balances follow the same "Dr
+// positive, Cr negative" convention.
 
-export type BillPaymentLineForExport = {
-  paymentType: PaymentType;
+export interface LedgerAccountForExport {
+  name: string;
+  group: LedgerGroup;
+  openingBalance: number;
+  openingBalanceType: DrCr;
+}
+
+export interface VoucherLineForExport {
+  ledgerAccountName: string;
   amount: number;
-  direction: PaymentDirection;
-};
+  drCr: DrCr;
+  narration: string | null;
+}
 
-export type BillForExport = {
-  id: string;
-  timestamp: Date;
-  amount: number;
-  customerName: string | null;
-  vehicleNumber: string | null;
-  // The linked Customer, if any. Section 5A / BillsService.create() already
-  // guarantees any bill with a CREDIT payment line has a customer attached
-  // (existing or quick-added) — so whenever a bill's CREDIT net is nonzero,
-  // this should be non-null in practice.
-  customer: { id: string; name: string } | null;
-  paymentLines: BillPaymentLineForExport[];
-};
-
-export type PaymentForExport = {
-  id: string;
-  createdAt: Date;
-  amount: number;
-  method: PaymentType;
-  customer: { id: string; name: string };
-};
-
-const STATIC_LEDGERS: Array<{ name: string; parent: string }> = [
-  { name: 'Cash', parent: 'Cash-in-hand' },
-  { name: 'Bank', parent: 'Bank Accounts' },
-  { name: 'UPI', parent: 'Bank Accounts' },
-  { name: 'Sales Account', parent: 'Sales Accounts' },
-];
-
-const SALES_ACCOUNT_LEDGER = 'Sales Account';
+export interface VoucherForExport {
+  voucherNumber: string;
+  date: Date;
+  voucherType: VoucherType;
+  narration: string | null;
+  lines: VoucherLineForExport[];
+}
 
 // Amounts within this tolerance of zero are treated as zero and skipped —
 // same float-safety reasoning as BillsService's BALANCE_EPSILON.
 const ZERO_EPSILON = 0.005;
 
+const GROUP_TO_TALLY_PARENT: Record<LedgerGroup, string> = {
+  CASH_IN_HAND: 'Cash-in-hand',
+  BANK: 'Bank Accounts',
+  SALES: 'Sales Accounts',
+  PURCHASE: 'Purchase Accounts',
+  SUNDRY_DEBTOR: 'Sundry Debtors',
+  SUNDRY_CREDITOR: 'Sundry Creditors',
+  DIRECT_EXPENSE: 'Direct Expenses',
+  INDIRECT_EXPENSE: 'Indirect Expenses',
+  CAPITAL_ACCOUNT: 'Capital Account',
+  OTHER: 'Suspense A/c',
+};
+
+const VOUCHER_TYPE_TO_TALLY: Record<VoucherType, string> = {
+  PAYMENT: 'Payment',
+  RECEIPT: 'Receipt',
+  CONTRA: 'Contra',
+  JOURNAL: 'Journal',
+  SALES: 'Sales',
+  PURCHASE: 'Purchase',
+};
+
 export function buildTallyExportXml(params: {
   companyName: string;
-  bills: BillForExport[];
-  payments: PaymentForExport[];
+  ledgerAccounts: LedgerAccountForExport[];
+  vouchers: VoucherForExport[];
 }): string {
-  const { companyName, bills, payments } = params;
+  const { companyName, ledgerAccounts, vouchers } = params;
 
-  const customers = collectUniqueCustomers(bills, payments);
-  const ledgerMasters = buildLedgerMastersXml(customers);
-  const salesVouchers = bills.map(buildSalesVoucherXml).join('\n');
-  const receiptVouchers = payments.map(buildReceiptVoucherXml).join('\n');
+  const ledgerMasters = ledgerAccounts.map(ledgerMasterXml).join('\n');
+  const voucherXmls = vouchers
+    .map(voucherXml)
+    .filter((xml) => xml.length > 0)
+    .join('\n');
 
   return [
     '<ENVELOPE>',
@@ -82,8 +98,7 @@ export function buildTallyExportXml(params: {
     '</REQUESTDESC>',
     '<REQUESTDATA>',
     ledgerMasters,
-    salesVouchers,
-    receiptVouchers,
+    voucherXmls,
     '</REQUESTDATA>',
     '</IMPORTDATA>',
     '</BODY>',
@@ -93,150 +108,40 @@ export function buildTallyExportXml(params: {
     .join('\n');
 }
 
-function collectUniqueCustomers(
-  bills: BillForExport[],
-  payments: PaymentForExport[],
-): Array<{ id: string; name: string }> {
-  const map = new Map<string, string>();
-  for (const bill of bills) {
-    if (bill.customer) {
-      map.set(bill.customer.id, bill.customer.name);
-    }
-  }
-  for (const payment of payments) {
-    map.set(payment.customer.id, payment.customer.name);
-  }
-  return Array.from(map, ([id, name]) => ({ id, name }));
-}
-
-function buildLedgerMastersXml(
-  customers: Array<{ id: string; name: string }>,
-): string {
-  const staticLedgerXml = STATIC_LEDGERS.map((ledger) =>
-    ledgerMasterXml(ledger.name, ledger.parent),
-  );
-  const customerLedgerXml = customers.map((customer) =>
-    ledgerMasterXml(customer.name, 'Sundry Debtors'),
-  );
-  return [...staticLedgerXml, ...customerLedgerXml].join('\n');
-}
-
-function ledgerMasterXml(name: string, parent: string): string {
-  const escapedName = escapeXml(name);
+function ledgerMasterXml(account: LedgerAccountForExport): string {
+  const escapedName = escapeXml(account.name);
+  const openingSigned =
+    account.openingBalanceType === 'DEBIT' ? account.openingBalance : -account.openingBalance;
   return [
     '<TALLYMESSAGE xmlns:UDF="TallyUDF">',
     `<LEDGER NAME="${escapedName}" ACTION="Create">`,
     `<NAME>${escapedName}</NAME>`,
-    `<PARENT>${escapeXml(parent)}</PARENT>`,
+    `<PARENT>${escapeXml(GROUP_TO_TALLY_PARENT[account.group])}</PARENT>`,
+    `<OPENINGBALANCE>${openingSigned.toFixed(2)}</OPENINGBALANCE>`,
     '</LEDGER>',
     '</TALLYMESSAGE>',
   ].join('\n');
 }
 
-// Section 5A netting reused for the Tally mapping: for each nonzero
-// per-paymentType net (IN - OUT), CASH/CARD/UPI map to their static ledger
-// and CREDIT maps to the specific customer's ledger. A positive net is a
-// debit entry (money/receivable increased); a negative net (e.g. a bill
-// where UPI was overpaid and CASH change was given back, so CASH nets
-// negative) is a credit entry instead. Sales Account is always credited for
-// the bill's full amount. Because sum(all nets) = bill.amount (Section
-// 5A.1, enforced server-side in BillsService), debits always equal credits
-// here regardless of how many lines net negative.
-function buildSalesVoucherXml(bill: BillForExport): string {
-  const nets = aggregateByPaymentType(bill.paymentLines);
-  const entries: string[] = [];
+function voucherXml(voucher: VoucherForExport): string {
+  const entries = voucher.lines
+    .filter((line) => Math.abs(line.amount) >= ZERO_EPSILON)
+    .map((line) => ledgerEntryXml(line.ledgerAccountName, line.amount, line.drCr === 'DEBIT'));
+  if (entries.length === 0) return '';
 
-  (Object.keys(nets) as PaymentType[]).forEach((paymentType) => {
-    const net = nets[paymentType];
-    if (Math.abs(net) < ZERO_EPSILON) {
-      return;
-    }
-    const ledgerName = ledgerNameForBillPaymentType(paymentType, bill.customer);
-    entries.push(ledgerEntryXml(ledgerName, Math.abs(net), net > 0));
-  });
-
-  entries.push(ledgerEntryXml(SALES_ACCOUNT_LEDGER, bill.amount, false));
-
-  const narrationParts = [`Bill ${bill.id}`];
-  if (bill.customerName) narrationParts.push(bill.customerName);
-  if (bill.vehicleNumber) narrationParts.push(bill.vehicleNumber);
+  const narration = voucher.narration ?? voucher.lines.find((l) => l.narration)?.narration ?? '';
 
   return [
     '<TALLYMESSAGE xmlns:UDF="TallyUDF">',
-    '<VOUCHER VCHTYPE="Sales" ACTION="Create">',
-    `<DATE>${formatTallyDate(bill.timestamp)}</DATE>`,
-    `<NARRATION>${escapeXml(narrationParts.join(' - '))}</NARRATION>`,
-    '<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>',
-    `<VOUCHERNUMBER>${escapeXml(bill.id)}</VOUCHERNUMBER>`,
+    `<VOUCHER VCHTYPE="${VOUCHER_TYPE_TO_TALLY[voucher.voucherType]}" ACTION="Create">`,
+    `<DATE>${formatTallyDate(voucher.date)}</DATE>`,
+    `<NARRATION>${escapeXml(narration)}</NARRATION>`,
+    `<VOUCHERTYPENAME>${VOUCHER_TYPE_TO_TALLY[voucher.voucherType]}</VOUCHERTYPENAME>`,
+    `<VOUCHERNUMBER>${escapeXml(voucher.voucherNumber)}</VOUCHERNUMBER>`,
     entries.join('\n'),
     '</VOUCHER>',
     '</TALLYMESSAGE>',
   ].join('\n');
-}
-
-// Section 10.2 — Payment -> Receipt Voucher: debit the payment's method
-// ledger for `amount`, credit the customer's ledger for `amount` (money
-// coming in against the customer's outstanding credit balance).
-function buildReceiptVoucherXml(payment: PaymentForExport): string {
-  const methodLedgerName = ledgerNameForPaymentMethod(
-    payment.method,
-    payment.customer.name,
-  );
-
-  const entries = [
-    ledgerEntryXml(methodLedgerName, payment.amount, true),
-    ledgerEntryXml(payment.customer.name, payment.amount, false),
-  ];
-
-  return [
-    '<TALLYMESSAGE xmlns:UDF="TallyUDF">',
-    '<VOUCHER VCHTYPE="Receipt" ACTION="Create">',
-    `<DATE>${formatTallyDate(payment.createdAt)}</DATE>`,
-    `<NARRATION>${escapeXml(`Payment received from ${payment.customer.name}`)}</NARRATION>`,
-    '<VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>',
-    `<VOUCHERNUMBER>${escapeXml(payment.id)}</VOUCHERNUMBER>`,
-    entries.join('\n'),
-    '</VOUCHER>',
-    '</TALLYMESSAGE>',
-  ].join('\n');
-}
-
-function ledgerNameForBillPaymentType(
-  paymentType: PaymentType,
-  customer: { id: string; name: string } | null,
-): string {
-  if (paymentType === 'CREDIT') {
-    // Defensive fallback: BillsService requires a customer whenever a CREDIT
-    // line exists, so `customer` should never actually be null here.
-    return customer ? customer.name : 'Sundry Debtors';
-  }
-  return staticLedgerNameForPaymentType(paymentType);
-}
-
-function ledgerNameForPaymentMethod(
-  method: PaymentType,
-  customerLedgerName: string,
-): string {
-  if (method === 'CREDIT') {
-    // Payment.method is not expected to be CREDIT in practice (a repayment
-    // against credit wouldn't itself be paid "by credit") — fall back to the
-    // customer's own ledger defensively rather than throwing.
-    return customerLedgerName;
-  }
-  return staticLedgerNameForPaymentType(method);
-}
-
-function staticLedgerNameForPaymentType(
-  paymentType: Exclude<PaymentType, 'CREDIT'>,
-): string {
-  switch (paymentType) {
-    case 'CASH':
-      return 'Cash';
-    case 'CARD':
-      return 'Bank';
-    case 'UPI':
-      return 'UPI';
-  }
 }
 
 function ledgerEntryXml(name: string, amount: number, isDebit: boolean): string {
@@ -261,9 +166,9 @@ function formatTallyDate(date: Date): string {
   return `${year}${month}${day}`;
 }
 
-// XML-escapes any interpolated string field (customer names, vehicle
-// numbers, narrations, etc.) — the one real injection risk in this
-// otherwise-static template schema.
+// XML-escapes any interpolated string field (ledger names, narrations,
+// etc.) — the one real injection risk in this otherwise-static template
+// schema.
 export function escapeXml(value: string): string {
   return value
     .replace(/&/g, '&amp;')

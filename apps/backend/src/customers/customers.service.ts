@@ -8,6 +8,7 @@ import { Prisma, Role } from '@prisma/client';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { SetLoyaltyRateOverrideDto } from './dto/set-loyalty-rate-override.dto';
@@ -57,7 +58,10 @@ export function assertIdDocumentPairConsistent(
 // @Roles(Role.OWNER, Role.ACCOUNTANT), enforced by the global RolesGuard.
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledgerPostingService: LedgerPostingService,
+  ) {}
 
   async create(dto: CreateCustomerDto) {
     // Member id allocation + customer create share one transaction so a
@@ -498,16 +502,27 @@ export class CustomersService {
     dto: CreateOpeningBalanceDto,
     user: AuthenticatedUser,
   ) {
-    await this.findOne(id);
+    const customer = await this.findOne(id);
     if (dto.amount === 0) {
       throw new BadRequestException(
         'Opening balance amount must be non-zero — omit it entirely if there is no prior due',
       );
     }
 
-    return this.prisma.customerOpeningBalance.create({
+    const pumpId = requireTenantContext().pumpId;
+    // Section 12 fix — checked BEFORE creating the row below, not after: if
+    // this customer's ledger doesn't exist yet, getOrCreateCustomerLedger()
+    // will lazily create it on first bill/payment and correctly sum EVERY
+    // CustomerOpeningBalance row (including the one we're about to create)
+    // into its seeded opening balance — posting a correcting voucher here
+    // too would double-count it.
+    const existingLedger = await this.prisma.ledgerAccount.findUnique({
+      where: { linkedCustomerId: id },
+    });
+
+    const openingBalance = await this.prisma.customerOpeningBalance.create({
       data: {
-        pumpId: requireTenantContext().pumpId,
+        pumpId,
         customerId: id,
         amount: dto.amount,
         note: dto.note,
@@ -515,6 +530,20 @@ export class CustomersService {
         recordedById: user.staffId,
       },
     });
+
+    if (existingLedger) {
+      await this.ledgerPostingService.postOpeningBalanceAdjustment({
+        pumpId,
+        customerId: id,
+        customerName: customer.name,
+        openingBalanceId: openingBalance.id,
+        amount: dto.amount,
+        effectiveAt: openingBalance.effectiveAt,
+        recordedById: user.staffId,
+      });
+    }
+
+    return openingBalance;
   }
 
   async listOpeningBalances(id: string) {

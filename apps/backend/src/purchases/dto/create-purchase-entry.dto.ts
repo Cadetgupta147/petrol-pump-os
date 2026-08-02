@@ -1,4 +1,5 @@
-import { IsBoolean, IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
+import { PaymentType } from '@prisma/client';
 
 // POST /purchase-entries — Section 7.1's field list (date, supplier, product,
 // quantity, rate, invoice_no, tanker_no, entered_via). `date` is not
@@ -39,6 +40,12 @@ export class CreatePurchaseEntryDto {
   @IsNumber()
   @IsPositive()
   ratePerLitre!: number;
+
+  // Section 12 fix — how this delivery was settled; required so
+  // LedgerPostingService.postPurchaseVoucher() can post it correctly (CREDIT
+  // -> per-supplier Sundry Creditor, else -> the matching clearing ledger).
+  @IsEnum(PaymentType)
+  paidVia!: PaymentType;
 
   @IsOptional()
   @IsString()

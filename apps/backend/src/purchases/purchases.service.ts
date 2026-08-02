@@ -4,6 +4,7 @@ import { Prisma, PurchaseEntry } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePurchaseEntryDto } from './dto/create-purchase-entry.dto';
 import { computeDensityFlag, resolveDensityRangeMap } from '../density-logs/density-logs.service';
+import { LedgerPostingService } from '../ledger/ledger-posting.service';
 
 // Section 7.1/7.2 — manual purchase entry. Tanker delivery -> Purchase
 // Entry created -> tank level increases, all in one transaction.
@@ -33,7 +34,10 @@ import { computeDensityFlag, resolveDensityRangeMap } from '../density-logs/dens
 // necessity, not a discretionary accounting entry.
 @Injectable()
 export class PurchasesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledgerPostingService: LedgerPostingService,
+  ) {}
 
   // Finding A1 (docs/production-readiness.md) — recordedById is not a DTO
   // field; PurchasesController derives it from req.user.staffId and passes
@@ -79,6 +83,8 @@ export class PurchasesService {
           quantityLitres: dto.quantityLitres,
           amount: dto.amount,
           ratePerLitre: dto.ratePerLitre,
+          paidVia: dto.paidVia,
+          recordedById,
           invoiceNo: dto.invoiceNo,
           tankerNo: dto.tankerNo,
           invoiceImageUrl: dto.invoiceImageUrl,
@@ -110,6 +116,11 @@ export class PurchasesService {
 
     const results = await this.prisma.$transaction(operations);
     const purchaseEntry = results[0] as PurchaseEntry;
+
+    // Section 12 fix — best-effort, non-blocking (see LedgerPostingService's
+    // header comment); a posting failure here never fails the purchase entry
+    // itself, same as every other postX() call site in the app.
+    await this.ledgerPostingService.postPurchaseVoucher(purchaseEntry);
 
     return purchaseEntry;
   }

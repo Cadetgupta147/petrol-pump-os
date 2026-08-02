@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { CreateVoucherRequest, DayBookReport, VoucherListItem } from './types';
+import type { CreateVoucherRequest, DayBookReport, TrialBalanceReport, VoucherListItem } from './types';
 
 // POST /vouchers — manual voucher entry (Payment/Receipt/Contra/Journal),
 // Section 12. Balance validation (sum(DEBIT) === sum(CREDIT)) is enforced
@@ -37,4 +37,12 @@ export function deleteVoucher(id: string): Promise<{ deleted: true }> {
 export function getDayBook(date?: string): Promise<DayBookReport> {
   const qs = date ? `?date=${encodeURIComponent(date)}` : '';
   return apiFetch<DayBookReport>(`/vouchers/day-book${qs}`);
+}
+
+// GET /vouchers/trial-balance?asOf=YYYY-MM-DD — Section 12 fix (finding #8):
+// every active ledger's running balance as of a date, not just ledgers
+// touched on one specific day like the Day Book. Omitted -> today.
+export function getTrialBalance(asOf?: string): Promise<TrialBalanceReport> {
+  const qs = asOf ? `?asOf=${encodeURIComponent(asOf)}` : '';
+  return apiFetch<TrialBalanceReport>(`/vouchers/trial-balance${qs}`);
 }

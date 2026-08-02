@@ -5,10 +5,11 @@ import { NavBar } from '../components/layout/NavBar';
 import { createCashCustodyLog, getCashCustodyReport } from '../api/cashCustody';
 import { getSalesSummary } from '../api/dashboard';
 import { getStaffList } from '../api/staff';
+import { getLedgerAccounts } from '../api/ledgerAccounts';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { formatRupees, todayIsoDate } from '../utils/format';
-import type { CashCustodyLog, CashCustodyReportRow, StaffListItem } from '../api/types';
+import type { CashCustodyLog, CashCustodyReportRow, LedgerAccount, StaffListItem } from '../api/types';
 
 // Server-side epsilon (BALANCE_EPSILON in cash-custody.service.ts) — mirrored
 // here ONLY so the live indicator agrees with what the backend will actually
@@ -51,9 +52,14 @@ export function CashCustodyPage() {
   const [staffListError, setStaffListError] = useState<string | null>(null);
   const [totalCashCollected, setTotalCashCollected] = useState('');
   const [depositedToBank, setDepositedToBank] = useState('');
+  const [bankLedgerAccountId, setBankLedgerAccountId] = useState('');
   const [keptInLocker, setKeptInLocker] = useState('');
   const [takenHome, setTakenHome] = useState('');
   const [broughtBackToday, setBroughtBackToday] = useState('0');
+
+  // Section 12 fix — which real bank account a deposit went into, instead
+  // of always the one generic system Bank ledger.
+  const [bankLedgers, setBankLedgers] = useState<LedgerAccount[] | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -111,6 +117,20 @@ export function CashCustodyPage() {
               : "Outstanding-balance context unavailable — can't reach the backend.",
           );
         }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getLedgerAccounts()
+      .then((accounts) => {
+        if (!cancelled) setBankLedgers(accounts.filter((a) => a.group === 'BANK'));
+      })
+      .catch(() => {
+        if (!cancelled) setBankLedgers([]);
       });
     return () => {
       cancelled = true;
@@ -178,12 +198,14 @@ export function CashCustodyPage() {
         takenHome: toNumber(takenHome),
         handledById: handledById.trim(),
         broughtBackToday: broughtBackNum,
+        bankLedgerAccountId: bankLedgerAccountId || undefined,
       });
       setSavedLog(saved);
       // Reset the day's figures but keep date/handledById — filing the next
       // person's entry for the same day is a common follow-on action.
       setTotalCashCollected('');
       setDepositedToBank('');
+      setBankLedgerAccountId('');
       setKeptInLocker('');
       setTakenHome('');
       setBroughtBackToday('0');
@@ -342,6 +364,28 @@ export function CashCustodyPage() {
                   onChange={(e) => setDepositedToBank(e.target.value)}
                   required
                 />
+                {toNumber(depositedToBank) > 0 && (
+                  <select
+                    id="cc-bank-ledger"
+                    value={bankLedgerAccountId}
+                    onChange={(e) => setBankLedgerAccountId(e.target.value)}
+                    disabled={!bankLedgers}
+                    style={{ marginTop: 8 }}
+                  >
+                    <option value="">
+                      {bankLedgers
+                        ? bankLedgers.length === 0
+                          ? '(no Bank ledger set up — uses default Bank)'
+                          : '— which bank? (defaults to generic Bank) —'
+                        : 'Loading banks…'}
+                    </option>
+                    {bankLedgers?.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} — {a.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div className="form-field">
                 <label htmlFor="cc-locker">Kept in locker (Rs.)</label>

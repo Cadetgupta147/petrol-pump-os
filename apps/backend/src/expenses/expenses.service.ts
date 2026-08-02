@@ -64,6 +64,11 @@ export class ExpensesService {
     if (!existing) {
       throw new NotFoundException(`Expense entry ${id} not found`);
     }
-    return this.prisma.expenseEntry.delete({ where: { id } });
+    const deleted = await this.prisma.expenseEntry.delete({ where: { id } });
+    // Section 12 fix — a deleted expense shouldn't keep inflating its
+    // category/paid-via ledgers. Best-effort/non-blocking, same as create()'s
+    // call above — the delete above is already committed regardless.
+    await this.ledgerPostingService.voidVoucherBySourceKey(existing.pumpId, `expense:${id}`);
+    return deleted;
   }
 }

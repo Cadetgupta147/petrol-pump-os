@@ -31,6 +31,7 @@ import {
   BookOpen,
   Landmark,
   ListPlus,
+  Table2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -95,6 +96,7 @@ const NAV_ENTRIES: NavEntry[] = [
     icon: CircleDollarSign,
     children: [
       { label: 'Day book', to: '/day-book', icon: BookOpen },
+      { label: 'Trial balance', to: '/trial-balance', icon: Table2 },
       { label: 'Voucher entry', to: '/vouchers', icon: ListPlus },
       { label: 'Ledger Master', to: '/ledger-accounts', icon: Landmark },
       { label: 'Cash custody', to: '/cash-custody', icon: Banknote },
