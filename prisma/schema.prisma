@@ -81,6 +81,7 @@ enum VoucherSource {
   EXPENSE
   CASH_CUSTODY
   SHIFT_SALES
+  PAYMENT
 }
 
 // Discriminator for the handful of ledgers LedgerPostingService needs to
@@ -349,6 +350,7 @@ model Staff {
   staffAdvancesReceived           StaffAdvance[]           @relation("StaffAdvanceStaff")
   staffAdvancesRecorded           StaffAdvance[]           @relation("StaffAdvanceRecordedBy")
   customerOpeningBalancesRecorded CustomerOpeningBalance[]
+  paymentsRecorded                Payment[]
   vouchersCreated                 Voucher[]
   // LedgerAccount.linkedStaffId's back-relation — the auto-created "personal
   // draw" ledger LedgerPostingService posts a CashCustodyLog's takenHome/
@@ -687,6 +689,8 @@ model Bill {
   lineItems           BillLineItem[]
   auditLogs           BillAuditLog[]
   creditAlerts        CreditLimitAlert[]
+  // Repayments allocated against this specific bill — see Payment.billId.
+  payments            Payment[]
 
   @@unique([pumpId, clientRequestId])
   @@unique([pumpId, billNumber])
@@ -1657,6 +1661,22 @@ model Payment {
   amount     Float
   method     PaymentType
   reference  String? // gateway transaction id, once a payment gateway is chosen (see CLAUDE.md)
+  // Optional bill-wise reference (Tally's "Agst Ref"), so a repayment can be
+  // tied to the specific credit bill it settles instead of only netting
+  // against the customer's aggregate outstanding total. Null = "On Account"
+  // (received but not matched to any one bill) — same three-state meaning
+  // Tally's receipt-allocation screen uses (Agst Ref / New Ref-Advance / On
+  // Account), except this schema has no advance-received-with-no-bill
+  // concept yet, so only the first and third states apply here.
+  bill       Bill?       @relation(fields: [billId], references: [id])
+  billId     String?
+  // Who actually took/recorded this repayment (Owner/Accountant at the
+  // counter or back office) — same accountability pattern as
+  // ExpenseEntry.recordedById/CashCustodyLog.handledById. Also what
+  // LedgerPostingService.postPaymentVoucher() stamps as the auto-posted
+  // RECEIPT voucher's createdById.
+  recordedBy   Staff     @relation(fields: [recordedById], references: [id])
+  recordedById String
   createdAt  DateTime    @default(now())
 }
 

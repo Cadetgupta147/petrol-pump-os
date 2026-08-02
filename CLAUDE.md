@@ -40,6 +40,7 @@ Each person should run their own Claude Code session (own Pro subscription) and 
 - **Split payments must balance server-side.** A `Bill`'s `BillPaymentLine` rows must satisfy `sum(IN) − sum(OUT) = bill.amount` (Section 5A) — enforce this in the API, don't just disable a Save button in the UI.
 - **Webhook handlers must be idempotent and signature-verified.** The PhonePe/Paytm UPI webhook (Section 8A.3) can arrive late, out of order, or duplicated — dedupe on `providerEventId` and verify the signature before trusting any payload.
 - **Write tests for rule-heavy logic** after building it: loyalty point calculation, cash reconciliation validation, stock variance flagging, split-payment balancing, webhook idempotency.
+- **Accounting internals are Tally-shaped; the UI is not.** Money-moving actions (bills, expenses, cash custody, credit repayments) post double-entry `Voucher`/`VoucherLine` rows against `LedgerAccount`s behind the scenes (Section 12, `LedgerPostingService`) — the same ledger/voucher/bill-wise-reference model Tally uses, so real accountants' mental model and a future Tally export both stay valid. None of that vocabulary (ledger, voucher, Dr/Cr) belongs in DSM/customer-facing screens — those stay plain business actions ("Add Bill", "Record Payment"); the translation into balanced ledger postings is the backend's job, not the user's.
 
 ## Open items not yet decided (don't hardcode a guess — surface it if it blocks you)
 

@@ -7,6 +7,7 @@ import {
   ExpenseEntry,
   LedgerAccount,
   LedgerGroup,
+  Payment,
   PaymentType,
   SystemLedgerKey,
   VoucherType,
@@ -16,9 +17,10 @@ import { aggregateByPaymentType } from '../dashboard/payment-line-aggregation.ut
 import { allocateVoucherNumber } from './voucher-number';
 
 // Section 12 Day Book — auto-posts a double-entry Voucher whenever a Bill,
-// ExpenseEntry, CashCustodyLog, or ShiftSalesSummary is created/updated
-// elsewhere in the app (see the call sites in bills.service.ts,
-// expenses.service.ts, cash-custody.service.ts, shift-sales.service.ts).
+// ExpenseEntry, CashCustodyLog, ShiftSalesSummary, or Payment (credit
+// repayment) is created/updated elsewhere in the app (see the call sites in
+// bills.service.ts, expenses.service.ts, cash-custody.service.ts,
+// shift-sales.service.ts, payments.service.ts).
 // This is the "hybrid" half of the ledger design (the other half is fully
 // manual voucher entry, for the "BABU JI"/"TOLL"/"JEEP 0711"-style entries
 // nothing else in PumpOS has data for — see vouchers.service.ts).
@@ -34,12 +36,13 @@ import { allocateVoucherNumber } from './voucher-number';
 // voucher) rather than silently blocking real operational work.
 //
 // IDEMPOTENCY: every auto-posted Voucher carries a sourceKey
-// (`bill:<id>`, `expense:<id>`, `cash-custody:<id>`, `shift-sales:<id>`),
-// unique per pump (schema.prisma). Bill/ExpenseEntry/CashCustodyLog are
-// create-once, so postX() below skips if a voucher for that key already
-// exists. ShiftSalesSummary is update()-able (manual PATCH, and the UPI
-// webhook increments it — see KNOWN GAP below), so its posting method
-// deletes-and-recreates the voucher for that sourceKey instead.
+// (`bill:<id>`, `expense:<id>`, `cash-custody:<id>`, `shift-sales:<id>`,
+// `payment:<id>`), unique per pump (schema.prisma). Bill/ExpenseEntry/
+// CashCustodyLog/Payment are create-once, so postX() below skips if a
+// voucher for that key already exists. ShiftSalesSummary is update()-able
+// (manual PATCH, and the UPI webhook increments it — see KNOWN GAP below),
+// so its posting method deletes-and-recreates the voucher for that
+// sourceKey instead.
 //
 // KNOWN GAP: the UPI auto-capture webhook path (upi-webhook.service.ts's
 // incrementUpiForShift()) does NOT currently call repostShiftSalesVoucher()
@@ -153,6 +156,34 @@ export class LedgerPostingService {
       });
     } catch (error) {
       this.logger.warn(`postCashCustodyVoucher failed for log ${log.id}: ${String(error)}`);
+    }
+  }
+
+  // A credit customer's repayment — the RECEIPT half of the credit-sale
+  // story (see docs/master-plan.md Section 3.4 and PaymentsService.create()):
+  // Dr whichever ledger the cash/card/UPI actually landed in, Cr the
+  // customer's own Sundry Debtor ledger, closing out (fully or partially)
+  // the receivable that bill's SALES voucher opened.
+  async postPaymentVoucher(payment: Payment, customerName: string): Promise<void> {
+    try {
+      if (payment.amount <= 0) return;
+      const received = await this.resolveReceiptDebitLedger(payment.pumpId, payment.method);
+      const customer = await this.getOrCreateCustomerLedger(payment.pumpId, payment.customerId, customerName);
+
+      await this.createVoucherIfAbsent({
+        pumpId: payment.pumpId,
+        sourceKey: `payment:${payment.id}`,
+        date: payment.createdAt,
+        voucherType: 'RECEIPT',
+        narration: `Payment received from ${customerName}`,
+        createdById: payment.recordedById,
+        lines: [
+          { ledgerAccountId: received.id, amount: payment.amount, drCr: 'DEBIT' },
+          { ledgerAccountId: customer.id, amount: payment.amount, drCr: 'CREDIT' },
+        ],
+      });
+    } catch (error) {
+      this.logger.warn(`postPaymentVoucher failed for payment ${payment.id}: ${String(error)}`);
     }
   }
 
@@ -324,6 +355,23 @@ export class LedgerPostingService {
     }
   }
 
+  // A repayment is only ever CASH/CARD/UPI — PaymentsService.create() rejects
+  // method: CREDIT before a Payment row is ever created (repaying a credit
+  // due "with credit" is meaningless), so the CREDIT branch here exists only
+  // so the switch stays exhaustive over PaymentType.
+  private resolveReceiptDebitLedger(pumpId: string, method: PaymentType): Promise<LedgerAccount> {
+    switch (method) {
+      case 'CASH':
+        return this.getOrCreateSystemLedger(pumpId, 'CASH', 'Cash', 'CASH_IN_HAND');
+      case 'CARD':
+        return this.getOrCreateSystemLedger(pumpId, 'CARD_CLEARING', 'Card', 'BANK');
+      case 'UPI':
+        return this.getOrCreateSystemLedger(pumpId, 'UPI_CLEARING', 'UPI', 'BANK');
+      case 'CREDIT':
+        throw new Error('Payment.method cannot be CREDIT');
+    }
+  }
+
   // ---------- voucher writers ----------
 
   private async createVoucherIfAbsent(params: {
@@ -365,7 +413,9 @@ export class LedgerPostingService {
     await this.writeVoucher(params, this.sourceFromKey(params.sourceKey));
   }
 
-  private sourceFromKey(sourceKey: string): 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES' {
+  private sourceFromKey(
+    sourceKey: string,
+  ): 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES' | 'PAYMENT' {
     const prefix = sourceKey.split(':')[0];
     switch (prefix) {
       case 'bill':
@@ -376,6 +426,8 @@ export class LedgerPostingService {
         return 'CASH_CUSTODY';
       case 'shift-sales':
         return 'SHIFT_SALES';
+      case 'payment':
+        return 'PAYMENT';
       default:
         throw new Error(`Unrecognized sourceKey prefix: ${sourceKey}`);
     }
@@ -391,7 +443,7 @@ export class LedgerPostingService {
       createdById: string;
       lines: { ledgerAccountId: string; amount: number; drCr: DrCr }[];
     },
-    source: 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES',
+    source: 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES' | 'PAYMENT',
   ): Promise<void> {
     const debitTotal = params.lines
       .filter((l) => l.drCr === 'DEBIT')

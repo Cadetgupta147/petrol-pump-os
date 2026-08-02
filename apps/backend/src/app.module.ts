@@ -43,6 +43,7 @@ import { MachineTestingModule } from './machine-testing/machine-testing.module';
 import { LubricantItemsModule } from './lubricant-items/lubricant-items.module';
 import { ItemSalesModule } from './item-sales/item-sales.module';
 import { VehicleBlacklistModule } from './vehicle-blacklist/vehicle-blacklist.module';
+import { PaymentsModule } from './payments/payments.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module';
@@ -116,6 +117,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env');
     LubricantItemsModule,
     ItemSalesModule,
     VehicleBlacklistModule,
+    PaymentsModule,
     LedgerModule,
   ],
   controllers: [AppController, HealthController],

@@ -15,6 +15,11 @@ build/
 .next/
 out/
 
+# Vercel CLI project link (apps/web-portal has its own; this one lets the
+# CLI resolve the project's Root Directory setting correctly when deploying
+# from the monorepo root instead of from inside apps/web-portal)
+.vercel
+
 # Prisma
 prisma/*.db
 prisma/migrations/dev.db
