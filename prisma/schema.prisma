@@ -235,6 +235,7 @@ model Pump {
   vouchers                Voucher[]
   voucherLines            VoucherLine[]
   voucherNumberCounters   VoucherNumberCounter[]
+  ledgerAccountCodeCounters LedgerAccountCodeCounter[]
 }
 
 // ---------- Staff / Users / Roles ----------
@@ -1569,6 +1570,13 @@ model LedgerAccount {
   id                 String           @id @default(cuid())
   pump               Pump             @relation(fields: [pumpId], references: [id])
   pumpId             String
+  // Short per-pump account code (e.g. "0001") — Tally/legacy-pump-software
+  // style fast reference, shown as its own column in Voucher Entry next to
+  // the name. Always server-generated (allocateLedgerAccountCode() in
+  // ledger-account-code.ts, same counter-row pattern as
+  // Voucher.voucherNumber) — never dealer-typed, so it can't collide or be
+  // left blank.
+  code               String
   name               String
   group              LedgerGroup
   openingBalance     Float            @default(0)
@@ -1595,6 +1603,19 @@ model LedgerAccount {
 
   @@unique([pumpId, name])
   @@unique([pumpId, systemKey])
+  @@unique([pumpId, code])
+}
+
+// Per-pump sequential LedgerAccount.code counter — same self-initializing
+// upsert pattern as VoucherNumberCounter (see voucher-number.ts), except the
+// formatted code has no pump-code prefix (just a zero-padded number, e.g.
+// "0001") since it's meant as a short in-app reference, not a
+// print-on-documents identifier like a voucher/bill number.
+model LedgerAccountCodeCounter {
+  id      String @id @default(cuid())
+  pump    Pump   @relation(fields: [pumpId], references: [id])
+  pumpId  String @unique
+  lastSeq Int    @default(0)
 }
 
 // Per-pump sequential voucher number counter — same "counter row, atomically
@@ -1647,6 +1668,13 @@ model VoucherLine {
   ledgerAccountId String
   amount          Float
   drCr            DrCr
+  // Per-line note (e.g. "Cash Deposited", "PETRO CARD") — separate from
+  // Voucher.narration, which no longer exists as a whole-voucher field on
+  // the entry form: Voucher Entry's Particulars grid collects one narration
+  // per row instead, matching the legacy pump software's per-transaction
+  // notes. Voucher.narration itself is untouched for vouchers that still set
+  // it (auto-posted sources), just no longer written from this page.
+  narration       String?
   createdAt       DateTime      @default(now())
 }
 

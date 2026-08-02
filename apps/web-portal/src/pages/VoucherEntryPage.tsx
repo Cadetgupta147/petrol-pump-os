@@ -9,78 +9,56 @@ import { useAuth } from '../context/useAuth';
 import { formatRupees, formatDateTime, todayIsoDate } from '../utils/format';
 import type { LedgerAccount, VoucherLineInput, VoucherListItem, VoucherType } from '../api/types';
 
-const EPSILON = 0.01;
-
-// SALES is deliberately excluded — it's reserved for the auto-posted bill/
-// shift-sales vouchers (see LedgerPostingService), never a manual pick here.
-const VOUCHER_TYPES: VoucherType[] = ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL'];
-const ACCOUNT_MODE_TYPES: VoucherType[] = ['PAYMENT', 'RECEIPT', 'CONTRA'];
-
-// --- Journal mode: the old free-form grid (no fixed account; every line is
-// typed by hand and the whole set must balance) -----------------------------
-//
-// A row's amount lives in exactly one of paid/received — never both. An
-// account either PAID value away (CREDIT) or RECEIVED value in (DEBIT) —
-// same convention as a traditional two-column Indian cash book ("To
-// Receipts" / "By Payments").
-type LineDraft = { ledgerAccountId: string; paid: string; received: string };
-
-function emptyLine(): LineDraft {
-  return { ledgerAccountId: '', paid: '', received: '' };
-}
-
-function startedLine(line: LineDraft): boolean {
-  return line.ledgerAccountId !== '' || line.paid !== '' || line.received !== '';
-}
-
-function lineValid(line: LineDraft): boolean {
-  const paidNum = Number(line.paid) || 0;
-  const receivedNum = Number(line.received) || 0;
-  return line.ledgerAccountId !== '' && (paidNum > 0) !== (receivedNum > 0);
-}
-
-// --- Payment/Receipt/Contra mode: one fixed Account + Particulars ----------
-//
-// Mirrors how Tally's Payment/Receipt/Contra vouchers actually work: you
-// pick ONE Cash/Bank ledger as the voucher's "Account" once, then every
-// Particulars row below only needs to name the OTHER party — the software
-// silently pairs each row against the Account, so nothing needs to balance
-// by hand (the Account's own leg is just the sum of the Particulars, computed
-// automatically) and there's no "off by" state to hit. A dealer moving to a
-// different Cash/Bank ledger (e.g. SBI instead of Cash) starts a new voucher
-// with that ledger as its Account, rather than mixing ledgers into one.
-//
-// Direction (which side is Paid vs Received) is fixed for the whole voucher
-// by its type, not chosen per row:
-//   PAYMENT/CONTRA — Account pays out (CREDIT), each Particular receives
-//     (DEBIT). E.g. "Cash Paid, Toll Received" / "Cash Paid, SBI Received"
-//     (a deposit) — same wording the Recent Vouchers list already uses.
-//   RECEIPT — Account receives (DEBIT), each Particular pays (CREDIT). E.g.
-//     "Cash Received, Babu Ji Paid" ("Babu Ji paid us").
-type ParticularDraft = { ledgerAccountId: string; amount: string };
+// Mirrors the legacy pump-software voucher grid: one fixed Account (the
+// "C/B Code" — a single Cash/Bank ledger) for the whole voucher, then a
+// Particulars grid below it where every row just names the OTHER party and
+// picks Paid or Received — mixed freely within the same voucher (some rows
+// paid, some received), same as that reference. The Account's own leg(s)
+// are computed as the sum of each column rather than typed by hand, so nine
+// times out of ten there's nothing to balance and no way to see an "off by"
+// state. There's no separate "Voucher type" picker any more — Payment vs
+// Receipt vs a mixed Journal-shaped voucher is derived from which of the two
+// column totals are nonzero (see deriveVoucherType()).
+type ParticularDraft = { ledgerAccountId: string; payment: string; receipt: string; narration: string };
 
 function emptyParticular(): ParticularDraft {
-  return { ledgerAccountId: '', amount: '' };
+  return { ledgerAccountId: '', payment: '', receipt: '', narration: '' };
 }
 
 function startedParticular(p: ParticularDraft): boolean {
-  return p.ledgerAccountId !== '' || p.amount !== '';
+  return p.ledgerAccountId !== '' || p.payment !== '' || p.receipt !== '' || p.narration !== '';
 }
 
 function particularValid(p: ParticularDraft): boolean {
-  return p.ledgerAccountId !== '' && (Number(p.amount) || 0) > 0;
+  const paymentNum = Number(p.payment) || 0;
+  const receiptNum = Number(p.receipt) || 0;
+  return p.ledgerAccountId !== '' && (paymentNum > 0) !== (receiptNum > 0);
 }
 
 function isCashOrBank(a: LedgerAccount): boolean {
   return a.group === 'CASH_IN_HAND' || a.group === 'BANK';
 }
 
-// Manual voucher entry (Section 12 Day Book) — Payment/Receipt/Contra/
-// Journal, against Ledger Master's account heads. This is the "owner sets
-// it up themselves" half of the ledger design (auto-posting from Bills/
-// Expenses/Cash Custody/Shift Sales is the other half, and never appears
-// here — see LedgerPostingService). The wire format sent to POST /vouchers
-// is unchanged either way (still ledgerAccountId/amount/drCr pairs).
+function ledgerLabel(a: LedgerAccount): string {
+  return `${a.code} — ${a.name}`;
+}
+
+// Payment: only the Payments column has amounts. Receipt: only Receipts.
+// Both nonzero (some rows paid, some received against the same Account in
+// one voucher) doesn't fit either label cleanly, so it's classified as a
+// Journal — matches VoucherType's existing meaning (see CreateVoucherDto).
+function deriveVoucherType(paymentsTotal: number, receiptsTotal: number): VoucherType {
+  if (paymentsTotal > 0 && receiptsTotal > 0) return 'JOURNAL';
+  if (receiptsTotal > 0) return 'RECEIPT';
+  return 'PAYMENT';
+}
+
+// Manual voucher entry (Section 12 Day Book) — the "owner sets it up
+// themselves" half of the ledger design (auto-posting from Bills/Expenses/
+// Cash Custody/Shift Sales is the other half, and never appears here — see
+// LedgerPostingService). The wire format sent to POST /vouchers is
+// unchanged underneath (still ledgerAccountId/amount/drCr[/narration] pairs
+// — see buildLines()).
 export function VoucherEntryPage() {
   const { staff } = useAuth();
   const canSubmit = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT' || staff?.role === 'MANAGER';
@@ -95,25 +73,15 @@ export function VoucherEntryPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [date, setDate] = useState(todayIsoDate());
-  const [voucherType, setVoucherType] = useState<VoucherType>('PAYMENT');
-  const [narration, setNarration] = useState('');
-
-  // Account-mode state (Payment/Receipt/Contra) — accountLedgerId survives a
-  // save on purpose, so a batch of same-account vouchers (e.g. several Cash
-  // Payments in a row) never needs re-picking it.
+  // Survives a save on purpose — a batch of same-account vouchers (several
+  // Cash entries in a row) never needs re-picking it.
   const [accountLedgerId, setAccountLedgerId] = useState('');
   const [particulars, setParticulars] = useState<ParticularDraft[]>([emptyParticular()]);
   const firstParticularRef = useRef<HTMLSelectElement>(null);
 
-  // Journal-mode state (the old free-form grid).
-  const [lines, setLines] = useState<LineDraft[]>([emptyLine(), emptyLine()]);
-  const firstLineRef = useRef<HTMLSelectElement>(null);
-
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [saved, setSaved] = useState<VoucherListItem | null>(null);
-
-  const isAccountMode = ACCOUNT_MODE_TYPES.includes(voucherType);
 
   function loadVouchers(): Promise<void> {
     return getVouchers().then(setVouchers);
@@ -140,17 +108,14 @@ export function VoucherEntryPage() {
     };
   }, []);
 
-  // --- Account-mode handlers ---
-
   const accountLedgers = (ledgerAccounts ?? []).filter(isCashOrBank);
-  // Contra's whole point is a transfer between two Cash/Bank ledgers, so its
-  // Particulars are restricted the same way Account is; Payment/Receipt
-  // Particulars can be any ledger (typically a party/expense head, not
-  // another Cash/Bank account).
-  const particularLedgers = (ledgerAccounts ?? []).filter(
-    (a) => a.id !== accountLedgerId && (voucherType !== 'CONTRA' || isCashOrBank(a)),
-  );
+  const particularLedgers = (ledgerAccounts ?? []).filter((a) => a.id !== accountLedgerId);
+  const selectedAccount = ledgerAccounts?.find((a) => a.id === accountLedgerId);
+  const codeOf = (ledgerAccountId: string) => ledgerAccounts?.find((a) => a.id === ledgerAccountId)?.code ?? '—';
 
+  // Selecting an A/C on the currently-last row spawns a fresh blank row
+  // below it, spreadsheet-style — so entering line after line never needs a
+  // manual "+ Add line" click in the common case.
   function updateParticular(index: number, patch: Partial<ParticularDraft>) {
     setParticulars((prev) => {
       const next = prev.map((p, i) => (i === index ? { ...p, ...patch } : p));
@@ -163,6 +128,15 @@ export function VoucherEntryPage() {
     });
   }
 
+  // Payment and Receipt are mutually exclusive per row — typing in one
+  // clears the other rather than letting a row claim to be both at once.
+  function setPayment(index: number, value: string) {
+    updateParticular(index, { payment: value, receipt: value.trim() === '' ? particulars[index].receipt : '' });
+  }
+  function setReceipt(index: number, value: string) {
+    updateParticular(index, { receipt: value, payment: value.trim() === '' ? particulars[index].payment : '' });
+  }
+
   function addParticular() {
     setParticulars((prev) => [...prev, emptyParticular()]);
   }
@@ -171,7 +145,7 @@ export function VoucherEntryPage() {
     setParticulars((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  function handleParticularAmountKeyDown(index: number, event: KeyboardEvent<HTMLInputElement>) {
+  function handleAmountKeyDown(index: number, event: KeyboardEvent<HTMLInputElement>) {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     document.getElementById(`p-ledger-${index + 1}`)?.focus();
@@ -180,9 +154,11 @@ export function VoucherEntryPage() {
   const startedParticulars = particulars.filter(startedParticular);
   const invalidParticulars = startedParticulars.some((p) => !particularValid(p));
   const validParticulars = startedParticulars.filter(particularValid);
-  const particularsTotal = validParticulars.reduce((sum, p) => sum + Number(p.amount), 0);
 
-  const canAttemptSubmitAccountMode =
+  const paymentsTotal = validParticulars.reduce((sum, p) => sum + (Number(p.payment) || 0), 0);
+  const receiptsTotal = validParticulars.reduce((sum, p) => sum + (Number(p.receipt) || 0), 0);
+
+  const canAttemptSubmit =
     canSubmit &&
     !submitting &&
     accountLedgerId !== '' &&
@@ -190,85 +166,31 @@ export function VoucherEntryPage() {
     validParticulars.length >= 1 &&
     date.trim() !== '';
 
-  // PAYMENT/CONTRA: Account pays out (CREDIT), Particulars receive (DEBIT).
-  // RECEIPT: Account receives (DEBIT), Particulars pay (CREDIT).
-  function buildAccountModeLines(): VoucherLineInput[] {
-    const accountDrCr = voucherType === 'RECEIPT' ? ('DEBIT' as const) : ('CREDIT' as const);
-    const particularDrCr = voucherType === 'RECEIPT' ? ('CREDIT' as const) : ('DEBIT' as const);
-    return [
-      { ledgerAccountId: accountLedgerId, amount: particularsTotal, drCr: accountDrCr },
-      ...validParticulars.map((p) => ({
-        ledgerAccountId: p.ledgerAccountId,
-        amount: Number(p.amount),
-        drCr: particularDrCr,
-      })),
-    ];
-  }
-
-  // --- Journal-mode handlers (unchanged free-form grid) ---
-
-  // Selecting an A/C on the currently-last row spawns a fresh blank row
-  // below it, spreadsheet-style — so entering line after line never needs a
-  // manual "+ Add line" click in the common case.
-  function updateLine(index: number, patch: Partial<LineDraft>) {
-    setLines((prev) => {
-      const next = prev.map((line, i) => (i === index ? { ...line, ...patch } : line));
-      const wasEmpty = prev[index].ledgerAccountId === '';
-      const nowSet = next[index].ledgerAccountId !== '';
-      if (index === prev.length - 1 && wasEmpty && nowSet) {
-        next.push(emptyLine());
+  // Account's own leg(s): CREDIT for whatever it paid out, DEBIT for
+  // whatever it received — one line each, only when that column has
+  // anything in it (a pure-Payment voucher never gets a DEBIT Account line).
+  // Each Particular becomes the mirror entry: DEBIT when it was paid
+  // (received the value), CREDIT when it received (gave/reduced a balance) —
+  // same Paid=CREDIT/Received=DEBIT convention as the rest of this ledger.
+  function buildLines(): VoucherLineInput[] {
+    const lines: VoucherLineInput[] = [];
+    if (paymentsTotal > 0) {
+      lines.push({ ledgerAccountId: accountLedgerId, amount: paymentsTotal, drCr: 'CREDIT' });
+    }
+    if (receiptsTotal > 0) {
+      lines.push({ ledgerAccountId: accountLedgerId, amount: receiptsTotal, drCr: 'DEBIT' });
+    }
+    for (const p of validParticulars) {
+      const narration = p.narration.trim() || undefined;
+      const paymentNum = Number(p.payment) || 0;
+      if (paymentNum > 0) {
+        lines.push({ ledgerAccountId: p.ledgerAccountId, amount: paymentNum, drCr: 'DEBIT', narration });
+      } else {
+        lines.push({ ledgerAccountId: p.ledgerAccountId, amount: Number(p.receipt), drCr: 'CREDIT', narration });
       }
-      return next;
-    });
+    }
+    return lines;
   }
-
-  // Paid and Received are mutually exclusive per row — typing in one clears
-  // the other rather than letting a row claim to be both at once.
-  function setPaid(index: number, value: string) {
-    updateLine(index, { paid: value, received: value.trim() === '' ? lines[index].received : '' });
-  }
-  function setReceived(index: number, value: string) {
-    updateLine(index, { received: value, paid: value.trim() === '' ? lines[index].paid : '' });
-  }
-
-  function addLine() {
-    setLines((prev) => [...prev, emptyLine()]);
-  }
-
-  function removeLine(index: number) {
-    setLines((prev) => (prev.length > 2 ? prev.filter((_, i) => i !== index) : prev));
-  }
-
-  function handleAmountKeyDown(index: number, event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    document.getElementById(`v-ledger-${index + 1}`)?.focus();
-  }
-
-  const startedLines = lines.filter(startedLine);
-  const invalidStarted = startedLines.some((l) => !lineValid(l));
-  const validLines = startedLines.filter(lineValid);
-
-  const paidTotal = validLines.reduce((sum, l) => sum + (Number(l.paid) || 0), 0);
-  const receivedTotal = validLines.reduce((sum, l) => sum + (Number(l.received) || 0), 0);
-  const balanced = Math.abs(paidTotal - receivedTotal) <= EPSILON;
-
-  const canAttemptSubmitJournal =
-    canSubmit && !submitting && !invalidStarted && validLines.length >= 2 && balanced && date.trim() !== '';
-
-  // Paid -> CREDIT, Received -> DEBIT (see LineDraft's comment for why).
-  function buildJournalModeLines(): VoucherLineInput[] {
-    return validLines.map((line) => {
-      const paidNum = Number(line.paid) || 0;
-      return paidNum > 0
-        ? { ledgerAccountId: line.ledgerAccountId, drCr: 'CREDIT' as const, amount: paidNum }
-        : { ledgerAccountId: line.ledgerAccountId, drCr: 'DEBIT' as const, amount: Number(line.received) };
-    });
-  }
-
-  // --- Shared submit ---
-
-  const canAttemptSubmit = isAccountMode ? canAttemptSubmitAccountMode : canAttemptSubmitJournal;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -278,19 +200,12 @@ export function VoucherEntryPage() {
     try {
       const result = await createVoucher({
         date,
-        voucherType,
-        narration: narration.trim() || undefined,
-        lines: isAccountMode ? buildAccountModeLines() : buildJournalModeLines(),
+        voucherType: deriveVoucherType(paymentsTotal, receiptsTotal),
+        lines: buildLines(),
       });
       setSaved(result);
-      setNarration('');
       setParticulars([emptyParticular()]);
-      setLines([emptyLine(), emptyLine()]);
-      if (isAccountMode) {
-        firstParticularRef.current?.focus();
-      } else {
-        firstLineRef.current?.focus();
-      }
+      firstParticularRef.current?.focus();
       await loadVouchers();
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Can't reach the backend.");
@@ -312,9 +227,6 @@ export function VoucherEntryPage() {
     }
   }
 
-  const particularsColumnLabel = voucherType === 'RECEIPT' ? 'Paid (Rs.)' : 'Received (Rs.)';
-  const accountRoleHint = voucherType === 'RECEIPT' ? 'money received into this account' : 'money paid out of this account';
-
   return (
     <>
       <TopBar />
@@ -324,8 +236,7 @@ export function VoucherEntryPage() {
           <div className="section-title">
             <h3>Voucher entry</h3>
             <span className="section-note">
-              POST /vouchers — Payment/Receipt/Contra/Journal against Ledger Master accounts
-              (Section 12)
+              POST /vouchers — one Cash/Bank Account, mixed Paid/Received particulars (Section 12)
             </span>
           </div>
           <div className="content-header-right">
@@ -361,239 +272,128 @@ export function VoucherEntryPage() {
                 />
               </div>
               <div className="form-field">
-                <label htmlFor="v-type">Voucher type</label>
+                <label htmlFor="v-account">Account (C/B code)</label>
                 <select
-                  id="v-type"
-                  value={voucherType}
-                  onChange={(e) => setVoucherType(e.target.value as VoucherType)}
+                  id="v-account"
+                  value={accountLedgerId}
+                  onChange={(e) => setAccountLedgerId(e.target.value)}
+                  disabled={!ledgerAccounts}
+                  required
                 >
-                  {VOUCHER_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t[0] + t.slice(1).toLowerCase()}
+                  <option value="" disabled>
+                    {ledgerAccounts ? '— select a Cash or Bank ledger —' : 'Loading…'}
+                  </option>
+                  {accountLedgers.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {ledgerLabel(a)}
                     </option>
                   ))}
                 </select>
               </div>
-              <div className="form-field">
-                <label htmlFor="v-narration">Narration (optional)</label>
-                <input
-                  id="v-narration"
-                  value={narration}
-                  onChange={(e) => setNarration(e.target.value)}
-                  placeholder="e.g. Toll for JEEP 0711"
-                />
-              </div>
             </div>
 
-            {isAccountMode ? (
-              <>
-                <div className="grid grid-3">
-                  <div className="form-field">
-                    <label htmlFor="v-account">Account ({accountRoleHint})</label>
-                    <select
-                      id="v-account"
-                      value={accountLedgerId}
-                      onChange={(e) => setAccountLedgerId(e.target.value)}
-                      disabled={!ledgerAccounts}
-                      required
-                    >
-                      <option value="" disabled>
-                        {ledgerAccounts ? '— select a Cash or Bank ledger —' : 'Loading…'}
-                      </option>
-                      {accountLedgers.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+            <div className="section-title">
+              <h3>Particulars</h3>
+              <span className="section-note">
+                who the money went to or came from — one row per party, Paid or Received, not both
+              </span>
+            </div>
 
-                <div className="section-title">
-                  <h3>Particulars</h3>
-                  <span className="section-note">
-                    who the money went to or came from — one row per party, {particularsColumnLabel} only
-                  </span>
-                </div>
-
-                <div className="table-card" style={{ marginBottom: 0, padding: 0 }}>
-                  <table className="billing-grid-table">
-                    <thead>
-                      <tr>
-                        <th>A/C</th>
-                        <th className="num">{particularsColumnLabel}</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {particulars.map((p, index) => (
-                        <tr key={index}>
-                          <td>
-                            <select
-                              id={`p-ledger-${index}`}
-                              ref={index === 0 ? firstParticularRef : undefined}
-                              value={p.ledgerAccountId}
-                              onChange={(e) => updateParticular(index, { ledgerAccountId: e.target.value })}
-                              disabled={!ledgerAccounts || !accountLedgerId}
-                            >
-                              <option value="">
-                                {!accountLedgerId ? 'Pick an Account first' : ledgerAccounts ? '— select —' : 'Loading…'}
-                              </option>
-                              {particularLedgers.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.name}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="num">
-                            <input
-                              id={`p-amount-${index}`}
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={p.amount}
-                              onChange={(e) => updateParticular(index, { amount: e.target.value })}
-                              onKeyDown={(e) => handleParticularAmountKeyDown(index, e)}
-                            />
-                          </td>
-                          <td>
-                            {particulars.length > 1 && (
-                              <button
-                                type="button"
-                                className="row-remove-btn"
-                                onClick={() => removeParticular(index)}
-                                title="Remove line"
-                              >
-                                &times;
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      <tr className="add-row">
-                        <td colSpan={2}>
-                          <button type="button" className="row-add-btn" onClick={addParticular}>
-                            + Add line
+            <div className="table-card" style={{ marginBottom: 0, padding: 0 }}>
+              <table className="billing-grid-table">
+                <thead>
+                  <tr>
+                    <th>A/C</th>
+                    <th>Description</th>
+                    <th className="num">Payments (Rs.)</th>
+                    <th className="num">Receipts (Rs.)</th>
+                    <th>Narration</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {particulars.map((p, index) => (
+                    <tr key={index}>
+                      <td className="readonly-cell">{p.ledgerAccountId ? codeOf(p.ledgerAccountId) : '—'}</td>
+                      <td>
+                        <select
+                          id={`p-ledger-${index}`}
+                          ref={index === 0 ? firstParticularRef : undefined}
+                          value={p.ledgerAccountId}
+                          onChange={(e) => updateParticular(index, { ledgerAccountId: e.target.value })}
+                          disabled={!ledgerAccounts || !accountLedgerId}
+                        >
+                          <option value="">
+                            {!accountLedgerId ? 'Pick an Account first' : ledgerAccounts ? '— select —' : 'Loading…'}
+                          </option>
+                          {particularLedgers.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="num">
+                        <input
+                          id={`p-payment-${index}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={p.payment}
+                          onChange={(e) => setPayment(index, e.target.value)}
+                          onKeyDown={(e) => handleAmountKeyDown(index, e)}
+                        />
+                      </td>
+                      <td className="num">
+                        <input
+                          id={`p-receipt-${index}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={p.receipt}
+                          onChange={(e) => setReceipt(index, e.target.value)}
+                          onKeyDown={(e) => handleAmountKeyDown(index, e)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={p.narration}
+                          onChange={(e) => updateParticular(index, { narration: e.target.value })}
+                          placeholder="e.g. Cash Deposited"
+                        />
+                      </td>
+                      <td>
+                        {particulars.length > 1 && (
+                          <button
+                            type="button"
+                            className="row-remove-btn"
+                            onClick={() => removeParticular(index)}
+                            title="Remove line"
+                          >
+                            &times;
                           </button>
-                        </td>
-                        <td></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="add-row">
+                    <td colSpan={5}>
+                      <button type="button" className="row-add-btn" onClick={addParticular}>
+                        + Add line
+                      </button>
+                    </td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
-                <div className="bill-total-bar" style={{ marginBottom: 16 }}>
-                  <div className="bill-total-bar-breakdown">
-                    {ledgerAccounts?.find((a) => a.id === accountLedgerId)?.name ?? 'Account'} —{' '}
-                    {voucherType === 'RECEIPT' ? 'Received' : 'Paid'}
-                  </div>
-                  <div className="bill-total-bar-value" style={{ fontSize: 15 }}>
-                    {formatRupees(particularsTotal)}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="section-title">
-                  <h3>Lines</h3>
-                  <span className="section-note">
-                    one account per row — put the amount under Paid or Received, not both
-                  </span>
-                </div>
-
-                <div className="table-card" style={{ marginBottom: 0, padding: 0 }}>
-                  <table className="billing-grid-table">
-                    <thead>
-                      <tr>
-                        <th>A/C</th>
-                        <th className="num">Paid (Rs.)</th>
-                        <th className="num">Received (Rs.)</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((line, index) => (
-                        <tr key={index}>
-                          <td>
-                            <select
-                              id={`v-ledger-${index}`}
-                              ref={index === 0 ? firstLineRef : undefined}
-                              value={line.ledgerAccountId}
-                              onChange={(e) => updateLine(index, { ledgerAccountId: e.target.value })}
-                              disabled={!ledgerAccounts}
-                            >
-                              <option value="">{ledgerAccounts ? '— select —' : 'Loading…'}</option>
-                              {ledgerAccounts?.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.name}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="num">
-                            <input
-                              id={`v-paid-${index}`}
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={line.paid}
-                              onChange={(e) => setPaid(index, e.target.value)}
-                              onKeyDown={(e) => handleAmountKeyDown(index, e)}
-                            />
-                          </td>
-                          <td className="num">
-                            <input
-                              id={`v-received-${index}`}
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={line.received}
-                              onChange={(e) => setReceived(index, e.target.value)}
-                              onKeyDown={(e) => handleAmountKeyDown(index, e)}
-                            />
-                          </td>
-                          <td>
-                            {lines.length > 2 && (
-                              <button
-                                type="button"
-                                className="row-remove-btn"
-                                onClick={() => removeLine(index)}
-                                title="Remove line"
-                              >
-                                &times;
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      <tr className="add-row">
-                        <td colSpan={3}>
-                          <button type="button" className="row-add-btn" onClick={addLine}>
-                            + Add line
-                          </button>
-                        </td>
-                        <td></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="bill-total-bar" style={{ marginBottom: 16 }}>
-                  <div className="bill-total-bar-breakdown">
-                    Paid {formatRupees(paidTotal)} &nbsp;·&nbsp; Received {formatRupees(receivedTotal)}
-                  </div>
-                  <div
-                    className="bill-total-bar-value"
-                    style={{ fontSize: 15, color: balanced ? 'var(--green)' : 'var(--red)' }}
-                  >
-                    {balanced
-                      ? 'Balanced'
-                      : `Off by ${formatRupees(Math.abs(paidTotal - receivedTotal))}`}
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="bill-total-bar" style={{ marginBottom: 16 }}>
+              <div className="bill-total-bar-breakdown">
+                {selectedAccount ? ledgerLabel(selectedAccount) : 'Account'} — Payments{' '}
+                {formatRupees(paymentsTotal)} &nbsp;·&nbsp; Receipts {formatRupees(receiptsTotal)}
+              </div>
+            </div>
 
             {submitError && <div className="form-error">{submitError}</div>}
             {saved && (
@@ -628,7 +428,6 @@ export function VoucherEntryPage() {
                     <th>Type</th>
                     <th>Source</th>
                     <th>Lines</th>
-                    <th>Narration</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -643,11 +442,12 @@ export function VoucherEntryPage() {
                         {v.lines
                           .map(
                             (l) =>
-                              `${l.drCr === 'DEBIT' ? 'Received' : 'Paid'} ${l.ledgerAccount.name} ${formatRupees(l.amount)}`,
+                              `${l.drCr === 'DEBIT' ? 'Received' : 'Paid'} ${l.ledgerAccount.name} ${formatRupees(l.amount)}` +
+                              (l.narration ? ` (${l.narration})` : ''),
                           )
                           .join(' · ')}
+                        {v.narration ? ` — ${v.narration}` : ''}
                       </td>
-                      <td>{v.narration ?? '—'}</td>
                       <td>
                         {canDelete && v.source === 'MANUAL' && (
                           <button

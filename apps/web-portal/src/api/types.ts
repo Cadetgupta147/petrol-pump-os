@@ -1242,6 +1242,10 @@ export type VoucherSource = 'MANUAL' | 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SH
 // disables that action for them) — see ledger-accounts.service.ts's remove().
 export interface LedgerAccount {
   id: string;
+  // Short per-pump reference number (e.g. "0001"), always server-generated
+  // (allocateLedgerAccountCode() on the backend) — shown as its own column
+  // in Voucher Entry next to the name, never editable here.
+  code: string;
   name: string;
   group: LedgerGroup;
   openingBalance: number;
@@ -1270,6 +1274,9 @@ export interface VoucherLineInput {
   ledgerAccountId: string;
   amount: number;
   drCr: DrCr;
+  // Per-line note (Voucher Entry's Particulars grid) — separate from the
+  // voucher's own optional narration field.
+  narration?: string;
 }
 
 // POST /vouchers — manual entry only; source is always stamped MANUAL
@@ -1292,7 +1299,12 @@ export interface VoucherListItem {
   narration: string | null;
   source: VoucherSource;
   createdBy: { name: string };
-  lines: { ledgerAccount: { id: string; name: string }; amount: number; drCr: DrCr }[];
+  lines: {
+    ledgerAccount: { id: string; name: string };
+    amount: number;
+    drCr: DrCr;
+    narration: string | null;
+  }[];
 }
 
 export interface DayBookVoucherLine {

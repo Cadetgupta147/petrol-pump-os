@@ -142,6 +142,7 @@ export function LedgerAccountsPage() {
                   <table className="data-table">
                     <thead>
                       <tr>
+                        <th>Code</th>
                         <th>Name</th>
                         <th>Group</th>
                         <th className="num">Opening balance</th>
@@ -152,6 +153,7 @@ export function LedgerAccountsPage() {
                     <tbody>
                       {accounts.map((account) => (
                         <tr key={account.id}>
+                          <td>{account.code}</td>
                           <td>{account.name}</td>
                           <td>{groupLabel(account.group)}</td>
                           <td className="num">{formatRupees(account.openingBalance)}</td>

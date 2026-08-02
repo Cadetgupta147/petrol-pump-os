@@ -64,6 +64,7 @@ export class VouchersService {
               ledgerAccountId: line.ledgerAccountId,
               amount: line.amount,
               drCr: line.drCr,
+              narration: line.narration,
             })),
           },
         },

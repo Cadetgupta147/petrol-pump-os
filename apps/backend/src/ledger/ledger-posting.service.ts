@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { aggregateByPaymentType } from '../dashboard/payment-line-aggregation.util';
 import { allocateVoucherNumber } from './voucher-number';
+import { allocateLedgerAccountCode } from './ledger-account-code';
 
 // Section 12 Day Book — auto-posts a double-entry Voucher whenever a Bill,
 // ExpenseEntry, CashCustodyLog, ShiftSalesSummary, or Payment (credit
@@ -240,16 +241,34 @@ export class LedgerPostingService {
 
   // ---------- get-or-create ledger helpers ----------
 
+  // LedgerAccount.code (Section 12, Voucher Entry's A/C column) has to be
+  // allocated BEFORE the row is created, so these four lazily-created-ledger
+  // helpers switched from a blind upsert (which can't know in advance
+  // whether it'll insert or no-op) to an explicit find-then-create — an
+  // upsert here would burn a fresh code number on every no-op "already
+  // exists" call (e.g. every single Bill posted re-touching the system Sales
+  // ledger), inflating codes well past what a dealer would recognize as a
+  // small stable reference list. The tiny race window this opens (two
+  // concurrent first-time calls both finding nothing) is a non-issue for
+  // this app's actual traffic (one pump, effectively serial requests), and
+  // the existing @@unique constraints below still catch it if it ever
+  // happens — see PrismaClientKnownRequestError P2002 handling anywhere
+  // else in this codebase for the established pattern.
   private async getOrCreateSystemLedger(
     pumpId: string,
     key: SystemLedgerKey,
     defaultName: string,
     group: LedgerGroup,
   ): Promise<LedgerAccount> {
-    return this.prisma.ledgerAccount.upsert({
+    const existing = await this.prisma.ledgerAccount.findUnique({
       where: { pumpId_systemKey: { pumpId, systemKey: key } },
-      create: { pumpId, systemKey: key, name: defaultName, group, isSystemManaged: true },
-      update: {},
+    });
+    if (existing) return existing;
+    return this.prisma.$transaction(async (tx) => {
+      const code = await allocateLedgerAccountCode(tx, pumpId);
+      return tx.ledgerAccount.create({
+        data: { pumpId, code, systemKey: key, name: defaultName, group, isSystemManaged: true },
+      });
     });
   }
 
@@ -258,10 +277,15 @@ export class LedgerPostingService {
     name: string,
     group: LedgerGroup,
   ): Promise<LedgerAccount> {
-    return this.prisma.ledgerAccount.upsert({
+    const existing = await this.prisma.ledgerAccount.findUnique({
       where: { pumpId_name: { pumpId, name } },
-      create: { pumpId, name, group, isSystemManaged: true },
-      update: {},
+    });
+    if (existing) return existing;
+    return this.prisma.$transaction(async (tx) => {
+      const code = await allocateLedgerAccountCode(tx, pumpId);
+      return tx.ledgerAccount.create({
+        data: { pumpId, code, name, group, isSystemManaged: true },
+      });
     });
   }
 
@@ -270,16 +294,22 @@ export class LedgerPostingService {
     customerId: string,
     customerName: string,
   ): Promise<LedgerAccount> {
-    return this.prisma.ledgerAccount.upsert({
+    const existing = await this.prisma.ledgerAccount.findUnique({
       where: { linkedCustomerId: customerId },
-      create: {
-        pumpId,
-        name: customerName,
-        group: 'SUNDRY_DEBTOR',
-        isSystemManaged: true,
-        linkedCustomerId: customerId,
-      },
-      update: {},
+    });
+    if (existing) return existing;
+    return this.prisma.$transaction(async (tx) => {
+      const code = await allocateLedgerAccountCode(tx, pumpId);
+      return tx.ledgerAccount.create({
+        data: {
+          pumpId,
+          code,
+          name: customerName,
+          group: 'SUNDRY_DEBTOR',
+          isSystemManaged: true,
+          linkedCustomerId: customerId,
+        },
+      });
     });
   }
 
@@ -288,16 +318,22 @@ export class LedgerPostingService {
     staffId: string,
     staffName: string,
   ): Promise<LedgerAccount> {
-    return this.prisma.ledgerAccount.upsert({
+    const existing = await this.prisma.ledgerAccount.findUnique({
       where: { linkedStaffId: staffId },
-      create: {
-        pumpId,
-        name: staffName,
-        group: 'OTHER',
-        isSystemManaged: true,
-        linkedStaffId: staffId,
-      },
-      update: {},
+    });
+    if (existing) return existing;
+    return this.prisma.$transaction(async (tx) => {
+      const code = await allocateLedgerAccountCode(tx, pumpId);
+      return tx.ledgerAccount.create({
+        data: {
+          pumpId,
+          code,
+          name: staffName,
+          group: 'OTHER',
+          isSystemManaged: true,
+          linkedStaffId: staffId,
+        },
+      });
     });
   }
 

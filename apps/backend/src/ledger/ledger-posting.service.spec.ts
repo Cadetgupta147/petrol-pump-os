@@ -13,7 +13,8 @@ describe('LedgerPostingService', () => {
   let service: LedgerPostingService;
 
   let prisma: {
-    ledgerAccount: { upsert: jest.Mock };
+    ledgerAccount: { findUnique: jest.Mock; create: jest.Mock };
+    ledgerAccountCodeCounter: { upsert: jest.Mock };
     voucher: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock };
     voucherNumberCounter: { upsert: jest.Mock };
     pump: { findUniqueOrThrow: jest.Mock };
@@ -23,17 +24,20 @@ describe('LedgerPostingService', () => {
   beforeEach(async () => {
     prisma = {
       ledgerAccount: {
-        // get-or-create-by-key helpers all resolve through this one upsert
-        // mock — echo back a stable id derived from the `create` payload's
+        // get-or-create-by-key helpers always find nothing (fresh-ledger
+        // path) and resolve through this one create mock — echo back a
+        // stable id derived from the `create` payload's
         // systemKey/name/linkedCustomerId/linkedStaffId so assertions can
-        // key off it without caring about exact upsert `where` shapes.
-        upsert: jest.fn(({ create }) =>
+        // key off it without caring about exact `where` shapes.
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn(({ data }) =>
           Promise.resolve({
-            id: create.systemKey ?? create.linkedCustomerId ?? create.linkedStaffId ?? create.name,
-            name: create.name,
+            id: data.systemKey ?? data.linkedCustomerId ?? data.linkedStaffId ?? data.name,
+            name: data.name,
           }),
         ),
       },
+      ledgerAccountCodeCounter: { upsert: jest.fn().mockResolvedValue({ lastSeq: 1 }) },
       voucher: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'v1' }),
@@ -132,7 +136,7 @@ describe('LedgerPostingService', () => {
     });
 
     it('never throws even if Prisma fails (best-effort, per the header comment)', async () => {
-      prisma.ledgerAccount.upsert.mockRejectedValueOnce(new Error('db down'));
+      prisma.ledgerAccount.create.mockRejectedValueOnce(new Error('db down'));
 
       await expect(
         service.postBillVoucher(

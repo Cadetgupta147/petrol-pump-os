@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
+import { allocateLedgerAccountCode } from './ledger-account-code';
 import { CreateLedgerAccountDto } from './dto/create-ledger-account.dto';
 import { UpdateLedgerAccountDto } from './dto/update-ledger-account.dto';
 
@@ -14,17 +15,22 @@ import { UpdateLedgerAccountDto } from './dto/update-ledger-account.dto';
 export class LedgerAccountsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreateLedgerAccountDto) {
+  async create(dto: CreateLedgerAccountDto) {
+    const pumpId = requireTenantContext().pumpId;
     try {
-      return this.prisma.ledgerAccount.create({
-        data: {
-          pumpId: requireTenantContext().pumpId,
-          name: dto.name.trim(),
-          group: dto.group,
-          openingBalance: dto.openingBalance ?? 0,
-          openingBalanceType: dto.openingBalanceType ?? 'DEBIT',
-          isSystemManaged: false,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const code = await allocateLedgerAccountCode(tx, pumpId);
+        return tx.ledgerAccount.create({
+          data: {
+            pumpId,
+            code,
+            name: dto.name.trim(),
+            group: dto.group,
+            openingBalance: dto.openingBalance ?? 0,
+            openingBalanceType: dto.openingBalanceType ?? 'DEBIT',
+            isSystemManaged: false,
+          },
+        });
       });
     } catch (error) {
       this.handlePrismaError(error, dto.name);
