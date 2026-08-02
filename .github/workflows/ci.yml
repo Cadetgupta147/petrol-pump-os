@@ -43,6 +43,27 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
+      # The CI Postgres service is a plain postgres:16-alpine container, not
+      # Supabase, so it lacks the `anon`/`authenticated` roles that Supabase
+      # provisions automatically on every project. Migration
+      # 20260730150329_enable_rls_deny_by_default (already applied against
+      # the real Supabase DB) revokes grants from those roles, so create
+      # NOLOGIN stand-ins here purely so that migration can apply in CI too.
+      - name: Create Supabase-equivalent roles for RLS migrations
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d petrol_pump_os -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+              CREATE ROLE anon NOLOGIN NOINHERIT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN NOINHERIT;
+            END IF;
+          END
+          $$;
+          SQL
+
       - name: Run migrations against test DB
         run: npx prisma migrate deploy
 
