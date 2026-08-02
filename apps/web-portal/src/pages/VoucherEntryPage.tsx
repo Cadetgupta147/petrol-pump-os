@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { TopBar } from '../components/layout/TopBar';
 import { NavBar } from '../components/layout/NavBar';
@@ -7,22 +7,45 @@ import { createVoucher, deleteVoucher, getVouchers } from '../api/vouchers';
 import { ApiError } from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { formatRupees, formatDateTime, todayIsoDate } from '../utils/format';
-import type { DrCr, LedgerAccount, VoucherListItem, VoucherType } from '../api/types';
+import type { LedgerAccount, VoucherListItem, VoucherType } from '../api/types';
 
 const EPSILON = 0.01;
 const VOUCHER_TYPES: VoucherType[] = ['PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL', 'SALES'];
 
-type LineDraft = { ledgerAccountId: string; drCr: DrCr; amount: string };
+// A row's amount lives in exactly one of paid/received — never both. Mirrors
+// the old Ledger Master "Dr/Cr" dropdown, but in words a non-accountant
+// dealer actually uses: an account either PAID value away (the old CREDIT)
+// or RECEIVED value in (the old DEBIT) — same convention as a traditional
+// two-column Indian cash book ("To Receipts" / "By Payments"), and the same
+// one this pump's old legacy software used. "Paid"/"Received" read the same
+// on every row regardless of which ledger it is (Cash, a supplier, an
+// expense head, ...) — e.g. paying Toll in cash reads as CASH → Paid,
+// TOLL → Received; collecting cash from a credit customer reads as
+// CASH → Received, that customer → Paid ("customer paid us").
+type LineDraft = { ledgerAccountId: string; paid: string; received: string };
 
 function emptyLine(): LineDraft {
-  return { ledgerAccountId: '', drCr: 'DEBIT', amount: '' };
+  return { ledgerAccountId: '', paid: '', received: '' };
+}
+
+function startedLine(line: LineDraft): boolean {
+  return line.ledgerAccountId !== '' || line.paid !== '' || line.received !== '';
+}
+
+function lineValid(line: LineDraft): boolean {
+  const paidNum = Number(line.paid) || 0;
+  const receivedNum = Number(line.received) || 0;
+  return line.ledgerAccountId !== '' && (paidNum > 0) !== (receivedNum > 0);
 }
 
 // Manual voucher entry (Section 12 Day Book) — Payment/Receipt/Contra/
 // Journal, against Ledger Master's account heads. This is the "owner sets
 // it up themselves" half of the ledger design (auto-posting from Bills/
 // Expenses/Cash Custody/Shift Sales is the other half, and never appears
-// here — see LedgerPostingService).
+// here — see LedgerPostingService). Grid layout + Paid/Received columns are
+// a pure frontend re-skin for fast multi-line entry; the wire format sent
+// to POST /vouchers is unchanged (still ledgerAccountId/amount/drCr pairs —
+// see buildLinePayload()).
 export function VoucherEntryPage() {
   const { staff } = useAuth();
   const canSubmit = staff?.role === 'OWNER' || staff?.role === 'ACCOUNTANT' || staff?.role === 'MANAGER';
@@ -43,6 +66,7 @@ export function VoucherEntryPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [saved, setSaved] = useState<VoucherListItem | null>(null);
+  const firstRowRef = useRef<HTMLSelectElement>(null);
 
   function loadVouchers(): Promise<void> {
     return getVouchers().then(setVouchers);
@@ -69,8 +93,28 @@ export function VoucherEntryPage() {
     };
   }, []);
 
+  // Selecting an A/C on the currently-last row spawns a fresh blank row
+  // below it, spreadsheet-style — so entering line after line never needs a
+  // manual "+ Add line" click in the common case.
   function updateLine(index: number, patch: Partial<LineDraft>) {
-    setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+    setLines((prev) => {
+      const next = prev.map((line, i) => (i === index ? { ...line, ...patch } : line));
+      const wasEmpty = prev[index].ledgerAccountId === '';
+      const nowSet = next[index].ledgerAccountId !== '';
+      if (index === prev.length - 1 && wasEmpty && nowSet) {
+        next.push(emptyLine());
+      }
+      return next;
+    });
+  }
+
+  // Paid and Received are mutually exclusive per row — typing in one clears
+  // the other rather than letting a row claim to be both at once.
+  function setPaid(index: number, value: string) {
+    updateLine(index, { paid: value, received: value.trim() === '' ? lines[index].received : '' });
+  }
+  function setReceived(index: number, value: string) {
+    updateLine(index, { received: value, paid: value.trim() === '' ? lines[index].paid : '' });
   }
 
   function addLine() {
@@ -81,16 +125,33 @@ export function VoucherEntryPage() {
     setLines((prev) => (prev.length > 2 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  const debitTotal = lines
-    .filter((l) => l.drCr === 'DEBIT')
-    .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
-  const creditTotal = lines
-    .filter((l) => l.drCr === 'CREDIT')
-    .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
-  const balanced = Math.abs(debitTotal - creditTotal) <= EPSILON;
+  // Enter in an amount cell jumps straight to the next row's A/C picker
+  // instead of submitting the form — keeps a dealer's hands on the keyboard
+  // through a whole multi-line voucher.
+  function handleAmountKeyDown(index: number, event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    document.getElementById(`v-ledger-${index + 1}`)?.focus();
+  }
 
-  const linesFilled = lines.every((l) => l.ledgerAccountId && Number(l.amount) > 0);
-  const canAttemptSubmit = canSubmit && !submitting && linesFilled && balanced && date.trim() !== '';
+  const startedLines = lines.filter(startedLine);
+  const invalidStarted = startedLines.some((l) => !lineValid(l));
+  const validLines = startedLines.filter(lineValid);
+
+  const paidTotal = validLines.reduce((sum, l) => sum + (Number(l.paid) || 0), 0);
+  const receivedTotal = validLines.reduce((sum, l) => sum + (Number(l.received) || 0), 0);
+  const balanced = Math.abs(paidTotal - receivedTotal) <= EPSILON;
+
+  const canAttemptSubmit =
+    canSubmit && !submitting && !invalidStarted && validLines.length >= 2 && balanced && date.trim() !== '';
+
+  // Paid -> CREDIT, Received -> DEBIT (see LineDraft's comment for why).
+  function buildLinePayload(line: LineDraft) {
+    const paidNum = Number(line.paid) || 0;
+    return paidNum > 0
+      ? { ledgerAccountId: line.ledgerAccountId, drCr: 'CREDIT' as const, amount: paidNum }
+      : { ledgerAccountId: line.ledgerAccountId, drCr: 'DEBIT' as const, amount: Number(line.received) };
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -102,15 +163,12 @@ export function VoucherEntryPage() {
         date,
         voucherType,
         narration: narration.trim() || undefined,
-        lines: lines.map((l) => ({
-          ledgerAccountId: l.ledgerAccountId,
-          drCr: l.drCr,
-          amount: Number(l.amount),
-        })),
+        lines: validLines.map(buildLinePayload),
       });
       setSaved(result);
       setNarration('');
       setLines([emptyLine(), emptyLine()]);
+      firstRowRef.current?.focus();
       await loadVouchers();
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Can't reach the backend.");
@@ -204,73 +262,100 @@ export function VoucherEntryPage() {
 
             <div className="section-title">
               <h3>Lines</h3>
-              <span className="section-note">debits must equal credits</span>
+              <span className="section-note">
+                one account per row — put the amount under Paid or Received, not both
+              </span>
             </div>
-            {lines.map((line, index) => (
-              <div className="grid grid-3" key={index} style={{ marginBottom: 10 }}>
-                <div className="form-field">
-                  <label htmlFor={`v-ledger-${index}`}>Ledger account</label>
-                  <select
-                    id={`v-ledger-${index}`}
-                    value={line.ledgerAccountId}
-                    onChange={(e) => updateLine(index, { ledgerAccountId: e.target.value })}
-                    disabled={!ledgerAccounts}
-                    required
-                  >
-                    <option value="" disabled>
-                      {ledgerAccounts ? 'Select a ledger' : 'Loading…'}
-                    </option>
-                    {ledgerAccounts?.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label htmlFor={`v-drcr-${index}`}>Dr / Cr</label>
-                  <select
-                    id={`v-drcr-${index}`}
-                    value={line.drCr}
-                    onChange={(e) => updateLine(index, { drCr: e.target.value as DrCr })}
-                  >
-                    <option value="DEBIT">Debit</option>
-                    <option value="CREDIT">Credit</option>
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label htmlFor={`v-amount-${index}`}>Amount (Rs.)</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input
-                      id={`v-amount-${index}`}
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={line.amount}
-                      onChange={(e) => updateLine(index, { amount: e.target.value })}
-                      required
-                    />
-                    {lines.length > 2 && (
-                      <button
-                        type="button"
-                        className="card-sub clickable"
-                        onClick={() => removeLine(index)}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-            <button type="button" className="btn-secondary" onClick={addLine} style={{ marginBottom: 14 }}>
-              + Add line
-            </button>
 
-            <div className={`banner ${balanced ? 'ok' : ''}`}>
-              {balanced
-                ? `Balanced — Dr ${formatRupees(debitTotal)} = Cr ${formatRupees(creditTotal)}`
-                : `Off by ${formatRupees(Math.abs(debitTotal - creditTotal))} — Dr ${formatRupees(debitTotal)} vs Cr ${formatRupees(creditTotal)}`}
+            <div className="table-card" style={{ marginBottom: 0, padding: 0 }}>
+              <table className="billing-grid-table">
+                <thead>
+                  <tr>
+                    <th>A/C</th>
+                    <th className="num">Paid (Rs.)</th>
+                    <th className="num">Received (Rs.)</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, index) => (
+                    <tr key={index}>
+                      <td>
+                        <select
+                          id={`v-ledger-${index}`}
+                          ref={index === 0 ? firstRowRef : undefined}
+                          value={line.ledgerAccountId}
+                          onChange={(e) => updateLine(index, { ledgerAccountId: e.target.value })}
+                          disabled={!ledgerAccounts}
+                        >
+                          <option value="">{ledgerAccounts ? '— select —' : 'Loading…'}</option>
+                          {ledgerAccounts?.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="num">
+                        <input
+                          id={`v-paid-${index}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={line.paid}
+                          onChange={(e) => setPaid(index, e.target.value)}
+                          onKeyDown={(e) => handleAmountKeyDown(index, e)}
+                        />
+                      </td>
+                      <td className="num">
+                        <input
+                          id={`v-received-${index}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={line.received}
+                          onChange={(e) => setReceived(index, e.target.value)}
+                          onKeyDown={(e) => handleAmountKeyDown(index, e)}
+                        />
+                      </td>
+                      <td>
+                        {lines.length > 2 && (
+                          <button
+                            type="button"
+                            className="row-remove-btn"
+                            onClick={() => removeLine(index)}
+                            title="Remove line"
+                          >
+                            &times;
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="add-row">
+                    <td colSpan={3}>
+                      <button type="button" className="row-add-btn" onClick={addLine}>
+                        + Add line
+                      </button>
+                    </td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bill-total-bar" style={{ marginBottom: 16 }}>
+              <div className="bill-total-bar-breakdown">
+                Paid {formatRupees(paidTotal)} &nbsp;·&nbsp; Received {formatRupees(receivedTotal)}
+              </div>
+              <div
+                className="bill-total-bar-value"
+                style={{ fontSize: 15, color: balanced ? 'var(--green)' : 'var(--red)' }}
+              >
+                {balanced
+                  ? 'Balanced'
+                  : `Off by ${formatRupees(Math.abs(paidTotal - receivedTotal))}`}
+              </div>
             </div>
 
             {submitError && <div className="form-error">{submitError}</div>}
@@ -319,7 +404,10 @@ export function VoucherEntryPage() {
                       <td>{v.source}</td>
                       <td>
                         {v.lines
-                          .map((l) => `${l.drCr === 'DEBIT' ? 'Dr' : 'Cr'} ${l.ledgerAccount.name} ${formatRupees(l.amount)}`)
+                          .map(
+                            (l) =>
+                              `${l.drCr === 'DEBIT' ? 'Received' : 'Paid'} ${l.ledgerAccount.name} ${formatRupees(l.amount)}`,
+                          )
                           .join(' · ')}
                       </td>
                       <td>{v.narration ?? '—'}</td>
