@@ -26,6 +26,7 @@ export function TankSettings({ canManage }: TankSettingsProps) {
   const [tanks, setTanks] = useState<Tank[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [tankNumber, setTankNumber] = useState('');
   const [productType, setProductType] = useState('');
   const [capacityLitres, setCapacityLitres] = useState('');
   const [currentStockLitres, setCurrentStockLitres] = useState('');
@@ -34,6 +35,7 @@ export function TankSettings({ canManage }: TankSettingsProps) {
   const [addError, setAddError] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTankNumber, setEditTankNumber] = useState('');
   const [editProductType, setEditProductType] = useState('');
   const [editCapacityLitres, setEditCapacityLitres] = useState('');
   const [editCurrentStockLitres, setEditCurrentStockLitres] = useState('');
@@ -77,11 +79,13 @@ export function TankSettings({ canManage }: TankSettingsProps) {
     setAdding(true);
     try {
       await createTank({
+        tankNumber: tankNumber.trim(),
         productType: productType.trim(),
         capacityLitres: Number(capacityLitres),
-        currentStockLitres: Number(currentStockLitres),
+        ...(currentStockLitres.trim() && { currentStockLitres: Number(currentStockLitres) }),
         ...(calibrationChartRef.trim() && { calibrationChartRef: calibrationChartRef.trim() }),
       });
+      setTankNumber('');
       setProductType('');
       setCapacityLitres('');
       setCurrentStockLitres('');
@@ -96,6 +100,7 @@ export function TankSettings({ canManage }: TankSettingsProps) {
 
   function startEdit(tank: Tank) {
     setEditingId(tank.id);
+    setEditTankNumber(tank.tankNumber);
     setEditProductType(tank.productType);
     setEditCapacityLitres(String(tank.capacityLitres));
     setEditCurrentStockLitres(String(tank.currentStockLitres));
@@ -110,6 +115,7 @@ export function TankSettings({ canManage }: TankSettingsProps) {
     setSavingEdit(true);
     try {
       await updateTank(editingId, {
+        tankNumber: editTankNumber.trim(),
         productType: editProductType.trim(),
         capacityLitres: Number(editCapacityLitres),
         currentStockLitres: Number(editCurrentStockLitres),
@@ -125,7 +131,7 @@ export function TankSettings({ canManage }: TankSettingsProps) {
   }
 
   async function handleDelete(tank: Tank) {
-    if (!window.confirm(`Delete tank "${tank.productType}"? This can't be undone.`)) return;
+    if (!window.confirm(`Delete tank ${tank.tankNumber} (${tank.productType})? This can't be undone.`)) return;
     setDeleteError(null);
     setDeletingId(tank.id);
     try {
@@ -162,6 +168,7 @@ export function TankSettings({ canManage }: TankSettingsProps) {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th>Tank #</th>
                   <th>Product</th>
                   <th className="num">Capacity (L)</th>
                   <th className="num">Current stock (L)</th>
@@ -173,13 +180,20 @@ export function TankSettings({ canManage }: TankSettingsProps) {
                 {tanks.map((tank) =>
                   editingId === tank.id ? (
                     <tr key={tank.id}>
-                      <td colSpan={canManage ? 5 : 4}>
+                      <td colSpan={canManage ? 6 : 5}>
                         <form
                           onSubmit={(e) => {
                             void handleSaveEdit(e);
                           }}
                           style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
                         >
+                          <input
+                            value={editTankNumber}
+                            onChange={(e) => setEditTankNumber(e.target.value)}
+                            placeholder="Tank # (e.g. 1)"
+                            required
+                            style={{ width: 100 }}
+                          />
                           <input
                             value={editProductType}
                             onChange={(e) => setEditProductType(e.target.value)}
@@ -231,7 +245,8 @@ export function TankSettings({ canManage }: TankSettingsProps) {
                     </tr>
                   ) : (
                     <tr key={tank.id}>
-                      <td style={{ fontWeight: 700 }}>{tank.productType}</td>
+                      <td style={{ fontWeight: 700 }}>{tank.tankNumber}</td>
+                      <td>{tank.productType}</td>
                       <td className="num">{tank.capacityLitres.toLocaleString()}</td>
                       <td className="num">{tank.currentStockLitres.toLocaleString()}</td>
                       <td>{tank.calibrationChartRef ?? '—'}</td>
@@ -271,6 +286,17 @@ export function TankSettings({ canManage }: TankSettingsProps) {
         >
           <div className="grid grid-3" style={{ gap: 12 }}>
             <div className="form-field" style={{ marginBottom: 0 }}>
+              <label htmlFor="tk-number">Tank #</label>
+              <input
+                id="tk-number"
+                value={tankNumber}
+                onChange={(e) => setTankNumber(e.target.value)}
+                placeholder="e.g. 1"
+                required
+                title="Physical tank number — must be unique for this pump. Used to link this tank to a nozzle in Nozzle Master."
+              />
+            </div>
+            <div className="form-field" style={{ marginBottom: 0 }}>
               <label htmlFor="tk-product">Product</label>
               <input
                 id="tk-product"
@@ -293,7 +319,7 @@ export function TankSettings({ canManage }: TankSettingsProps) {
               />
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>
-              <label htmlFor="tk-stock">Current stock (litres)</label>
+              <label htmlFor="tk-stock">Current stock (litres, optional)</label>
               <input
                 id="tk-stock"
                 type="number"
@@ -301,8 +327,8 @@ export function TankSettings({ canManage }: TankSettingsProps) {
                 step="0.01"
                 value={currentStockLitres}
                 onChange={(e) => setCurrentStockLitres(e.target.value)}
-                required
-                title="Starting stock at the moment this tank is registered — not necessarily 0."
+                placeholder="Defaults to 0"
+                title="Starting stock at the moment this tank is registered — leave blank for a brand-new tank (defaults to 0)."
               />
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>

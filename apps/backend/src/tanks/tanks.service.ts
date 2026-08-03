@@ -32,16 +32,21 @@ export const DIP_VARIANCE_TOLERANCE_LITRES = 5;
 export class TanksService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreateTankDto) {
-    return this.prisma.tank.create({
-      data: {
-        pumpId: requireTenantContext().pumpId,
-        productType: dto.productType,
-        capacityLitres: dto.capacityLitres,
-        currentStockLitres: dto.currentStockLitres,
-        calibrationChartRef: dto.calibrationChartRef ?? undefined,
-      },
-    });
+  async create(dto: CreateTankDto) {
+    try {
+      return await this.prisma.tank.create({
+        data: {
+          pumpId: requireTenantContext().pumpId,
+          tankNumber: dto.tankNumber.trim(),
+          productType: dto.productType,
+          capacityLitres: dto.capacityLitres,
+          currentStockLitres: dto.currentStockLitres ?? 0,
+          calibrationChartRef: dto.calibrationChartRef ?? undefined,
+        },
+      });
+    } catch (error) {
+      this.handleTankWriteError(error, dto.tankNumber);
+    }
   }
 
   findAll() {
@@ -60,23 +65,28 @@ export class TanksService {
     // Confirm existence first so a bad id always yields a clean 404, not a
     // Prisma P2025 translated into a generic error (same pattern as
     // GiftCatalogService.update / CustomersService.update).
-    await this.findOne(id);
+    const existing = await this.findOne(id);
 
-    return this.prisma.tank.update({
-      where: { id },
-      data: {
-        ...(dto.productType !== undefined && { productType: dto.productType }),
-        ...(dto.capacityLitres !== undefined && {
-          capacityLitres: dto.capacityLitres,
-        }),
-        ...(dto.currentStockLitres !== undefined && {
-          currentStockLitres: dto.currentStockLitres,
-        }),
-        ...(dto.calibrationChartRef !== undefined && {
-          calibrationChartRef: dto.calibrationChartRef,
-        }),
-      },
-    });
+    try {
+      return await this.prisma.tank.update({
+        where: { id },
+        data: {
+          ...(dto.tankNumber !== undefined && { tankNumber: dto.tankNumber.trim() }),
+          ...(dto.productType !== undefined && { productType: dto.productType }),
+          ...(dto.capacityLitres !== undefined && {
+            capacityLitres: dto.capacityLitres,
+          }),
+          ...(dto.currentStockLitres !== undefined && {
+            currentStockLitres: dto.currentStockLitres,
+          }),
+          ...(dto.calibrationChartRef !== undefined && {
+            calibrationChartRef: dto.calibrationChartRef,
+          }),
+        },
+      });
+    } catch (error) {
+      this.handleTankWriteError(error, dto.tankNumber ?? existing.tankNumber);
+    }
   }
 
   // DELETE /tanks/:id — Owner/Accountant only (see TanksController). Hard
@@ -270,6 +280,18 @@ export class TanksService {
           `${staffId} does not reference an existing Staff record`,
         );
       }
+    }
+    throw error;
+  }
+
+  // create()/update() — @@unique([pumpId, tankNumber]) violation, same
+  // P2002-to-400 translation as NozzlesService.handlePrismaError() for its
+  // (pumpId, label) constraint.
+  private handleTankWriteError(error: unknown, tankNumber: string): never {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new BadRequestException(
+        `Tank number "${tankNumber}" already exists for this pump — tank numbers must be unique per pump.`,
+      );
     }
     throw error;
   }

@@ -233,7 +233,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                             <option value="">No tank linked</option>
                             {tanks.map((tank) => (
                               <option key={tank.id} value={tank.id}>
-                                {tank.productType}
+                                Tank {tank.tankNumber} — {tank.productType}
                               </option>
                             ))}
                           </select>
@@ -276,7 +276,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                     <tr key={nozzle.id}>
                       <td style={{ fontWeight: 700 }}>{nozzle.label}</td>
                       <td>{nozzle.item.name}</td>
-                      <td>{nozzle.tank ? nozzle.tank.productType : <span className="card-sub">Not linked</span>}</td>
+                      <td>{nozzle.tank ? `Tank ${nozzle.tank.tankNumber} — ${nozzle.tank.productType}` : <span className="card-sub">Not linked</span>}</td>
                       <td className="num">{nozzle.startingReading.toFixed(1)}</td>
                       <td className="num">{nozzle.rolloverAt != null ? nozzle.rolloverAt.toFixed(2) : '—'}</td>
                       <td className="num">{nozzle.nextOpeningReading.toFixed(1)}</td>
@@ -354,7 +354,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                 <option value="">No tank linked</option>
                 {tanks.map((tank) => (
                   <option key={tank.id} value={tank.id}>
-                    {tank.productType}
+                    Tank {tank.tankNumber} — {tank.productType}
                   </option>
                 ))}
               </select>

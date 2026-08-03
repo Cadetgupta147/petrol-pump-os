@@ -674,6 +674,7 @@ export interface CustomerQrCard {
 // widget above (that one omits calibrationChartRef, which this page shows).
 export interface Tank {
   id: string;
+  tankNumber: string;
   productType: string;
   capacityLitres: number;
   currentStockLitres: number;
@@ -683,11 +684,13 @@ export interface Tank {
 }
 
 // Mirrors apps/backend/src/tanks/dto/create-tank.dto.ts — Tank Master
-// (Settings), add/delete just like Nozzle Master.
+// (Settings), add/delete just like Nozzle Master. tankNumber must be unique
+// per pump; currentStockLitres is optional (defaults to 0 server-side).
 export interface CreateTankRequest {
+  tankNumber: string;
   productType: string;
   capacityLitres: number;
-  currentStockLitres: number;
+  currentStockLitres?: number;
   calibrationChartRef?: string;
 }
 

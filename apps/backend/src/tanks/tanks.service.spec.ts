@@ -1,7 +1,9 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import { TanksService, DIP_VARIANCE_TOLERANCE_LITRES } from './tanks.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { runInTenantContext } from '../common/tenant-context';
 
 // Section 7.1/7.2 — rule-heavy logic per CLAUDE.md ("stock variance flagging"
 // is explicitly named). Covers: DIP reading variance math + the tolerance
@@ -32,6 +34,7 @@ describe('TanksService', () => {
 
   const tank = {
     id: 'tank-1',
+    tankNumber: '1',
     productType: 'petrol',
     capacityLitres: 10000,
     currentStockLitres: 5000,
@@ -39,6 +42,10 @@ describe('TanksService', () => {
     lastDipAt: null,
     calibrationChartRef: null,
   };
+
+  function inTenant<T>(fn: () => Promise<T>) {
+    return runInTenantContext({ pumpId: 'pump-1' }, fn);
+  }
 
   beforeEach(async () => {
     prisma = {
@@ -64,6 +71,54 @@ describe('TanksService', () => {
     }).compile();
 
     service = module.get(TanksService);
+  });
+
+  // Section 7.1 — tankNumber uniqueness (@@unique([pumpId, tankNumber])) and
+  // currentStockLitres defaulting to 0 when omitted (a brand-new,
+  // not-yet-filled tank).
+  describe('create', () => {
+    it('defaults currentStockLitres to 0 when omitted', async () => {
+      prisma.tank.create.mockResolvedValue({ ...tank, currentStockLitres: 0 });
+
+      await inTenant(() =>
+        service.create({ tankNumber: '1', productType: 'petrol', capacityLitres: 10000 }),
+      );
+
+      expect(prisma.tank.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ currentStockLitres: 0 }) as unknown,
+      });
+    });
+
+    it('translates a P2002 tankNumber collision into a 400, not an opaque 500', async () => {
+      prisma.tank.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('unique constraint', {
+          code: 'P2002',
+          clientVersion: '6.19.3',
+        }),
+      );
+
+      await expect(
+        inTenant(() =>
+          service.create({ tankNumber: '1', productType: 'petrol', capacityLitres: 10000 }),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('update', () => {
+    it('translates a P2002 tankNumber collision into a 400', async () => {
+      prisma.tank.findUnique.mockResolvedValue(tank);
+      prisma.tank.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('unique constraint', {
+          code: 'P2002',
+          clientVersion: '6.19.3',
+        }),
+      );
+
+      await expect(
+        service.update('tank-1', { tankNumber: '2' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   describe('recordDipReading', () => {

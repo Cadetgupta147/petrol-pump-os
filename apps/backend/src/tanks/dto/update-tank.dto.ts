@@ -1,7 +1,7 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { CreateTankDto } from './create-tank.dto';
 
-// PATCH /tanks/:id — any subset of productType, capacityLitres,
+// PATCH /tanks/:id — any subset of tankNumber, productType, capacityLitres,
 // currentStockLitres, calibrationChartRef. Same PartialType pattern as
 // UpdateGiftCatalogItemDto / UpdateCustomerDto.
 //

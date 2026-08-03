@@ -1108,9 +1108,19 @@ model Tank {
   id                  String    @id @default(cuid())
   pump                Pump      @relation(fields: [pumpId], references: [id])
   pumpId              String
+  // Dealer-assigned physical tank number/label (e.g. "1", "T1") — lets a
+  // dealer link tanks to nozzles by the same number physically painted on
+  // the tank, instead of by productType alone (which collapses two tanks of
+  // the same product into an ambiguous choice in the Nozzle Master picker).
+  // Unique per pump, same tenant-scoped uniqueness pattern as
+  // Nozzle.label (@@unique([pumpId, label])).
+  tankNumber          String
   productType         String
   capacityLitres      Float
-  currentStockLitres  Float
+  // Starting stock is optional at creation (defaults to 0) — a dealer
+  // onboarding a brand-new, not-yet-filled tank doesn't necessarily know a
+  // starting figure yet. See CreateTankDto.
+  currentStockLitres  Float     @default(0)
   lastDipReading      Float?
   lastDipAt           DateTime?
   // Section 7.1 — OMC audit reference for the tank's calibration chart
@@ -1123,6 +1133,8 @@ model Tank {
   generatorDieselLogs GeneratorDieselLog[]
   machineTestingLogs  MachineTestingLog[]
   nozzles             Nozzle[]
+
+  @@unique([pumpId, tankNumber])
 }
 
 // Section 7.1/7.2 — physical DIP stick reading, compared against the
