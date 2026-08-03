@@ -23,10 +23,14 @@
 // Usage:
 //   npm run provision-pump -- \
 //     --pump-name "ABC Fuels" \
-//     --pump-code "PUMP002" \
 //     --owner-name "Jane Doe" \
 //     --owner-phone "9876543210" \
 //     --owner-password "SomeStrongPass123"
+//
+// pumpCode is NOT a flag — it's auto-assigned (see nextPumpCode() below) as
+// "PUMP" + the next zero-padded sequence number after the highest existing
+// PUMP### code (PUMP001, PUMP002, PUMP003, ... -> PUMP004), so the operator
+// never has to track which codes are already taken.
 //
 // .cts (not .ts) is deliberate: this repo has no root tsconfig.json, so
 // plain `ts-node prisma/provision-pump.ts` gets misdetected as ESM
@@ -41,11 +45,30 @@
 // Non-interactive on purpose (all-flags, no prompts) — this environment has
 // no TTY for interactive input, same constraint documented in the
 // multi-tenancy plan's migration notes.
-import { PrismaClient, Role } from '@prisma/client';
+import { Prisma, PrismaClient, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 const SALT_ROUNDS = 10;
+
+// "PUMP" + the next zero-padded (min 3-digit) sequence number after the
+// highest existing PUMP### code — PUMP001/PUMP002/PUMP003 -> PUMP004. Reads
+// inside the same transaction as the pump insert (see main()) to keep the
+// read-then-write race window as small as this script can make it; this is
+// a manual, one-operator-at-a-time admin script (see header comment), not a
+// concurrent public endpoint, so that's sufficient — main() still catches a
+// P2002 on pumpCode as a defensive fallback rather than assuming it away.
+async function nextPumpCode(tx: Prisma.TransactionClient): Promise<string> {
+  const pumps = await tx.pump.findMany({
+    where: { pumpCode: { startsWith: 'PUMP' } },
+    select: { pumpCode: true },
+  });
+  const maxSeq = pumps.reduce((max, { pumpCode }) => {
+    const match = /^PUMP(\d+)$/.exec(pumpCode);
+    return match ? Math.max(max, parseInt(match[1], 10)) : max;
+  }, 0);
+  return `PUMP${String(maxSeq + 1).padStart(3, '0')}`;
+}
 
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
@@ -63,7 +86,7 @@ function parseArgs(argv: string[]): Record<string, string> {
   return args;
 }
 
-const REQUIRED_FLAGS = ['pump-name', 'pump-code', 'owner-name', 'owner-phone', 'owner-password'] as const;
+const REQUIRED_FLAGS = ['pump-name', 'owner-name', 'owner-phone', 'owner-password'] as const;
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -72,13 +95,12 @@ async function main() {
   if (missing.length > 0) {
     throw new Error(
       `Missing required flag(s): ${missing.map((f) => `--${f}`).join(', ')}\n\n` +
-        'Usage: npm run provision-pump -- --pump-name "..." --pump-code "..." ' +
+        'Usage: npm run provision-pump -- --pump-name "..." ' +
         '--owner-name "..." --owner-phone "..." --owner-password "..."',
     );
   }
 
   const pumpName = args['pump-name'];
-  const pumpCode = args['pump-code'];
   const ownerName = args['owner-name'];
   const ownerPhone = args['owner-phone'].replace(/\D/g, '');
   const ownerPassword = args['owner-password'];
@@ -90,10 +112,6 @@ async function main() {
     throw new Error('--owner-password must be at least 8 characters');
   }
 
-  const existingPump = await prisma.pump.findUnique({ where: { pumpCode } });
-  if (existingPump) {
-    throw new Error(`Pump with pumpCode "${pumpCode}" already exists (id ${existingPump.id})`);
-  }
   const existingAccount = await prisma.staffAccount.findUnique({ where: { phone: ownerPhone } });
   if (existingAccount) {
     throw new Error(
@@ -104,43 +122,55 @@ async function main() {
 
   const ownerPasswordHash = await bcrypt.hash(ownerPassword, SALT_ROUNDS);
 
-  const result = await prisma.$transaction(async (tx) => {
-    const pump = await tx.pump.create({
-      data: { name: pumpName, pumpCode },
-    });
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const pumpCode = await nextPumpCode(tx);
+      const pump = await tx.pump.create({
+        data: { name: pumpName, pumpCode },
+      });
 
-    // Mandatory — see this file's header comment and member-id.ts's
-    // allocateQrMemberId(): a pump with no MemberIdCounter row makes the
-    // first QR-eligible customer signup throw.
-    await tx.memberIdCounter.create({
-      data: { id: `mic_${pump.id}`, pumpId: pump.id, lastSeq: 0 },
-    });
+      // Mandatory — see this file's header comment and member-id.ts's
+      // allocateQrMemberId(): a pump with no MemberIdCounter row makes the
+      // first QR-eligible customer signup throw.
+      await tx.memberIdCounter.create({
+        data: { id: `mic_${pump.id}`, pumpId: pump.id, lastSeq: 0 },
+      });
 
-    const account = await tx.staffAccount.create({
-      data: { phone: ownerPhone, name: ownerName, passwordHash: ownerPasswordHash },
-    });
+      const account = await tx.staffAccount.create({
+        data: { phone: ownerPhone, name: ownerName, passwordHash: ownerPasswordHash },
+      });
 
-    const owner = await tx.staff.create({
-      data: {
-        accountId: account.id,
-        pumpId: pump.id,
-        name: ownerName,
-        role: Role.OWNER,
-      },
-    });
+      const owner = await tx.staff.create({
+        data: {
+          accountId: account.id,
+          pumpId: pump.id,
+          name: ownerName,
+          role: Role.OWNER,
+        },
+      });
 
-    // Every petrol pump sells at least Petrol and Diesel — seed both as
-    // default FUEL items so Nozzle Master has something to link to on day
-    // one, without the Owner needing to know to visit Item Master first.
-    await tx.item.createMany({
-      data: [
-        { pumpId: pump.id, name: 'Petrol', category: 'FUEL', unit: 'LITRE' },
-        { pumpId: pump.id, name: 'Diesel', category: 'FUEL', unit: 'LITRE' },
-      ],
-    });
+      // Every petrol pump sells at least Petrol and Diesel — seed both as
+      // default FUEL items so Nozzle Master has something to link to on day
+      // one, without the Owner needing to know to visit Item Master first.
+      await tx.item.createMany({
+        data: [
+          { pumpId: pump.id, name: 'Petrol', category: 'FUEL', unit: 'LITRE' },
+          { pumpId: pump.id, name: 'Diesel', category: 'FUEL', unit: 'LITRE' },
+        ],
+      });
 
-    return { pump, account, owner };
-  });
+      return { pump, account, owner };
+    });
+  } catch (error) {
+    // Defensive fallback for the race window nextPumpCode() documents —
+    // two operators running this at the exact same moment could both read
+    // the same max and try to insert the same pumpCode.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new Error('pumpCode collision while provisioning — this is a rare race; just re-run the command.');
+    }
+    throw error;
+  }
 
   // eslint-disable-next-line no-console
   console.log('Provisioned new pump:', {

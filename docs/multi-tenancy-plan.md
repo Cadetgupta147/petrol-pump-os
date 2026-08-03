@@ -557,6 +557,20 @@ required for isolation itself.
   writes. All test data cleaned up afterward. Backend suite unaffected
   (this phase doesn't touch any service code): 42 suites/407 tests still
   green.
+
+  **Update (2026-08-04)**: `--pump-code` is no longer a flag — dropped from
+  `REQUIRED_FLAGS`. `pumpCode` is now auto-assigned inside the transaction
+  by `nextPumpCode()`: `"PUMP"` + the next zero-padded sequence number
+  after the highest existing `PUMP###` code (`PUMP001`/`PUMP002`/`PUMP003`
+  -> `PUMP004`), so the operator no longer needs to track which codes are
+  taken. The old duplicate-`pumpCode` pre-flight check is gone with it
+  (there's nothing user-supplied left to pre-check); a `P2002` on
+  `pumpCode` inside the transaction is still caught as a defensive
+  fallback for the (very unlikely, single-operator-at-a-time) read-then-
+  write race window, surfaced as "just re-run the command." Also now seeds
+  two default `Item` rows (`Petrol`, `Diesel`, category `FUEL`, unit
+  `LITRE`) in the same transaction, so Nozzle Master has something to link
+  to on day one without a trip to Item Master first.
 - [x] Phase 6 — Frontend verification pass (2026-07-22). Confirmed, not
   just assumed, that no structural frontend changes were needed: response
   shapes are unchanged (ids still resolve the same way from each app's
