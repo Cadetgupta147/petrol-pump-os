@@ -45,6 +45,19 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
+  // A nozzle is a physical fuel-dispensing meter — only FUEL-category items
+  // (Petrol, Diesel, Speed, ...) are ever plumbed to one, unlike LUBRICANT/
+  // OTHER items which are sold over the counter, not through a nozzle. Keeps
+  // the picker from offering nonsensical choices like "Engine Oil 1L".
+  const fuelItems = items.filter((item) => item.category === 'FUEL');
+  // Edit dropdown additionally keeps whatever item this nozzle already has
+  // selected, even if it isn't FUEL — same defensive reasoning as
+  // includeInactive above: don't let a stale/miscategorized item silently
+  // vanish from a nozzle that's already mapped to it.
+  const editItemOptions = items.filter(
+    (item) => item.category === 'FUEL' || item.id === editItemId,
+  );
+
   function loadNozzles() {
     // includeInactive: true — this Settings screen must be able to find
     // and re-enable a disabled nozzle. Every real shift-open picker
@@ -219,7 +232,7 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                             <option value="" disabled>
                               Select item
                             </option>
-                            {items.map((item) => (
+                            {editItemOptions.map((item) => (
                               <option key={item.id} value={item.id}>
                                 {item.name}
                               </option>
@@ -338,14 +351,14 @@ export function NozzleSettings({ canManage }: NozzleSettingsProps) {
                 <option value="" disabled>
                   Select item
                 </option>
-                {items.map((item) => (
+                {fuelItems.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
                 ))}
               </select>
-              {items.length === 0 && (
-                <div className="card-sub">No items registered yet — add one above first.</div>
+              {fuelItems.length === 0 && (
+                <div className="card-sub">No fuel items registered yet — add one above first (category: Fuel).</div>
               )}
             </div>
             <div className="form-field" style={{ marginBottom: 0 }}>

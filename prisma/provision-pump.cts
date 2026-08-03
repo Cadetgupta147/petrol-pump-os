@@ -7,13 +7,18 @@
 // Creates, atomically: Pump, a MemberIdCounter row for it (mandatory — see
 // member-id.ts's allocateQrMemberId(), which throws if a pump has no
 // counter row: this is the thing Phase 0.2's migration backfill created for
-// the seeded default pump but nothing else creates for a NEW pump), and a
+// the seeded default pump but nothing else creates for a NEW pump), a
 // StaffAccount + Staff(role=OWNER) membership pair so the client has a
-// working login on day one. CreditConfig/BusinessProfile/LoyaltyConfig are
-// deliberately NOT created here — each is a lazy upsert-on-first-access
-// (see e.g. CreditConfigService.getOrCreate()), so they self-heal the first
-// time the new pump's Owner touches any of those features; nothing to
-// provision up front.
+// working login on day one, and default Petrol/Diesel Items (category
+// FUEL) — every petrol pump sells at least these two, and Nozzle Master
+// can't be configured at all until at least one FUEL item exists (see
+// NozzleSettings.tsx's fuel-only item picker). Other Items (Speed, Urea/
+// AdBlue, lubricant SKUs) are dealer-added later via Item Master, same as
+// today. CreditConfig/BusinessProfile/LoyaltyConfig are deliberately NOT
+// created here — each is a lazy upsert-on-first-access (see e.g.
+// CreditConfigService.getOrCreate()), so they self-heal the first time the
+// new pump's Owner touches any of those features; nothing to provision up
+// front.
 //
 // Usage:
 //   npm run provision-pump -- \
@@ -122,6 +127,16 @@ async function main() {
         name: ownerName,
         role: Role.OWNER,
       },
+    });
+
+    // Every petrol pump sells at least Petrol and Diesel — seed both as
+    // default FUEL items so Nozzle Master has something to link to on day
+    // one, without the Owner needing to know to visit Item Master first.
+    await tx.item.createMany({
+      data: [
+        { pumpId: pump.id, name: 'Petrol', category: 'FUEL', unit: 'LITRE' },
+        { pumpId: pump.id, name: 'Diesel', category: 'FUEL', unit: 'LITRE' },
+      ],
     });
 
     return { pump, account, owner };
