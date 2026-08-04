@@ -1240,9 +1240,21 @@ export type LedgerGroup =
 
 export type DrCr = 'DEBIT' | 'CREDIT';
 
-export type VoucherType = 'PAYMENT' | 'RECEIPT' | 'CONTRA' | 'JOURNAL' | 'SALES';
+export type VoucherType = 'PAYMENT' | 'RECEIPT' | 'CONTRA' | 'JOURNAL' | 'SALES' | 'PURCHASE';
 
-export type VoucherSource = 'MANUAL' | 'BILL' | 'EXPENSE' | 'CASH_CUSTODY' | 'SHIFT_SALES';
+// Section 12A — was missing PAYMENT/PURCHASE/OPENING_BALANCE (see backend's
+// VoucherSource enum in prisma/schema.prisma) before the Chronological View
+// needed to render entries of every source type, not just the four the
+// Ledger View happened to exercise so far.
+export type VoucherSource =
+  | 'MANUAL'
+  | 'BILL'
+  | 'EXPENSE'
+  | 'CASH_CUSTODY'
+  | 'SHIFT_SALES'
+  | 'PAYMENT'
+  | 'PURCHASE'
+  | 'OPENING_BALANCE';
 
 // Mirrors prisma LedgerAccount. isSystemManaged ledgers (Cash, Sales, Card,
 // UPI, Bank, and lazily-created per-customer/per-staff ledgers) are shown
@@ -1369,6 +1381,72 @@ export interface DayBookReport {
   date: string;
   vouchers: DayBookVoucher[];
   ledgers: DayBookLedgerSection[];
+}
+
+// Section 12A — the second Day Book view: same Voucher/VoucherLine data as
+// DayBookReport above, grouped by shift and sorted in time order instead of
+// by ledger account. Kept as a sibling type, not a union with DayBookReport
+// — the two shapes share only `date`, forcing them into one discriminated
+// type would just add noise at every call site.
+export type PaymentModeLabel = 'CASH' | 'CARD' | 'UPI' | 'CREDIT' | 'OTHER';
+
+export interface DayBookChronologicalEntry {
+  voucherId: string;
+  voucherNumber: string;
+  time: string;
+  voucherType: VoucherType;
+  narration: string | null;
+  source: VoucherSource;
+  sourceKey: string | null;
+  lines: {
+    ledgerAccountId: string;
+    ledgerAccountName: string;
+    group: LedgerGroup;
+    amount: number;
+    drCr: DrCr;
+  }[];
+  paymentMode: PaymentModeLabel;
+  partyName: string | null;
+  cashDelta: number;
+  runningCashBalance: DayBookBalance;
+}
+
+export interface DayBookChronologicalShift {
+  shiftDefinitionId: string | null;
+  label: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  openingCashBalance: DayBookBalance;
+  closingCashBalance: DayBookBalance;
+  entries: DayBookChronologicalEntry[];
+}
+
+export interface DayBookCashMismatch {
+  cashCustodyLogs: {
+    id: string;
+    handledById: string;
+    handledByName: string;
+    totalCashCollected: number;
+    depositedToBank: number;
+    keptInLocker: number;
+    takenHome: number;
+    newOutstanding: number;
+  }[];
+  shiftSalesVariances: {
+    id: string;
+    shiftId: string;
+    dsmId: string;
+    nozzleId: string;
+    expectedValue: number;
+    variance: number;
+  }[];
+}
+
+export interface DayBookChronologicalReport {
+  date: string;
+  view: 'chronological';
+  shifts: DayBookChronologicalShift[];
+  cashMismatch: DayBookCashMismatch;
 }
 
 // GET /vouchers/trial-balance?asOf= — Section 12 fix (finding #8). Every

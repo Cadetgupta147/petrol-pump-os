@@ -18,6 +18,9 @@ describe('VouchersService', () => {
     voucherLine: { findMany: jest.Mock };
     voucherNumberCounter: { upsert: jest.Mock };
     pump: { findUniqueOrThrow: jest.Mock };
+    shiftDefinition: { findMany: jest.Mock };
+    cashCustodyLog: { findMany: jest.Mock };
+    shiftSalesSummary: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -37,6 +40,9 @@ describe('VouchersService', () => {
       pump: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'pump-1', pumpCode: 'PUMP001' }),
       },
+      shiftDefinition: { findMany: jest.fn().mockResolvedValue([]) },
+      cashCustodyLog: { findMany: jest.fn().mockResolvedValue([]) },
+      shiftSalesSummary: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
     };
     prisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(prisma));
@@ -216,6 +222,337 @@ describe('VouchersService', () => {
 
       // Cash (CASH_IN_HAND) sorts before Sales (SALES) per the fixed group rank.
       expect(result.ledgers.map((l) => l.name)).toEqual(['Cash', 'Sales']);
+    });
+  });
+
+  describe('getDayBook — chronological view', () => {
+    const cashLedgerRow = {
+      id: 'cash',
+      name: 'Cash',
+      group: 'CASH_IN_HAND',
+      systemKey: 'CASH',
+      openingBalance: 1000,
+      openingBalanceType: 'DEBIT' as const,
+    };
+
+    function cashLine(amount: number, drCr: 'DEBIT' | 'CREDIT') {
+      return {
+        id: `line-${Math.random()}`,
+        ledgerAccountId: 'cash',
+        amount,
+        drCr,
+        ledgerAccount: {
+          id: 'cash',
+          name: 'Cash',
+          group: 'CASH_IN_HAND',
+          systemKey: 'CASH',
+          linkedCustomerId: null,
+          linkedStaffId: null,
+        },
+      };
+    }
+
+    function nonCashLine(
+      ledgerAccountId: string,
+      name: string,
+      group: string,
+      systemKey: string | null,
+      amount: number,
+      drCr: 'DEBIT' | 'CREDIT',
+    ) {
+      return {
+        id: `line-${Math.random()}`,
+        ledgerAccountId,
+        amount,
+        drCr,
+        ledgerAccount: { id: ledgerAccountId, name, group, systemKey, linkedCustomerId: null, linkedStaffId: null },
+      };
+    }
+
+    function voucher(id: string, date: Date, lines: unknown[], voucherType = 'SALES') {
+      return {
+        id,
+        voucherNumber: `PUMP001-V-${id}`,
+        date,
+        voucherType,
+        narration: null,
+        source: 'BILL',
+        sourceKey: `bill:${id}`,
+        lines,
+      };
+    }
+
+    function customerLine(
+      ledgerAccountId: string,
+      name: string,
+      amount: number,
+      drCr: 'DEBIT' | 'CREDIT',
+    ) {
+      return {
+        id: `line-${Math.random()}`,
+        ledgerAccountId,
+        amount,
+        drCr,
+        ledgerAccount: {
+          id: ledgerAccountId,
+          name,
+          group: 'SUNDRY_DEBTOR',
+          systemKey: null,
+          linkedCustomerId: 'cust-1',
+          linkedStaffId: null,
+        },
+      };
+    }
+
+    it('returns an empty report when nothing was posted that day', async () => {
+      prisma.voucher.findMany.mockResolvedValue([]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([]);
+      prisma.shiftDefinition.findMany.mockResolvedValue([]);
+
+      const result = await service.getDayBook('2026-07-20', { view: 'chronological' });
+
+      expect(result).toEqual({
+        date: '2026-07-20',
+        view: 'chronological',
+        shifts: [],
+        cashMismatch: { cashCustodyLogs: [], shiftSalesVariances: [] },
+      });
+    });
+
+    it('buckets vouchers into shifts by time and keeps time order within a bucket', async () => {
+      const shift1 = { id: 'shift-1', label: 'Shift 1', startTime: '06:00', endTime: '14:00', isActive: true };
+      const shift2 = { id: 'shift-2', label: 'Shift 2', startTime: '14:00', endTime: '22:00', isActive: true };
+      prisma.shiftDefinition.findMany.mockResolvedValue([shift1, shift2]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      const vA = voucher('a', new Date(2026, 6, 20, 7, 0), [cashLine(100, 'DEBIT')]);
+      const vB = voucher('b', new Date(2026, 6, 20, 15, 0), [cashLine(50, 'DEBIT')]);
+      prisma.voucher.findMany.mockResolvedValue([vA, vB]);
+
+      const result = await service.getDayBook('2026-07-20', { view: 'chronological' });
+
+      expect(result.shifts.map((s: { label: string }) => s.label)).toEqual(['Shift 1', 'Shift 2']);
+      expect(result.shifts[0].entries.map((e: { voucherId: string }) => e.voucherId)).toEqual(['a']);
+      expect(result.shifts[1].entries.map((e: { voucherId: string }) => e.voucherId)).toEqual(['b']);
+    });
+
+    it('buckets a voucher into a midnight-wrapping shift window', async () => {
+      const nightShift = { id: 'night', label: 'Night', startTime: '22:00', endTime: '06:00', isActive: true };
+      prisma.shiftDefinition.findMany.mockResolvedValue([nightShift]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      const vNight = voucher('n', new Date(2026, 6, 20, 1, 0), [cashLine(75, 'DEBIT')]);
+      prisma.voucher.findMany.mockResolvedValue([vNight]);
+
+      const result = await service.getDayBook('2026-07-20', { view: 'chronological' });
+
+      expect(result.shifts).toHaveLength(1);
+      expect(result.shifts[0].shiftDefinitionId).toBe('night');
+      expect(result.shifts[0].label).toBe('Night');
+    });
+
+    it('buckets a voucher matching no configured shift window into "Unassigned"', async () => {
+      const shift1 = { id: 'shift-1', label: 'Shift 1', startTime: '06:00', endTime: '14:00', isActive: true };
+      prisma.shiftDefinition.findMany.mockResolvedValue([shift1]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      const vLate = voucher('l', new Date(2026, 6, 20, 20, 0), [cashLine(30, 'DEBIT')]);
+      prisma.voucher.findMany.mockResolvedValue([vLate]);
+
+      const result = await service.getDayBook('2026-07-20', { view: 'chronological' });
+
+      expect(result.shifts).toHaveLength(1);
+      expect(result.shifts[0].shiftDefinitionId).toBeNull();
+      expect(result.shifts[0].label).toBe('Unassigned');
+      expect(result.shifts[0].windowStart).toBeNull();
+    });
+
+    it('only moves the running cash balance on cash-touching vouchers, and chains bucket opening/closing correctly', async () => {
+      const shift1 = { id: 'shift-1', label: 'Shift 1', startTime: '06:00', endTime: '14:00', isActive: true };
+      const shift2 = { id: 'shift-2', label: 'Shift 2', startTime: '14:00', endTime: '22:00', isActive: true };
+      prisma.shiftDefinition.findMany.mockResolvedValue([shift1, shift2]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]); // no prior cash activity -> opening cash = 1000 Dr
+
+      // v1: cash sale, +500 cash. v2: card-to-bank contra, no cash leg at all.
+      // v3: cash expense payout, -200 cash.
+      const v1 = voucher('1', new Date(2026, 6, 20, 7, 0), [
+        cashLine(500, 'DEBIT'),
+        nonCashLine('sales', 'Sales', 'SALES', 'SALES', 500, 'CREDIT'),
+      ]);
+      const v2 = voucher('2', new Date(2026, 6, 20, 8, 0), [
+        nonCashLine('card', 'Card', 'BANK', 'CARD_CLEARING', 300, 'DEBIT'),
+        nonCashLine('bank', 'Bank', 'BANK', 'BANK_DEFAULT', 300, 'CREDIT'),
+      ]);
+      const v3 = voucher('3', new Date(2026, 6, 20, 15, 0), [
+        nonCashLine('expense', 'Toll', 'DIRECT_EXPENSE', null, 200, 'DEBIT'),
+        cashLine(200, 'CREDIT'),
+      ]);
+      prisma.voucher.findMany.mockResolvedValue([v1, v2, v3]);
+
+      const result = await service.getDayBook('2026-07-20', { view: 'chronological' });
+
+      const shift1Result = result.shifts.find((s) => s.shiftDefinitionId === 'shift-1')!;
+      const shift2Result = result.shifts.find((s) => s.shiftDefinitionId === 'shift-2')!;
+
+      expect(shift1Result.openingCashBalance).toEqual({ side: 'DR', amount: 1000 });
+      // v1 (+500) then v2 (+0, no cash leg) -> closing 1500 Dr, unmoved by v2.
+      expect(shift1Result.closingCashBalance).toEqual({ side: 'DR', amount: 1500 });
+      expect(shift1Result.entries[1].cashDelta).toBe(0);
+
+      // Shift 2's opening must equal Shift 1's closing (continuous slice, not
+      // an independent recompute), then v3 (-200) -> closing 1300 Dr.
+      expect(shift2Result.openingCashBalance).toEqual({ side: 'DR', amount: 1500 });
+      expect(shift2Result.closingCashBalance).toEqual({ side: 'DR', amount: 1300 });
+    });
+
+    it('filters by voucherType at the entry-list level, without corrupting the running cash balance', async () => {
+      const shift1 = { id: 'shift-1', label: 'Shift 1', startTime: '06:00', endTime: '14:00', isActive: true };
+      prisma.shiftDefinition.findMany.mockResolvedValue([shift1]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      // Journal (hidden by the filter below) happens FIRST, Payment (shown)
+      // happens second — this is what proves the hidden voucher's delta
+      // still fed the balance the displayed entry reports.
+      const vJournal = voucher('j', new Date(2026, 6, 20, 7, 0), [cashLine(50, 'DEBIT')], 'JOURNAL');
+      const vPayment = voucher('p', new Date(2026, 6, 20, 8, 0), [cashLine(100, 'DEBIT')], 'PAYMENT');
+      prisma.voucher.findMany.mockResolvedValue([vJournal, vPayment]);
+
+      const result = await service.getDayBook('2026-07-20', {
+        view: 'chronological',
+        voucherType: 'PAYMENT',
+      });
+
+      expect(result.shifts).toHaveLength(1);
+      expect(result.shifts[0].entries.map((e) => e.voucherId)).toEqual(['p']);
+      // The displayed entry's running balance still reflects BOTH vouchers
+      // (1000 opening + 50 hidden Journal + 100 shown Payment = 1150),
+      // proving the filter narrowed what's shown without narrowing what fed
+      // the balance computation.
+      expect(result.shifts[0].entries[0].runningCashBalance).toEqual({ side: 'DR', amount: 1150 });
+    });
+
+    it('filters by paymentMode, including on a split-payment voucher via the documented priority order', async () => {
+      const shift1 = { id: 'shift-1', label: 'Shift 1', startTime: '06:00', endTime: '14:00', isActive: true };
+      prisma.shiftDefinition.findMany.mockResolvedValue([shift1]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      const vCash = voucher('cash-only', new Date(2026, 6, 20, 7, 0), [
+        cashLine(100, 'DEBIT'),
+        nonCashLine('sales', 'Sales', 'SALES', 'SALES', 100, 'CREDIT'),
+      ]);
+      const vCard = voucher('card-only', new Date(2026, 6, 20, 8, 0), [
+        nonCashLine('card', 'Card', 'BANK', 'CARD_CLEARING', 200, 'DEBIT'),
+        nonCashLine('sales', 'Sales', 'SALES', 'SALES', 200, 'CREDIT'),
+      ]);
+      // Split payment: touches CASH + CARD + a Sundry Debtor leg in one
+      // voucher -> should be labelled CASH (priority CASH > CARD > UPI > CREDIT).
+      const vSplit = voucher('split', new Date(2026, 6, 20, 9, 0), [
+        cashLine(50, 'DEBIT'),
+        nonCashLine('card', 'Card', 'BANK', 'CARD_CLEARING', 30, 'DEBIT'),
+        customerLine('cust-ledger', 'Ramesh', 20, 'DEBIT'),
+        nonCashLine('sales', 'Sales', 'SALES', 'SALES', 100, 'CREDIT'),
+      ]);
+      prisma.voucher.findMany.mockResolvedValue([vCash, vCard, vSplit]);
+
+      const cashFiltered = await service.getDayBook('2026-07-20', {
+        view: 'chronological',
+        paymentMode: 'CASH',
+      });
+      expect(cashFiltered.shifts[0].entries.map((e) => e.voucherId).sort()).toEqual(['cash-only', 'split']);
+
+      const cardFiltered = await service.getDayBook('2026-07-20', {
+        view: 'chronological',
+        paymentMode: 'CARD',
+      });
+      // vSplit does NOT show under CARD, even though it has a card leg,
+      // because CASH outranks CARD in the priority order.
+      expect(cardFiltered.shifts[0].entries.map((e) => e.voucherId)).toEqual(['card-only']);
+    });
+
+    it('filters by partyLedgerAccountId and populates partyName from the linked ledger', async () => {
+      const shift1 = { id: 'shift-1', label: 'Shift 1', startTime: '06:00', endTime: '14:00', isActive: true };
+      prisma.shiftDefinition.findMany.mockResolvedValue([shift1]);
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+
+      const vWithParty = voucher('with-party', new Date(2026, 6, 20, 7, 0), [
+        customerLine('cust-ledger', 'Ramesh', 100, 'DEBIT'),
+        nonCashLine('sales', 'Sales', 'SALES', 'SALES', 100, 'CREDIT'),
+      ]);
+      const vNoParty = voucher('no-party', new Date(2026, 6, 20, 8, 0), [
+        cashLine(50, 'DEBIT'),
+        nonCashLine('sales', 'Sales', 'SALES', 'SALES', 50, 'CREDIT'),
+      ]);
+      prisma.voucher.findMany.mockResolvedValue([vWithParty, vNoParty]);
+
+      const result = await service.getDayBook('2026-07-20', {
+        view: 'chronological',
+        partyLedgerAccountId: 'cust-ledger',
+      });
+
+      expect(result.shifts[0].entries).toHaveLength(1);
+      expect(result.shifts[0].entries[0].voucherId).toBe('with-party');
+      expect(result.shifts[0].entries[0].partyName).toBe('Ramesh');
+    });
+
+    it('surfaces CashCustodyLog and ShiftSalesSummary rows for the day flat, unaffected by filters', async () => {
+      prisma.ledgerAccount.findMany.mockResolvedValue([cashLedgerRow]);
+      prisma.voucherLine.findMany.mockResolvedValue([]);
+      prisma.voucher.findMany.mockResolvedValue([]);
+      prisma.cashCustodyLog.findMany.mockResolvedValue([
+        {
+          id: 'ccl-1',
+          handledById: 'staff-1',
+          handledBy: { name: 'Ramesh' },
+          totalCashCollected: 5000,
+          depositedToBank: 4000,
+          keptInLocker: 500,
+          takenHome: 500,
+          newOutstanding: 0,
+        },
+      ]);
+      prisma.shiftSalesSummary.findMany.mockResolvedValue([
+        { id: 'sss-1', shiftId: 'shift-x', dsmId: 'staff-1', nozzleId: 'nozzle-1', expectedValue: 1000, variance: -50 },
+      ]);
+
+      // A voucherType filter that matches nothing in `vouchers` (empty here)
+      // still must not touch the mismatch data — it's day-scoped, not
+      // entry-list-scoped.
+      const result = await service.getDayBook('2026-07-20', {
+        view: 'chronological',
+        voucherType: 'PAYMENT',
+      });
+
+      expect(result.cashMismatch.cashCustodyLogs).toEqual([
+        {
+          id: 'ccl-1',
+          handledById: 'staff-1',
+          handledByName: 'Ramesh',
+          totalCashCollected: 5000,
+          depositedToBank: 4000,
+          keptInLocker: 500,
+          takenHome: 500,
+          newOutstanding: 0,
+        },
+      ]);
+      expect(result.cashMismatch.shiftSalesVariances).toEqual([
+        { id: 'sss-1', shiftId: 'shift-x', dsmId: 'staff-1', nozzleId: 'nozzle-1', expectedValue: 1000, variance: -50 },
+      ]);
+    });
+
+    it('defaults to the ledger view when view is omitted (regression)', async () => {
+      prisma.voucher.findMany.mockResolvedValue([]);
+
+      const result = await service.getDayBook('2026-07-20');
+
+      expect(result).toEqual({ date: '2026-07-20', vouchers: [], ledgers: [] });
+      expect(prisma.shiftDefinition.findMany).not.toHaveBeenCalled();
     });
   });
 
