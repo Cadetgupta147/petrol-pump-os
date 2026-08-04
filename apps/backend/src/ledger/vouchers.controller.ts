@@ -32,7 +32,12 @@ export class VouchersController {
   // route param.
   @Get('day-book')
   getDayBook(@Query() query: DayBookQueryDto) {
-    return this.vouchersService.getDayBook(query.date);
+    return this.vouchersService.getDayBook(query.date, {
+      view: query.view,
+      voucherType: query.voucherType,
+      paymentMode: query.paymentMode,
+      partyLedgerAccountId: query.partyLedgerAccountId,
+    });
   }
 
   @Get('trial-balance')

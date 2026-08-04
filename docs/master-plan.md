@@ -21,6 +21,7 @@
 10. [Tally Integration](#10-tally-integration)
 11. [Notifications (Push / SMS / WhatsApp)](#11-notifications-push--sms--whatsapp)
 12. [Reports & Analytics — Full List](#12-reports--analytics--full-list)
+12A. [Day Book — Chronological Shift View](#12a-day-book--chronological-shift-view)
 13. [Database Schema](#13-database-schema)
 14. [UI/UX Mockups](#14-uiux-mockups)
 15. [Tech Stack](#15-tech-stack)
@@ -700,6 +701,41 @@ Build the **Tally XML export** in Phase 2 (right after the core web app MVP), no
 
 ---
 
+## 12A. Day Book — Chronological Shift View
+
+Section 12's "Payment/receipt register" row already gestures at this; this section is the full spec for the actual Day Book — a single screen showing everything that happened on a given day, of every transaction type, in the order it happened.
+
+### 12A.1 What already exists — the data model is not changing
+
+`Voucher` / `VoucherLine` / `LedgerAccount` (Section 13) already implement real double-entry bookkeeping: every Bill, ExpenseEntry, CashCustodyLog, ShiftSalesSummary, Purchase, and credit Payment auto-posts a balanced Voucher via `LedgerPostingService`, plus manual voucher entry exists for the "BABU JI"/"TOLL"-style entries nothing else has data for. This is the Day Book's data source and is not being flattened or replaced — a single wide "one row per transaction" table (payment mode, party, qty inline) was considered and rejected: it can't correctly represent split-payment bills (Section 5A), can't produce a trial balance/P&L/credit-aging report later, and can't feed a Tally export (Section 10). Double-entry is a hard requirement for those, not a style choice.
+
+A **Ledger View** already exists (`GET /vouchers/day-book`): for a given date, every touched `LedgerAccount` with its opening balance, the day's entries, and closing balance — an accurate, Tally-standard "ledger day book." This stays as one of two view modes.
+
+### 12A.2 What's new: the Chronological View
+
+A second view over the same `Voucher`/`VoucherLine` data — no new tables — answering the question the Ledger View doesn't: "what happened today, in the order it happened, shift by shift, and does the cash add up." This is the petrol-pump-specific gap: cash changes hands 2–3 times a day at shift handover, so a plain ledger-by-ledger breakdown is the wrong default lens for an owner or DSM, even though it's the right lens for an accountant doing bookkeeping. Toggle between the two views on one screen; same underlying query, different sort/group.
+
+- **Time-ordered, not voucher-number-ordered.** `Voucher.date` is already stamped from the real source timestamp (`Bill.timestamp`, `ExpenseEntry.expenseDate`, `Payment.createdAt`, etc.) — the Chronological View sorts by `date` ascending instead of `voucherNumber`. No schema change.
+- **Shift bucketing is derived, not stored.** Each voucher's time-of-day is matched against the pump's configured `ShiftDefinition` windows (Section 3.3.3) at query time — the same "informational label, not a validating FK" role `ShiftDefinition` already plays elsewhere. No new `shiftId` column on `Voucher`. A voucher whose timestamp falls outside every defined window (e.g. a supplier payment entered after close) lands in an "Unassigned" bucket rather than being forced into a shift it wasn't part of.
+- **One running cash balance for the day**, computed only from lines touching the `CASH_IN_HAND` system ledger — not summed across every ledger, which would blend physical cash with bank/UPI clearing and customer receivables into a number that doesn't correspond to anything physical. Bank/UPI/credit lines stay visible per row but don't feed this running total.
+- **Filters**: voucher type (existing `VoucherType` enum), payment mode (derived from which ledger a line hits — `CASH_IN_HAND` → cash, `BANK`-group → card/UPI, `SUNDRY_DEBTOR`/`SUNDRY_CREDITOR` → credit), and party (the linked customer/supplier/staff ledger). All derivable from existing fields.
+- **Drill-down, not edit-in-place.** Every voucher already carries `source` + `sourceKey` (e.g. `BILL` + `bill:<id>`) — the Chronological View response passes these through so the frontend can route each row to its originating screen (Bill detail, Expense form, Purchase entry). Editing/deleting/cancelling stays in the owning module, same rationale as Section 5.2's original: each voucher type carries business logic (credit-limit checks, tank-stock updates) that only its owning module should run, and one edit path per transaction type keeps the audit trail and role-gating simple. The Day Book is a pointer, never a dead end and never a second edit surface.
+- **Cash-mismatch surfacing, not recomputation.** `CashCustodyLog` and `ShiftSalesSummary.variance` already capture the DSM's physical handover and its computed variance against expected value — the Chronological View just displays that existing number inline at each shift subtotal, it doesn't recompute reconciliation logic itself.
+
+### 12A.3 Explicitly out of scope for the first slice
+
+- Export (PDF/Excel/WhatsApp) and a print layout matching a physical day-book — later phase, same treatment as every other report in Section 12.
+- Any new edit/insert/cancel capability on the Day Book screen itself (see drill-down rationale above).
+
+### 12A.4 Build priority
+
+| Phase | Scope |
+|---|---|
+| Now | Chronological View: time-sort, derived shift bucketing, single running cash balance, voucher-type/payment-mode/party filters, drill-down routing via existing `source`/`sourceKey` |
+| Later | Export (PDF/Excel/WhatsApp), richer inline cash-mismatch presentation |
+
+---
+
 ## 13. Database Schema
 
 High-level entity list — expand each into full tables with your ORM's migration tool once you start building.
@@ -1014,7 +1050,7 @@ Before this system takes real customer money or real customer data, work through
 - **A — Accountant Role, Attendance:** the web portal role for manual entry with financial-settings restrictions (§2); DSM PIN/biometric login + shift activity timestamps (§4)
 - **B — Bill Entry / Bluetooth Printing:** DSM app entry with QR auto-fill and validation rule (§4); receipts printed via Bluetooth thermal printer (§4, §15.8)
 - **C — Cash Custody, Credit Ledger:** day-end reconciliation and carry-forward tracking (§8); full per-customer credit ledger (§3.4)
-- **D — Dashboard, Density Log, DSM App:** owner/accountant home screen (§3.1); fuel quality/PPM tracking for OMC compliance (§7.3); the field-staff mobile app (§4)
+- **D — Dashboard, Day Book, Density Log, DSM App:** owner/accountant home screen (§3.1); chronological shift-wise view of every voucher for a day, plus the per-ledger view (§12A); fuel quality/PPM tracking for OMC compliance (§7.3); the field-staff mobile app (§4)
 - **E — Earning Basis:** the rupee-vs-litre toggle for loyalty points, settable per pump with per-customer override (§6.2)
 - **F — Fallback (SMS/WhatsApp):** backup notification channels for customers without the app (§11)
 - **G — Gift Catalog, GST Reports:** dealer-fed redemption catalog customers browse and redeem against (§6.4); sales/purchase reports formatted for tax filing (§12)

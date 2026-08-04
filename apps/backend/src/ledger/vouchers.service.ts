@@ -1,16 +1,178 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { DrCr } from '@prisma/client';
+import { DrCr, LedgerGroup, Prisma, SystemLedgerKey, VoucherType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantContext } from '../common/tenant-context';
 import { formatLocalDate, parseDateRangeStrings } from '../common/date-range.util';
 import { allocateVoucherNumber } from './voucher-number';
 import { CreateVoucherDto } from './dto/create-voucher.dto';
 import { ListVouchersQueryDto } from './dto/list-vouchers-query.dto';
+import { resolveCurrentShiftWindow } from '../shift-schedule/resolve-current-shift-window';
 
 const GROUP_SORT_RANK: Record<string, number> = { CASH_IN_HAND: 0, BANK: 1, SALES: 2 };
 const signedDelta = (amount: number, drCr: DrCr) => (drCr === 'DEBIT' ? amount : -amount);
 
 const BALANCE_EPSILON = 0.01;
+const balanceShape = (amount: number): { side: 'DR' | 'CR'; amount: number } => ({
+  side: amount >= 0 ? 'DR' : 'CR',
+  amount: Math.abs(amount),
+});
+
+// Shared shape of getDayBook()'s single vouchers.findMany() fetch — both
+// buildLedgerView() and buildChronologicalView() consume the exact same
+// query result, just grouped/sorted differently.
+type DayBookVoucherWithLines = Prisma.VoucherGetPayload<{
+  include: { lines: { include: { ledgerAccount: true } } };
+}>;
+
+type PaymentModeLabel = 'CASH' | 'CARD' | 'UPI' | 'CREDIT' | 'OTHER';
+type DayBookBalance = { side: 'DR' | 'CR'; amount: number };
+
+// Section 12A — Chronological View filters. All three are applied
+// in-memory on the already-fetched, already-balance-computed entry list
+// (see buildChronologicalView) — never at the vouchers.findMany() query,
+// since narrowing that fetch would break the running cash balance chain.
+interface ChronologicalFilters {
+  voucherType?: VoucherType;
+  paymentMode?: PaymentModeLabel;
+  partyLedgerAccountId?: string;
+}
+
+// Explicit return types (rather than letting TS infer them) so getDayBook()
+// can be overloaded below — an overload needs a declared return type per
+// signature, TS can't infer per-signature returns from one implementation.
+export interface LedgerDayBookReport {
+  date: string;
+  vouchers: {
+    id: string;
+    voucherNumber: string;
+    date: Date;
+    voucherType: string;
+    narration: string | null;
+    source: string;
+    lines: { ledgerAccountName: string; amount: number; drCr: DrCr }[];
+  }[];
+  ledgers: {
+    ledgerAccountId: string;
+    name: string;
+    group: LedgerGroup;
+    openingBalance: DayBookBalance;
+    closingBalance: DayBookBalance;
+    entries: {
+      voucherId: string;
+      voucherNumber: string;
+      voucherType: string;
+      narration: string | null;
+      counterpartyNames: string[];
+      amount: number;
+      drCr: DrCr;
+    }[];
+  }[];
+}
+
+export interface ChronologicalDayBookReport {
+  date: string;
+  view: 'chronological';
+  shifts: {
+    shiftDefinitionId: string | null;
+    label: string;
+    windowStart: Date | null;
+    windowEnd: Date | null;
+    openingCashBalance: DayBookBalance;
+    closingCashBalance: DayBookBalance;
+    entries: {
+      voucherId: string;
+      voucherNumber: string;
+      time: Date;
+      voucherType: string;
+      narration: string | null;
+      source: string;
+      sourceKey: string | null;
+      lines: {
+        ledgerAccountId: string;
+        ledgerAccountName: string;
+        group: LedgerGroup;
+        amount: number;
+        drCr: DrCr;
+      }[];
+      paymentMode: PaymentModeLabel;
+      partyName: string | null;
+      cashDelta: number;
+      runningCashBalance: DayBookBalance;
+    }[];
+  }[];
+  cashMismatch: CashMismatchSummary;
+}
+
+// Section 12A — the day's cash-handling reconciliation data, surfaced
+// AS-IS (not recomputed here). CashCustodyLog already records the DSM's
+// physical handover math, and ShiftSalesSummary.variance already records
+// expected-vs-collected per shift. This is day-level only — ShiftSalesSummary
+// .shiftId is documented as tying back to "the DSM's shift/MeterReading", NOT
+// a ShiftDefinition.id — joining it to a specific shift bucket would be a
+// guess, so it isn't attempted; both lists are shown flat, independent of
+// the day's shift buckets above.
+interface CashMismatchSummary {
+  cashCustodyLogs: {
+    id: string;
+    handledById: string;
+    handledByName: string;
+    totalCashCollected: number;
+    depositedToBank: number;
+    keptInLocker: number;
+    takenHome: number;
+    newOutstanding: number;
+  }[];
+  shiftSalesVariances: {
+    id: string;
+    shiftId: string;
+    dsmId: string;
+    nozzleId: string;
+    expectedValue: number;
+    variance: number;
+  }[];
+}
+
+// A voucher can touch more than one payment-mode-signalling ledger at once
+// (a split-payment Bill posts CASH + CARD_CLEARING + SUNDRY_DEBTOR lines in
+// a single voucher) — the Chronological View shows one row per voucher, so
+// this picks one representative label by fixed priority. The full picture
+// is never lost: each entry's own unfiltered `lines` array still shows every
+// leg, this label is just what the row/filter uses.
+function derivePaymentMode(
+  lines: { ledgerAccount: { systemKey: SystemLedgerKey | null; group: LedgerGroup } }[],
+): PaymentModeLabel {
+  if (lines.some((l) => l.ledgerAccount.systemKey === 'CASH')) return 'CASH';
+  if (lines.some((l) => l.ledgerAccount.systemKey === 'CARD_CLEARING')) return 'CARD';
+  if (lines.some((l) => l.ledgerAccount.systemKey === 'UPI_CLEARING')) return 'UPI';
+  if (lines.some((l) => l.ledgerAccount.group === 'SUNDRY_DEBTOR' || l.ledgerAccount.group === 'SUNDRY_CREDITOR')) {
+    return 'CREDIT';
+  }
+  return 'OTHER';
+}
+
+// The "party" on a voucher is whichever line hit a customer/supplier/staff
+// ledger — a real Sundry Debtor/Creditor, or a personal-draw ledger
+// (linkedStaffId, e.g. CashCustodyLog's "HOME"/"JACCO" entries). System
+// ledgers (Cash, Sales, Purchase, ...) never count as a party.
+function derivePartyName(
+  lines: {
+    ledgerAccount: {
+      name: string;
+      group: LedgerGroup;
+      linkedCustomerId: string | null;
+      linkedStaffId: string | null;
+    };
+  }[],
+): string | null {
+  const partyLine = lines.find(
+    (l) =>
+      l.ledgerAccount.group === 'SUNDRY_DEBTOR' ||
+      l.ledgerAccount.group === 'SUNDRY_CREDITOR' ||
+      l.ledgerAccount.linkedCustomerId !== null ||
+      l.ledgerAccount.linkedStaffId !== null,
+  );
+  return partyLine ? partyLine.ledgerAccount.name : null;
+}
 
 // Manual voucher entry (Payment/Receipt/Contra/Journal) — Section 12 Day
 // Book. This is the "owner sets it up themselves" half of the ledger design
@@ -134,16 +296,47 @@ export class VouchersService {
   // section, not just Cash/Bank/Sales — sorted so those three come first
   // since they're the ones a dealer expects to see up top, then the rest
   // alphabetically.
-  async getDayBook(dateStr?: string) {
+  async getDayBook(
+    dateStr: string | undefined,
+    opts: { view: 'chronological' } & ChronologicalFilters,
+  ): Promise<ChronologicalDayBookReport>;
+  async getDayBook(dateStr?: string, opts?: { view?: 'ledger' }): Promise<LedgerDayBookReport>;
+  // Catch-all for call sites (the controller) passing a dynamic/possibly-
+  // undefined `view` rather than a literal — the two overloads above are
+  // for callers (like the test suite) that know which one they want.
+  async getDayBook(
+    dateStr?: string,
+    opts?: { view?: 'ledger' | 'chronological' } & ChronologicalFilters,
+  ): Promise<LedgerDayBookReport | ChronologicalDayBookReport>;
+  async getDayBook(
+    dateStr?: string,
+    opts?: { view?: 'ledger' | 'chronological' } & ChronologicalFilters,
+  ): Promise<LedgerDayBookReport | ChronologicalDayBookReport> {
     const date = dateStr ? dateStr.slice(0, 10) : formatLocalDate(new Date());
     const { start, end } = parseDateRangeStrings(date, date);
 
+    // Deliberately NOT filtered by voucherType/paymentMode/party at this
+    // query, even for the chronological view — the running cash balance
+    // needs every one of the day's vouchers to chain correctly; filtering
+    // the fetch itself would silently corrupt it. Filters are applied
+    // in-memory, after the balance is computed — see buildChronologicalView.
     const vouchers = await this.prisma.voucher.findMany({
       where: { date: { gte: start, lte: end } },
       include: { lines: { include: { ledgerAccount: true } } },
       orderBy: [{ date: 'asc' }, { voucherNumber: 'asc' }],
     });
 
+    if (opts?.view === 'chronological') {
+      return this.buildChronologicalView(date, start, end, vouchers, opts);
+    }
+    return this.buildLedgerView(date, start, vouchers);
+  }
+
+  private async buildLedgerView(
+    date: string,
+    start: Date,
+    vouchers: DayBookVoucherWithLines[],
+  ): Promise<LedgerDayBookReport> {
     const touchedLedgerIds = [
       ...new Set(vouchers.flatMap((v) => v.lines.map((l) => l.ledgerAccountId))),
     ];
@@ -216,8 +409,8 @@ export class VouchersService {
           ledgerAccountId: ledger.id,
           name: ledger.name,
           group: ledger.group,
-          openingBalance: { side: opening >= 0 ? 'DR' : 'CR', amount: Math.abs(opening) },
-          closingBalance: { side: closing >= 0 ? 'DR' : 'CR', amount: Math.abs(closing) },
+          openingBalance: balanceShape(opening),
+          closingBalance: balanceShape(closing),
           entries: todaysEntries,
         };
       })
@@ -243,6 +436,223 @@ export class VouchersService {
         })),
       })),
       ledgers,
+    };
+  }
+
+  // Section 12A — the Chronological (Shift) View: same day, same
+  // Voucher/VoucherLine data as buildLedgerView() above, but grouped by
+  // shift and sorted in time order instead of by ledger account. Shift
+  // buckets are DERIVED at query time from ShiftDefinition's start/end
+  // windows (via resolveCurrentShiftWindow, already built for the shift-
+  // schedule module and reused unmodified here) — there is no shiftId
+  // column on Voucher, and none is added; a voucher whose timestamp
+  // matches no configured window lands in "Unassigned" rather than being
+  // forced into one. Note: if a dealer edits/deactivates a ShiftDefinition,
+  // past vouchers are re-bucketed against whatever schedule is active NOW
+  // when the Day Book is viewed later — ShiftDefinition has no history, and
+  // exact boundary precision was never a requirement (see that file's own
+  // doc comment), so this is an accepted limitation, not a bug to fix here.
+  private async buildChronologicalView(
+    date: string,
+    start: Date,
+    end: Date,
+    vouchers: DayBookVoucherWithLines[],
+    filters?: ChronologicalFilters,
+  ): Promise<ChronologicalDayBookReport> {
+    // Cash ledgers are looked up directly (not just ones "touched" today) so
+    // a day with zero cash activity still reports a correct, non-zero
+    // opening/closing cash figure carried from prior days.
+    const [cashLedgers, shiftDefinitions, cashMismatch] = await Promise.all([
+      this.prisma.ledgerAccount.findMany({ where: { group: 'CASH_IN_HAND' } }),
+      this.prisma.shiftDefinition.findMany({ where: { isActive: true } }),
+      this.getCashMismatchSummary(start, end),
+    ]);
+    const cashLedgerIds = new Set(cashLedgers.map((l) => l.id));
+
+    let runningCash = cashLedgers.reduce(
+      (sum, ledger) => sum + signedDelta(ledger.openingBalance, ledger.openingBalanceType),
+      0,
+    );
+    if (cashLedgerIds.size > 0) {
+      const priorCashLines = await this.prisma.voucherLine.findMany({
+        where: { ledgerAccountId: { in: [...cashLedgerIds] }, voucher: { date: { lt: start } } },
+        select: { amount: true, drCr: true },
+      });
+      for (const line of priorCashLines) {
+        runningCash += signedDelta(line.amount, line.drCr);
+      }
+    }
+
+    type ChronoEntry = {
+      voucherId: string;
+      voucherNumber: string;
+      time: Date;
+      voucherType: string;
+      narration: string | null;
+      source: string;
+      sourceKey: string | null;
+      lines: {
+        ledgerAccountId: string;
+        ledgerAccountName: string;
+        group: LedgerGroup;
+        amount: number;
+        drCr: DrCr;
+      }[];
+      paymentMode: PaymentModeLabel;
+      partyName: string | null;
+      cashDelta: number;
+      runningCashBalanceBefore: number;
+      runningCashBalanceAfter: number;
+    };
+
+    // `vouchers` is already ordered by date asc (voucherNumber as tiebreak —
+    // see getDayBook()'s query), so a single pass in array order is already
+    // a correct time-ordered pass. One caveat: MANUAL vouchers store `date`
+    // as midnight (VouchersService.create() truncates to the calendar date,
+    // no time-of-day is ever collected for them), so a manual entry always
+    // sorts to the start of the day regardless of when it was actually
+    // keyed in — an accepted quirk of manual entry, not something this view
+    // can recover time-of-day for.
+    const entries: ChronoEntry[] = vouchers.map((voucher) => {
+      const before = runningCash;
+      const cashDelta = voucher.lines
+        .filter((l) => cashLedgerIds.has(l.ledgerAccountId))
+        .reduce((sum, l) => sum + signedDelta(l.amount, l.drCr), 0);
+      runningCash += cashDelta;
+      return {
+        voucherId: voucher.id,
+        voucherNumber: voucher.voucherNumber,
+        time: voucher.date,
+        voucherType: voucher.voucherType,
+        narration: voucher.narration,
+        source: voucher.source,
+        sourceKey: voucher.sourceKey,
+        lines: voucher.lines.map((l) => ({
+          ledgerAccountId: l.ledgerAccountId,
+          ledgerAccountName: l.ledgerAccount.name,
+          group: l.ledgerAccount.group,
+          amount: l.amount,
+          drCr: l.drCr,
+        })),
+        paymentMode: derivePaymentMode(voucher.lines),
+        partyName: derivePartyName(voucher.lines),
+        cashDelta,
+        runningCashBalanceBefore: before,
+        runningCashBalanceAfter: runningCash,
+      };
+    });
+
+    // Filters narrow which entries are DISPLAYED — they never touch
+    // `entries` before this point, so runningCashBalanceBefore/After above
+    // always reflect the true, complete day, regardless of what's filtered
+    // out here. Applied on the flat list, before bucketing, so a shift with
+    // no entries left after filtering simply produces no bucket for itself
+    // rather than an empty one.
+    const filteredEntries = entries.filter((entry) => {
+      if (filters?.voucherType && entry.voucherType !== filters.voucherType) return false;
+      if (filters?.paymentMode && entry.paymentMode !== filters.paymentMode) return false;
+      if (
+        filters?.partyLedgerAccountId &&
+        !entry.lines.some((l) => l.ledgerAccountId === filters.partyLedgerAccountId)
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    type ShiftBucket = {
+      shiftDefinitionId: string | null;
+      label: string;
+      windowStart: Date | null;
+      windowEnd: Date | null;
+      entries: ChronoEntry[];
+    };
+    const bucketsByKey = new Map<string, ShiftBucket>();
+    for (const entry of filteredEntries) {
+      const resolved = resolveCurrentShiftWindow(shiftDefinitions, entry.time);
+      const key = resolved ? resolved.shiftDefinition.id : 'UNASSIGNED';
+      if (!bucketsByKey.has(key)) {
+        bucketsByKey.set(key, {
+          shiftDefinitionId: resolved ? resolved.shiftDefinition.id : null,
+          label: resolved ? resolved.shiftDefinition.label : 'Unassigned',
+          windowStart: resolved ? resolved.windowStart : null,
+          windowEnd: resolved ? resolved.windowEnd : null,
+          entries: [],
+        });
+      }
+      bucketsByKey.get(key)!.entries.push(entry);
+    }
+
+    const shifts = [...bucketsByKey.values()]
+      .sort((a, b) => {
+        if (!a.windowStart && !b.windowStart) return 0;
+        if (!a.windowStart) return 1;
+        if (!b.windowStart) return -1;
+        return a.windowStart.getTime() - b.windowStart.getTime();
+      })
+      .map((bucket) => ({
+        shiftDefinitionId: bucket.shiftDefinitionId,
+        label: bucket.label,
+        windowStart: bucket.windowStart,
+        windowEnd: bucket.windowEnd,
+        openingCashBalance: balanceShape(bucket.entries[0].runningCashBalanceBefore),
+        closingCashBalance: balanceShape(
+          bucket.entries[bucket.entries.length - 1].runningCashBalanceAfter,
+        ),
+        entries: bucket.entries.map((entry) => ({
+          voucherId: entry.voucherId,
+          voucherNumber: entry.voucherNumber,
+          time: entry.time,
+          voucherType: entry.voucherType,
+          narration: entry.narration,
+          source: entry.source,
+          sourceKey: entry.sourceKey,
+          lines: entry.lines,
+          paymentMode: entry.paymentMode,
+          partyName: entry.partyName,
+          cashDelta: entry.cashDelta,
+          runningCashBalance: balanceShape(entry.runningCashBalanceAfter),
+        })),
+      }));
+
+    return { date, view: 'chronological' as const, shifts, cashMismatch };
+  }
+
+  // Section 12A — day-scoped, not shift-bucket-scoped (see
+  // CashMismatchSummary's doc comment for why). CashCustodyLog is scoped by
+  // its own `date` field; ShiftSalesSummary has no `date` column, so
+  // `createdAt` is used instead — the same day-range this whole view is
+  // already computed against.
+  private async getCashMismatchSummary(start: Date, end: Date): Promise<CashMismatchSummary> {
+    const [cashCustodyLogs, shiftSalesSummaries] = await Promise.all([
+      this.prisma.cashCustodyLog.findMany({
+        where: { date: { gte: start, lte: end } },
+        include: { handledBy: { select: { name: true } } },
+      }),
+      this.prisma.shiftSalesSummary.findMany({
+        where: { createdAt: { gte: start, lte: end } },
+      }),
+    ]);
+
+    return {
+      cashCustodyLogs: cashCustodyLogs.map((log) => ({
+        id: log.id,
+        handledById: log.handledById,
+        handledByName: log.handledBy.name,
+        totalCashCollected: log.totalCashCollected,
+        depositedToBank: log.depositedToBank,
+        keptInLocker: log.keptInLocker,
+        takenHome: log.takenHome,
+        newOutstanding: log.newOutstanding,
+      })),
+      shiftSalesVariances: shiftSalesSummaries.map((s) => ({
+        id: s.id,
+        shiftId: s.shiftId,
+        dsmId: s.dsmId,
+        nozzleId: s.nozzleId,
+        expectedValue: s.expectedValue,
+        variance: s.variance,
+      })),
     };
   }
 

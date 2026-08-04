@@ -1,5 +1,13 @@
 import { apiFetch } from './client';
-import type { CreateVoucherRequest, DayBookReport, TrialBalanceReport, VoucherListItem } from './types';
+import type {
+  CreateVoucherRequest,
+  DayBookChronologicalReport,
+  DayBookReport,
+  PaymentModeLabel,
+  TrialBalanceReport,
+  VoucherListItem,
+  VoucherType,
+} from './types';
 
 // POST /vouchers — manual voucher entry (Payment/Receipt/Contra/Journal),
 // Section 12. Balance validation (sum(DEBIT) === sum(CREDIT)) is enforced
@@ -32,11 +40,41 @@ export function deleteVoucher(id: string): Promise<{ deleted: true }> {
   return apiFetch<{ deleted: true }>(`/vouchers/${id}`, { method: 'DELETE' });
 }
 
-// GET /vouchers/day-book?date=YYYY-MM-DD — Section 12 Day Book. Omitted ->
-// today (server-local calendar day).
-export function getDayBook(date?: string): Promise<DayBookReport> {
-  const qs = date ? `?date=${encodeURIComponent(date)}` : '';
-  return apiFetch<DayBookReport>(`/vouchers/day-book${qs}`);
+export interface DayBookQueryParams {
+  date?: string;
+  view?: 'ledger' | 'chronological';
+  voucherType?: VoucherType;
+  paymentMode?: PaymentModeLabel;
+  partyLedgerAccountId?: string;
+}
+
+// GET /vouchers/day-book?date=YYYY-MM-DD — Section 12 / 12A Day Book.
+// Omitted date -> today (server-local calendar day). Omitted/'ledger' view
+// returns the per-ledger DayBookReport (unchanged); 'chronological' returns
+// the shift-wise DayBookChronologicalReport — the filter params only take
+// effect in that mode (see VouchersService.getDayBook()'s own comment).
+export function getDayBook(
+  params: DayBookQueryParams & { view: 'chronological' },
+): Promise<DayBookChronologicalReport>;
+export function getDayBook(params?: DayBookQueryParams & { view?: 'ledger' }): Promise<DayBookReport>;
+// Catch-all for a dynamic (state-driven) `view` rather than a literal —
+// same reason the backend's VouchersService.getDayBook() needs one.
+export function getDayBook(
+  params?: DayBookQueryParams,
+): Promise<DayBookReport | DayBookChronologicalReport>;
+export function getDayBook(
+  params?: DayBookQueryParams,
+): Promise<DayBookReport | DayBookChronologicalReport> {
+  const qs = new URLSearchParams();
+  if (params?.date) qs.set('date', params.date);
+  if (params?.view) qs.set('view', params.view);
+  if (params?.voucherType) qs.set('voucherType', params.voucherType);
+  if (params?.paymentMode) qs.set('paymentMode', params.paymentMode);
+  if (params?.partyLedgerAccountId) qs.set('partyLedgerAccountId', params.partyLedgerAccountId);
+  const suffix = qs.toString();
+  return apiFetch<DayBookReport | DayBookChronologicalReport>(
+    `/vouchers/day-book${suffix ? `?${suffix}` : ''}`,
+  );
 }
 
 // GET /vouchers/trial-balance?asOf=YYYY-MM-DD — Section 12 fix (finding #8):
