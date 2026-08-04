@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { NozzleWiseSalesReport, VehicleWiseSalesReport } from './types';
+import type { DsrReport, NozzleWiseSalesReport, VehicleWiseSalesReport } from './types';
 
 // GET /reports/nozzle-wise-sales, /reports/vehicle-wise-sales — Section 12.
 // Owner/Accountant server-side. ?from=&to= optional, both default to today
@@ -18,4 +18,11 @@ export function getVehicleWiseSales(from?: string, to?: string): Promise<Vehicle
   if (to) params.set('to', to);
   const query = params.toString();
   return apiFetch<VehicleWiseSalesReport>(`/reports/vehicle-wise-sales${query ? `?${query}` : ''}`);
+}
+
+// GET /reports/dsr?date= — Section 12B Daily Sales Report. Single day only
+// (not from/to like the two reports above) — omitted -> today.
+export function getDailySalesReport(date?: string): Promise<DsrReport> {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : '';
+  return apiFetch<DsrReport>(`/reports/dsr${qs}`);
 }

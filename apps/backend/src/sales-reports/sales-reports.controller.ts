@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { SalesReportsService } from './sales-reports.service';
 import { GetSalesReportQueryDto } from './dto/get-sales-report-query.dto';
+import { GetDsrQueryDto } from './dto/get-dsr-query.dto';
 
 // Section 12 — Nozzle-wise / Vehicle-wise sales reports.
 //
@@ -24,5 +25,10 @@ export class SalesReportsController {
   @Get('vehicle-wise-sales')
   getVehicleWiseSales(@Query() query: GetSalesReportQueryDto) {
     return this.salesReportsService.getVehicleWiseSales(query.from, query.to);
+  }
+
+  @Get('dsr')
+  getDailySalesReport(@Query() query: GetDsrQueryDto) {
+    return this.salesReportsService.getDailySalesReport(query.date);
   }
 }

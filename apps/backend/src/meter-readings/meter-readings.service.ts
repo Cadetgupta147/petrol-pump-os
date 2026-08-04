@@ -11,6 +11,7 @@ import { resolveAssignableActorId } from '../common/resolve-assignable-actor';
 import { assertNonDsmOverride } from '../common/assert-non-dsm-override';
 import { requireTenantContext } from '../common/tenant-context';
 import { formatLocalDate } from '../common/date-range.util';
+import { computeLitresSold } from './compute-litres-sold.util';
 import { OpenShiftDto } from './dto/open-shift.dto';
 import { CloseShiftDto } from './dto/close-shift.dto';
 import { CorrectMeterReadingDto } from './dto/correct-meter-reading.dto';
@@ -246,7 +247,7 @@ export class MeterReadingsService {
     }
 
     const meterRolledOver = input.meterRolledOver ?? false;
-    const litresSold = this.computeLitresSold(
+    const litresSold = computeLitresSold(
       existing.openingReading,
       input.closingReading,
       meterRolledOver,
@@ -598,13 +599,13 @@ export class MeterReadingsService {
     const newOpeningReading = dto.openingReading ?? existing.openingReading;
     const newClosingReading = dto.closingReading ?? existing.closingReading;
 
-    const oldLitresSold = this.computeLitresSold(
+    const oldLitresSold = computeLitresSold(
       existing.openingReading,
       existing.closingReading,
       existing.meterRolledOver,
       existing.nozzle.rolloverAt,
     );
-    const newLitresSold = this.computeLitresSold(
+    const newLitresSold = computeLitresSold(
       newOpeningReading,
       newClosingReading,
       existing.meterRolledOver,
@@ -712,7 +713,7 @@ export class MeterReadingsService {
       );
     }
 
-    const litresSoldFromMeter = this.computeLitresSold(
+    const litresSoldFromMeter = computeLitresSold(
       reading.openingReading,
       reading.closingReading,
       reading.meterRolledOver,
@@ -776,32 +777,17 @@ export class MeterReadingsService {
     };
   }
 
-  // Rollover-aware litres calculation shared by closeShift(), the
-  // correction endpoint, and checkVariance(). null only when closingReading
-  // itself is null (shift still open) — see each call site's cast/guard.
-  private computeLitresSold(
-    openingReading: number,
-    closingReading: number | null,
-    meterRolledOver: boolean,
-    rolloverAt: number | null,
-  ): number | null {
-    if (closingReading === null) return null;
-    if (meterRolledOver && rolloverAt != null) {
-      return rolloverAt - openingReading + closingReading;
-    }
-    return closingReading - openingReading;
-  }
-
   // litresSold is not persisted — computed on the fly (rollover-aware, see
-  // computeLitresSold()). null while the shift is still open. Generic so
-  // the `nozzle` relation every call site `include`s (findAll/findOne/
-  // openShift/closeShift/correctMeterReading) passes through untouched —
-  // also means TypeScript enforces that nozzle is always included wherever
-  // this is called, since the calculation needs nozzle.rolloverAt.
+  // compute-litres-sold.util.ts). null while the shift is still open.
+  // Generic so the `nozzle` relation every call site `include`s (findAll/
+  // findOne/openShift/closeShift/correctMeterReading) passes through
+  // untouched — also means TypeScript enforces that nozzle is always
+  // included wherever this is called, since the calculation needs
+  // nozzle.rolloverAt.
   private withComputedLitresSold<T extends MeterReading & { nozzle: Nozzle }>(reading: T) {
     return {
       ...reading,
-      litresSold: this.computeLitresSold(
+      litresSold: computeLitresSold(
         reading.openingReading,
         reading.closingReading,
         reading.meterRolledOver,

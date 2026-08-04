@@ -1158,6 +1158,44 @@ export interface VehicleWiseSalesReport {
   totalAmount: number;
 }
 
+// ---------- Section 12B — Daily Sales Report ----------
+
+export type StockProvenance = 'MEASURED' | 'COMPUTED' | 'UNAVAILABLE';
+
+export interface DsrFuelShift {
+  shiftDefinitionId: string | null;
+  label: string;
+  litres: number;
+  value: number | null; // null when no Rate Master entry covers this shift's rate lookup
+}
+
+export interface DsrFuel {
+  productType: string;
+  shifts: DsrFuelShift[];
+  totalLitres: number;
+  totalValue: number;
+}
+
+export interface DsrStockMovementRow {
+  tankId: string;
+  tankNumber: string;
+  productType: string;
+  openingStock: number | null;
+  openingStockProvenance: StockProvenance;
+  receipts: number;
+  sales: number;
+  closingStock: number | null;
+  closingStockProvenance: StockProvenance;
+}
+
+export interface DsrReport {
+  date: string;
+  fuels: DsrFuel[];
+  stockMovement: DsrStockMovementRow[];
+  collections: { cash: number; card: number; upi: number; credit: number };
+  shortExcess: number;
+}
+
 // ---------- Section 8 — Cash Custody ----------
 
 // Mirrors prisma CashCustodyLog + CashCustodyService.create()'s return shape.

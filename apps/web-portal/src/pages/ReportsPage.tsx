@@ -10,6 +10,7 @@ import { AttendanceSummaryTab } from '../components/reports/AttendanceSummaryTab
 import { CreditLimitSuggestionsTab } from '../components/reports/CreditLimitSuggestionsTab';
 import { NozzleWiseSalesReportTab } from '../components/reports/NozzleWiseSalesReportTab';
 import { VehicleWiseSalesReportTab } from '../components/reports/VehicleWiseSalesReportTab';
+import { DsrReportTab } from '../components/reports/DsrReportTab';
 
 // Section 12 — Reports & Analytics hub. Stock variance and cash custody
 // already have their own dedicated pages built in earlier slices — this hub
@@ -22,6 +23,7 @@ import { VehicleWiseSalesReportTab } from '../components/reports/VehicleWiseSale
 // ceremony without a real benefit. Matches "your call on IA" from the task
 // spec.
 type TabKey =
+  | 'dsr'
   | 'credit-aging'
   | 'credit-limit-suggestions'
   | 'loyalty-cost'
@@ -32,6 +34,7 @@ type TabKey =
   | 'vehicle-wise-sales';
 
 const TABS: { key: TabKey; label: string }[] = [
+  { key: 'dsr', label: 'Daily Sales Report' },
   { key: 'credit-aging', label: 'Credit aging' },
   { key: 'credit-limit-suggestions', label: 'Credit limit suggestions' },
   { key: 'loyalty-cost', label: 'Loyalty cost' },
@@ -43,7 +46,7 @@ const TABS: { key: TabKey; label: string }[] = [
 ];
 
 export function ReportsPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>('credit-aging');
+  const [activeTab, setActiveTab] = useState<TabKey>('dsr');
 
   return (
     <>
@@ -95,6 +98,7 @@ export function ReportsPage() {
             </div>
           </div>
 
+          {activeTab === 'dsr' && <DsrReportTab />}
           {activeTab === 'credit-aging' && <CreditAgingReportTab />}
           {activeTab === 'credit-limit-suggestions' && <CreditLimitSuggestionsTab />}
           {activeTab === 'loyalty-cost' && <LoyaltyCostReportTab />}

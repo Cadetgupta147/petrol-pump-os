@@ -22,6 +22,7 @@
 11. [Notifications (Push / SMS / WhatsApp)](#11-notifications-push--sms--whatsapp)
 12. [Reports & Analytics — Full List](#12-reports--analytics--full-list)
 12A. [Day Book — Chronological Shift View](#12a-day-book--chronological-shift-view)
+12B. [Daily Sales Report (DSR)](#12b-daily-sales-report-dsr)
 13. [Database Schema](#13-database-schema)
 14. [UI/UX Mockups](#14-uiux-mockups)
 15. [Tech Stack](#15-tech-stack)
@@ -736,6 +737,59 @@ A second view over the same `Voucher`/`VoucherLine` data — no new tables — a
 
 ---
 
+## 12B. Daily Sales Report (DSR)
+
+Section 12's "Daily/weekly/monthly sales summary" row has existed since v1 but was never built. This is that report — and, per every vendor comparison consulted, the single most-referenced report in this industry, so it's the first of the (much larger) external Reports Catalog to actually get built. The rest of that catalog is tracked but deliberately not all speced/built at once — see §12B.6.
+
+### 12B.1 What already exists — reused, not rebuilt
+
+- **Litres sold per meter reading**: `MeterReadingsService`'s `computeLitresSold()` — `meterRolledOver ? (nozzle.rolloverAt − openingReading) + closingReading : closingReading − openingReading`. This is the DSR's per-nozzle sales-litres figure; no new formula.
+- **Rate in effect at an arbitrary instant**: `RateMasterService.getCurrentRate(productType, asOf)` already takes an arbitrary `asOf` `Date`, not just "now" — `ShiftSalesService` already calls it with `reading.shiftEnd`. DSR reuses the exact same call, same convention.
+- **Shift bucketing**: `resolveCurrentShiftWindow()` (Section 12A's tool) is reused again here, against `MeterReading.shiftStart` — same "derive at query time, don't add a stored shiftId FK" approach as the Day Book Chronological View.
+- **Walk-in collection variance**: `ShiftSalesSummary.variance` (`expectedValue − actually collected`) is already computed per DSM/nozzle/reading at shift-close (`ShiftSalesService.create()`). DSR's Short/Excess row is a straight sum of this existing field for the date — not a new calculation.
+- **Payment-mode aggregation for itemized bills**: `dashboard/payment-line-aggregation.util.ts`'s `aggregateByPaymentType()` is already pure and unit-tested — reused for the Collections section's Bill-sourced half.
+
+### 12B.2 Two sales sources, not one — a correction to the external spec
+
+The Reports Catalog doc this section is based on assumes one "Sales Transactions" table. This system has two:
+- **`Bill`** (+ `BillPaymentLine`) — itemized sales: credit/loyalty customers, anyone who wants a receipt.
+- **`ShiftSalesSummary`** — aggregate walk-in sales, the majority of pump volume, reconciled against the shift's meter reading (Section 8A) — specifically `walkInLitres = max(0, meterLitres − billedLitres)`.
+
+Because `ShiftSalesSummary.walkInLitres` is already *defined* as "meter litres minus billed litres," `Bill.litres + ShiftSalesSummary.walkInLitres` is just the meter reading's own litres figure decomposed into two pieces — **not a second, additive number**. So DSR's **litres/value figures come directly from the meter reading** (§12B.1's `computeLitresSold()`), the actual ground truth; summing Bill and ShiftSalesSummary litres would either double-count or under-count depending on how completely a shift's walk-in sales have been reconciled at report time. The two sources are combined only for **Collections** (§12B.5) — that's genuinely additive, since Bill payment lines and ShiftSalesSummary's cash/UPI/card fields cover two non-overlapping slices of the same shift's money.
+
+A Bill's payment always balances to its own amount (Section 5A's hard rule) — there is no "shortage" concept at the itemized-Bill level, by construction. So **Short/Excess is entirely a walk-in-sales concept** (`ShiftSalesSummary.variance`); itemized Bills contribute to DSR's litres/value/collections but never variance.
+
+### 12B.3 Stock movement — the one section with no existing ledger to reuse
+
+`Tank.currentStockLitres` is a live running counter, not a dated history — there is no daily opening/closing snapshot table, and the existing `TanksService.varianceReport()` compares only the *latest* `DipReading` against the *current* counter (a point-in-time check, not a per-day ledger). DSR's stock-movement section has to construct its own daily figures:
+- **Receipts (L)** for the date = sum of that date's `PurchaseEntry.quantityLitres` for the tank's `productType`.
+- **Sales (L)** for the date = sum of that date's meter-derived litres (§12B.1) for nozzles feeding that tank.
+- **Closing stock**: if a `DipReading` exists for that tank on that date, use its `reading` (physical, authoritative) — label it **Measured**. Otherwise, if the report date is **today**, fall back to `Tank.currentStockLitres` (the live counter is accurate as of right now) — label it **Computed**. If the report date is in the **past** and no dip was recorded that day, there is nothing authoritative to show — `currentStockLitres` reflects today, not that past date, and this slice does not implement a full historical replay (walking every purchase/sale since the last dip anchor) to reconstruct it. That cell is labeled **Unavailable**, not silently guessed. The report always shows which of the three it is. This mirrors `DipReading`'s own existing philosophy (compare physical vs. system, flag rather than assume) — extended here to "flag when there's nothing to compare at all."
+- **Opening stock** = previous day's closing stock (same Measured/Computed/Unavailable rule, one day earlier).
+
+### 12B.4 Explicitly NOT matching the external spec — flagged, not silently built
+
+- **No `testing_litres` subtraction.** The Reports Catalog's formula subtracts a `testing_litres` figure from meter-derived sales. `MachineTestingLog` (calibration draw-offs) exists but is explicitly documented in `schema.prisma` as deliberately NOT folded into the sold-litres formula yet — a prior, separate product decision, not something this slice reopens. DSR's litres figure matches `computeLitresSold()` exactly, with no testing adjustment.
+- **No true intra-shift rate-weighting.** The external spec asks for a weighted split if the fuel rate changes mid-shift. `MeterReading` only captures opening/closing at shift boundaries — there's no timestamp for *when within the shift* litres were dispensed, so a true weighted split isn't computable from this data model. DSR applies the rate in effect at `shiftEnd` to the whole shift's litres — exactly the precedent `ShiftSalesService` already set, not a new simplification invented for this report.
+- **Variance tolerance stays wherever it already lives.** The external spec asks for a configurable dip-variance tolerance; `TanksService` currently hardcodes `DIP_VARIANCE_TOLERANCE_LITRES = 5`. That's a `TanksService`/Variance Report concern, not a DSR one — not touched by this slice.
+
+### 12B.5 Output shape (single day; date range is Phase 2, see §12B.6)
+
+For a selected date, per fuel `productType`:
+- **Sales**: shift-wise litres (meter-derived, §12B.1) and value (litres × rate-at-shift-end), rolling up to a fuel-wise day total. Not a sum of Bill + ShiftSalesSummary litres — see §12B.2.
+- **Stock movement**: opening → receipts → sales(out) → closing, per tank, each closing figure tagged Measured or Computed (§12B.3).
+- **Collections**: cash / card / UPI / credit, combining `aggregateByPaymentType()` over the day's Bills and `ShiftSalesSummary`'s own cash/UPI/card fields — genuinely additive, see §12B.2.
+- **Short/Excess**: sum of `ShiftSalesSummary.variance` for the date (§12B.2).
+
+### 12B.6 Build priority
+
+| Phase | Scope |
+|---|---|
+| Now | Single-day DSR: shift-wise sales, stock movement (Measured/Computed), collections, Short/Excess — on-screen table only |
+| Later | Date-range / month-to-date roll-up, PDF/Excel export, the remaining 19 reports in the external Reports Catalog (each to be speced against the actual data model individually, the way this section did — several have real schema gaps: no `temperature` field on `DipReading`/`DensityLog`, `PurchaseEntry` has no invoice-vs-dip-measured split, `LubricantItem` has no batch/expiry tracking) |
+
+---
+
 ## 13. Database Schema
 
 High-level entity list — expand each into full tables with your ORM's migration tool once you start building.
@@ -1050,7 +1104,7 @@ Before this system takes real customer money or real customer data, work through
 - **A — Accountant Role, Attendance:** the web portal role for manual entry with financial-settings restrictions (§2); DSM PIN/biometric login + shift activity timestamps (§4)
 - **B — Bill Entry / Bluetooth Printing:** DSM app entry with QR auto-fill and validation rule (§4); receipts printed via Bluetooth thermal printer (§4, §15.8)
 - **C — Cash Custody, Credit Ledger:** day-end reconciliation and carry-forward tracking (§8); full per-customer credit ledger (§3.4)
-- **D — Dashboard, Day Book, Density Log, DSM App:** owner/accountant home screen (§3.1); chronological shift-wise view of every voucher for a day, plus the per-ledger view (§12A); fuel quality/PPM tracking for OMC compliance (§7.3); the field-staff mobile app (§4)
+- **D — Dashboard, Day Book, Density Log, DSM App, DSR:** owner/accountant home screen (§3.1); chronological shift-wise view of every voucher for a day, plus the per-ledger view (§12A); fuel quality/PPM tracking for OMC compliance (§7.3); the field-staff mobile app (§4); Daily Sales Report — shift-wise sales, stock movement, collections, short/excess (§12B)
 - **E — Earning Basis:** the rupee-vs-litre toggle for loyalty points, settable per pump with per-customer override (§6.2)
 - **F — Fallback (SMS/WhatsApp):** backup notification channels for customers without the app (§11)
 - **G — Gift Catalog, GST Reports:** dealer-fed redemption catalog customers browse and redeem against (§6.4); sales/purchase reports formatted for tax filing (§12)
