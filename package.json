@@ -8,6 +8,11 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:backend": "npm run start:dev --workspace backend",
+    "dev:web": "npm run dev --workspace web-portal",
+    "dev:dsm": "npm run start --workspace dsm-app",
+    "dev:customer": "npm run start --workspace customer-app",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",

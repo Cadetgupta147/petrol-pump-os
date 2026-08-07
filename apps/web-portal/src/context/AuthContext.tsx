@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, type ReactNode } from 'react';
 import { login as loginRequest } from '../api/auth';
 import { getStoredToken, setStoredToken } from '../api/client';
+import { clearApiCache } from '../pwa/apiCache';
 import type { StaffSummary } from '../api/types';
 import { AuthContext, type AuthContextValue } from './useAuth';
 
@@ -30,6 +31,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStoredToken(null);
     localStorage.removeItem(STAFF_STORAGE_KEY);
     setStaff(null);
+    // Wipe the service worker's cached API responses so the next login on this
+    // device can't read the previous dealer's last-synced data offline.
+    void clearApiCache();
   }, []);
 
   const value = useMemo<AuthContextValue>(

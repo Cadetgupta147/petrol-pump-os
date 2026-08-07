@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './context/useAuth';
 import { RequireAuth } from './components/RequireAuth';
+import { PwaPrompts } from './components/PwaPrompts';
+import { InstallPwaModal } from './components/InstallPwaModal';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -295,6 +297,8 @@ export function App() {
   return (
     <AuthProvider>
       <AppRoutes />
+      <PwaPrompts />
+      <InstallPwaModal />
     </AuthProvider>
   );
 }
