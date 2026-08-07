@@ -3,6 +3,10 @@ node_modules/
 .pnp
 .pnp.js
 
+# Lockfiles — intentionally NOT committed on this project (matches root and
+# every workspace, e.g. apps/web-portal). See the PR note for the rationale.
+package-lock.json
+
 # Env / secrets — never commit real values
 .env
 .env.local

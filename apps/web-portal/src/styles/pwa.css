@@ -1,0 +1,123 @@
+/* PWA update prompt + offline banner. Fixed, above app chrome, non-blocking. */
+.pwa-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--navy, #0f1b33);
+  color: var(--white, #fff);
+  box-shadow: 0 8px 24px rgba(15, 27, 51, 0.28);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.pwa-toast__text {
+  flex: 1;
+}
+
+.pwa-toast__btn {
+  border: none;
+  cursor: pointer;
+  border-radius: 7px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--orange, #fb8b24);
+  color: var(--navy, #0f1b33);
+}
+
+.pwa-toast__btn--ghost {
+  background: transparent;
+  color: var(--white, #fff);
+  opacity: 0.75;
+  padding: 7px 8px;
+}
+
+.pwa-toast__btn--ghost:hover {
+  opacity: 1;
+}
+
+/* Install-PWA modal ------------------------------------------------------- */
+.pwa-install-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.pwa-install-icon {
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.pwa-install-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.pwa-steps {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  counter-reset: pwa-step;
+}
+
+.pwa-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--row-line, #f0eee6);
+}
+
+.pwa-step::before {
+  counter-increment: pwa-step;
+  content: counter(pwa-step);
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--navy, #0f1b33);
+  color: var(--white, #fff);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pwa-step__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--zebra, #fbfaf6);
+  border: 1px solid var(--border, #e7e3d8);
+  color: var(--navy, #0f1b33);
+  flex-shrink: 0;
+}
+
+/* Offline banner sits at the very top, full width. */
+.pwa-offline {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  text-align: center;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--amber, #b3562e);
+  color: var(--white, #fff);
+}
